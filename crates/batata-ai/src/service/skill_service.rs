@@ -31,6 +31,16 @@ fn datetime_str_to_millis(s: &Option<String>) -> Option<i64> {
     })
 }
 
+/// Resolve the version-level description (`versionDesc` upstream).
+///
+/// GA writes the ADMIN `commitMsg` into the version row; when the field is
+/// absent batata keeps its historical behaviour of using the skill-card
+/// description. See `SkillAdminController.java:201` and
+/// `SkillOperationServiceImpl.java:1246,1668`.
+fn version_description(commit_msg: Option<&str>, fallback: Option<String>) -> Option<String> {
+    commit_msg.map(str::to_string).or(fallback)
+}
+
 /// Skill operation service backed by ai_resource/ai_resource_version tables
 pub struct SkillOperationService {
     persistence: Arc<dyn PersistenceService>,
@@ -463,6 +473,7 @@ impl SkillOperationService {
     }
 
     /// Upload a skill from parsed content (creates resource + draft version)
+    #[allow(clippy::too_many_arguments)]
     pub async fn upload_skill(
         &self,
         namespace_id: &str,
@@ -470,23 +481,54 @@ impl SkillOperationService {
         skill: &Skill,
         author: &str,
         overwrite: bool,
+        target_version: Option<&str>,
+        upload_action: Option<&str>,
+        auto_publish_if_new: bool,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<String> {
+        // GA `doUploadSingleSkill` action constants.
+        const ACTION_CREATE_DRAFT: &str = "CREATE_DRAFT";
+        const ACTION_OVERWRITE_DRAFT: &str = "OVERWRITE_DRAFT";
+        const ACTION_DELETE_DRAFT_AND_CREATE: &str = "DELETE_DRAFT_AND_CREATE";
+
         let existing = self.find_resource(namespace_id, name).await?;
+        let meta_is_none = existing.is_none();
+
+        // Resolve the upload-action semantics (mirrors GA `doUploadSingleSkill`).
+        let action = upload_action.unwrap_or("").trim();
+        let (require_editing_draft, do_overwrite) = match action {
+            "" => (false, overwrite),
+            ACTION_CREATE_DRAFT => (false, false),
+            ACTION_OVERWRITE_DRAFT | ACTION_DELETE_DRAFT_AND_CREATE => (true, true),
+            other => anyhow::bail!("Unsupported uploadAction: {}", other),
+        };
+
+        // Explicit overwrite actions require an existing skill with an editing draft.
+        if require_editing_draft && meta_is_none {
+            anyhow::bail!("No editing draft to overwrite: {}", name);
+        }
+
+        // Resolve the draft version: an explicit `target_version` overrides auto-bump.
+        let version = match target_version {
+            Some(tv) => tv.to_string(),
+            None => {
+                self.resolve_upload_version(namespace_id, name, skill)
+                    .await?
+            }
+        };
 
         if let Some(ref res) = existing {
             let vi = Self::parse_version_info(res);
-            if !overwrite && (vi.editing_version.is_some() || vi.reviewing_version.is_some()) {
+            if require_editing_draft && vi.editing_version.is_none() {
+                anyhow::bail!("No editing draft to overwrite: {}", name);
+            }
+            if !do_overwrite && (vi.editing_version.is_some() || vi.reviewing_version.is_some()) {
                 anyhow::bail!(
-                    "Skill '{}' has an editing or reviewing version, set overwrite=true",
+                    "Skill '{}' has an editing or reviewing version, set overwrite=true or use uploadAction",
                     name
                 );
             }
         }
-
-        // Determine version
-        let version = self
-            .resolve_upload_version(namespace_id, name, skill)
-            .await?;
 
         // Build storage
         let storage = self.skill_to_storage(skill);
@@ -529,7 +571,7 @@ impl SkillOperationService {
         }
 
         // Delete existing draft if overwriting
-        if overwrite {
+        if do_overwrite {
             self.persistence
                 .ai_resource_version_delete_by_status(
                     namespace_id,
@@ -546,7 +588,7 @@ impl SkillOperationService {
             resource_type: SKILL_TYPE.to_string(),
             author: Some(author.to_string()),
             name: name.to_string(),
-            description: skill.description.clone(),
+            description: version_description(commit_msg, skill.description.clone()),
             status: VERSION_STATUS_DRAFT.to_string(),
             version: version.clone(),
             namespace_id: namespace_id.to_string(),
@@ -559,6 +601,12 @@ impl SkillOperationService {
         self.persistence
             .ai_resource_version_insert(&ver_info)
             .await?;
+
+        // GA `autoPublishIfNew`: force-publish only the first upload of a brand-new skill.
+        if auto_publish_if_new && meta_is_none {
+            self.force_publish(namespace_id, name, &version, Some(author))
+                .await?;
+        }
 
         debug!(
             "Uploaded skill '{}' version '{}' in namespace '{}'",
@@ -705,7 +753,17 @@ impl SkillOperationService {
             };
 
             match self
-                .upload_skill(namespace_id, &skill.name, &skill, author, overwrite)
+                .upload_skill(
+                    namespace_id,
+                    &skill.name,
+                    &skill,
+                    author,
+                    overwrite,
+                    None,
+                    None,
+                    false,
+                    None,
+                )
                 .await
             {
                 Ok(_) => result.add_success(&skill.name),
@@ -717,6 +775,7 @@ impl SkillOperationService {
     }
 
     /// Create a draft version
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_draft(
         &self,
         namespace_id: &str,
@@ -725,6 +784,7 @@ impl SkillOperationService {
         target_version: Option<&str>,
         initial_content: Option<&Skill>,
         author: &str,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<String> {
         let existing = self.find_resource(namespace_id, name).await?;
 
@@ -812,7 +872,10 @@ impl SkillOperationService {
             resource_type: SKILL_TYPE.to_string(),
             author: Some(author.to_string()),
             name: name.to_string(),
-            description: initial_content.and_then(|s| s.description.clone()),
+            description: version_description(
+                commit_msg,
+                initial_content.and_then(|s| s.description.clone()),
+            ),
             status: VERSION_STATUS_DRAFT.to_string(),
             version: version.clone(),
             namespace_id: namespace_id.to_string(),
@@ -840,6 +903,7 @@ impl SkillOperationService {
         name: &str,
         skill: &Skill,
         user: Option<&str>,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<()> {
         let resource = self
             .find_resource(namespace_id, name)
@@ -863,7 +927,7 @@ impl SkillOperationService {
                 SKILL_TYPE,
                 &draft_version,
                 &storage_json,
-                skill.description.as_deref(),
+                commit_msg.or(skill.description.as_deref()),
             )
             .await?;
 
@@ -1633,6 +1697,7 @@ impl super::traits::SkillService for SkillOperationService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn upload_skill(
         &self,
         namespace_id: &str,
@@ -1640,9 +1705,23 @@ impl super::traits::SkillService for SkillOperationService {
         skill: &Skill,
         author: &str,
         overwrite: bool,
+        target_version: Option<&str>,
+        upload_action: Option<&str>,
+        auto_publish_if_new: bool,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<String> {
-        self.upload_skill(namespace_id, name, skill, author, overwrite)
-            .await
+        self.upload_skill(
+            namespace_id,
+            name,
+            skill,
+            author,
+            overwrite,
+            target_version,
+            upload_action,
+            auto_publish_if_new,
+            commit_msg,
+        )
+        .await
     }
 
     async fn precheck_upload_from_zip(
@@ -1674,6 +1753,7 @@ impl super::traits::SkillService for SkillOperationService {
         target_version: Option<&str>,
         initial_content: Option<&Skill>,
         author: &str,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<String> {
         self.create_draft(
             namespace_id,
@@ -1682,6 +1762,7 @@ impl super::traits::SkillService for SkillOperationService {
             target_version,
             initial_content,
             author,
+            commit_msg,
         )
         .await
     }
@@ -1692,8 +1773,10 @@ impl super::traits::SkillService for SkillOperationService {
         name: &str,
         skill: &Skill,
         _user: Option<&str>,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.update_draft(namespace_id, name, skill, _user).await
+        self.update_draft(namespace_id, name, skill, _user, commit_msg)
+            .await
     }
 
     async fn delete_draft(

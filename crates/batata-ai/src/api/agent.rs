@@ -2,14 +2,14 @@
 //!
 //! Admin: `/v3/admin/ai/agents`
 //!
-//! Upstream `AgentAdminController` exposes 18 endpoints. Batata implements the
-//! ones that do not depend on RAD: `GET /runtime-endpoints` needs the runtime
-//! endpoint registry (Naming publications + the publication capacity gate),
-//! which Batata does not have. The draft endpoints are not implemented yet
-//! either — the agent service creates versions directly as `online`, so there
-//! is no draft to create, update or delete.
+//! Upstream `AgentAdminController` (Nacos 3.3.0 GA) exposes 18 endpoints and
+//! Batata mounts 19. Paths are aligned, but GA's ARD `AgentVersionDetail` /
+//! `AgentCallInterface` model differs from the A2A `AgentCard` batata stores:
+//! the four write endpoints accept both GA's flat admin form and batata's
+//! nested JSON card, and reject `callInterfaces` instead of dropping it.
+//! `GET /runtime-endpoints` still needs the runtime endpoint registry (Naming
+//! publications + the publication capacity gate), which Batata does not have.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
@@ -20,6 +20,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
+use crate::api::admin_form::{AdminForm, AdminParams};
 use crate::model::AgentCard;
 use crate::service::traits::A2aAgentService;
 
@@ -68,21 +69,192 @@ pub struct AgentRuntimeEndpointForm {
     pub protocol: Option<String>,
 }
 
-/// Query parameters for `POST /draft`.
+/// Flat GA ADMIN write parameters for the four Agent write endpoints.
+///
+/// Nacos 3.3.0 GA `AgentAdminController` binds `AgentDraftCreateForm`,
+/// `AgentDraftUpdateForm` and `AgentUpdateForm` from an urlencoded form body
+/// (`ClientHttpProxy.postForm` + `setParamValue`). Batata's own SDK instead
+/// posts a nested `AgentCard` JSON object. Both encodings are resolved here.
+/// GA's ARD-only `callInterfaces` has no `AgentCard` counterpart and is
+/// rejected rather than silently discarded; see the compatibility inventory.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentDraftForm {
-    /// Namespace ID (defaults to the public namespace).
-    pub namespace_id: Option<String>,
-    /// Replace the draft currently being edited.
-    pub overwrite: Option<bool>,
+struct AgentWriteForm {
+    namespace_id: Option<String>,
+    agent_name: Option<String>,
+    version: Option<String>,
+    display_name: Option<String>,
+    description: Option<String>,
+    icon_url: Option<String>,
+    provider: Option<String>,
+    tags: Option<String>,
+    extensions: Option<String>,
+    call_interfaces: Option<String>,
+    author: Option<String>,
+    change_description: Option<String>,
+    based_on_version: Option<String>,
+    status: Option<String>,
+    overwrite: Option<bool>,
 }
 
-/// Request body for `PUT /labels`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct AgentLabelsForm {
-    /// Label name → version.
-    pub labels: HashMap<String, String>,
+/// GA `AgentProvider` uses `name` while the A2A `AgentCard.provider` uses
+/// `organization`; the flat form carries the GA shape as a JSON string.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GaAgentProvider {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    url: String,
+}
+
+/// One resolved Agent write request, independent of its wire encoding.
+struct AgentWrite {
+    card: AgentCard,
+    namespace: String,
+    overwrite: bool,
+}
+
+fn invalid(detail: impl Into<String>) -> HttpResponse {
+    Result::<()>::http_bad_request(&batata_common::error::PARAMETER_VALIDATE_ERROR, detail)
+}
+
+fn non_empty(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn json_field(raw: Option<&str>) -> Option<&str> {
+    raw.map(str::trim)
+        .filter(|raw| !raw.is_empty() && *raw != "null")
+}
+
+/// A nested `AgentCard` JSON body is batata's own wire. Everything else
+/// (urlencoded form, empty body, JSON object of flat parameters) is resolved
+/// as flat GA admin parameters.
+fn is_json_card(req: &HttpRequest, body: &[u8]) -> bool {
+    let content_type = req
+        .headers()
+        .get(actix_web::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    content_type.contains("json") && body.trim_ascii().starts_with(b"{")
+}
+
+/// Resolve either wire into one `AgentCard` plus the shared admin parameters.
+fn resolve_agent_write(
+    req: &HttpRequest,
+    body: &[u8],
+    require_version: bool,
+) -> std::result::Result<AgentWrite, HttpResponse> {
+    let params = AdminParams::from_request(req, body);
+    let form: AgentWriteForm = params.decode().map_err(invalid)?;
+    let namespace =
+        normalize_namespace(form.namespace_id.as_deref().unwrap_or_default()).to_string();
+    let overwrite = form.overwrite.unwrap_or(false);
+
+    let card = if is_json_card(req, body) {
+        serde_json::from_slice::<AgentCard>(body)
+            .map_err(|e| invalid(format!("Invalid AgentCard: {e}")))?
+    } else {
+        agent_card_from_form(&form, require_version)?
+    };
+    Ok(AgentWrite {
+        card,
+        namespace,
+        overwrite,
+    })
+}
+
+/// Build an `AgentCard` from the GA flat form. Fields with no A2A counterpart
+/// are preserved in batata's `metadata` map instead of being dropped silently.
+fn agent_card_from_form(
+    form: &AgentWriteForm,
+    require_version: bool,
+) -> std::result::Result<AgentCard, HttpResponse> {
+    let name = form
+        .agent_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| {
+            Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "agentName is required",
+            )
+        })?;
+    let version = form.version.as_deref().map(str::trim).unwrap_or_default();
+    if require_version && version.is_empty() {
+        return Err(Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "version is required",
+        ));
+    }
+
+    // Fail closed: the GA ARD call-interface model cannot be represented by
+    // an A2A AgentCard. Accepting and dropping it would register a dead agent.
+    if let Some(raw) = json_field(form.call_interfaces.as_deref())
+        && raw != "[]"
+    {
+        return Err(invalid(format!(
+            "callInterfaces needs GA's AgentCallInterface model, which batata does not implement: {raw}"
+        )));
+    }
+
+    let mut card = AgentCard {
+        name: name.to_string(),
+        display_name: form
+            .display_name
+            .clone()
+            .unwrap_or_else(|| name.to_string()),
+        description: form.description.clone().unwrap_or_default(),
+        version: version.to_string(),
+        icon_url: non_empty(form.icon_url.as_deref()),
+        ..Default::default()
+    };
+
+    if let Some(raw) = json_field(form.provider.as_deref()) {
+        let provider: GaAgentProvider =
+            serde_json::from_str(raw).map_err(|e| invalid(format!("Invalid provider: {e}")))?;
+        card.provider = Some(crate::model::a2a::AgentProvider {
+            organization: provider.name,
+            url: provider.url,
+        });
+    }
+    if let Some(raw) = json_field(form.tags.as_deref()) {
+        card.tags = serde_json::from_str(raw).map_err(|e| invalid(format!("Invalid tags: {e}")))?;
+    }
+    if let Some(raw) = json_field(form.extensions.as_deref()) {
+        let value: serde_json::Value =
+            serde_json::from_str(raw).map_err(|e| invalid(format!("Invalid extensions: {e}")))?;
+        let serde_json::Value::Object(object) = value else {
+            return Err(invalid("extensions must be a JSON object"));
+        };
+        for (key, value) in object {
+            card.metadata.insert(
+                key,
+                match value {
+                    serde_json::Value::String(text) => text,
+                    other => other.to_string(),
+                },
+            );
+        }
+    }
+    // GA-only governance fields are preserved, not interpreted. These keys
+    // are batata-internal metadata, not part of the GA wire contract.
+    for (key, value) in [
+        ("ga.author", &form.author),
+        ("ga.changeDescription", &form.change_description),
+        ("ga.basedOnVersion", &form.based_on_version),
+        ("ga.status", &form.status),
+    ] {
+        if let Some(value) = value.as_deref().filter(|value| !value.is_empty()) {
+            card.metadata.insert(key.to_string(), value.to_string());
+        }
+    }
+    Ok(card)
 }
 
 fn normalize_namespace(ns: &str) -> &str {
@@ -238,8 +410,7 @@ async fn create_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentDraftForm>,
-    body: web::Json<AgentCard>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -249,9 +420,12 @@ async fn create_agent(
             .build()
     );
 
-    let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
+    let write = match resolve_agent_write(&req, &body, false) {
+        Ok(write) => write,
+        Err(response) => return response,
+    };
     match service
-        .register_agent(&body.into_inner(), ns, "manual")
+        .register_agent(&write.card, &write.namespace, "manual")
         .await
     {
         Ok(id) => HttpResponse::Ok().json(Result::success(id)),
@@ -265,8 +439,7 @@ async fn update_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentDraftForm>,
-    body: web::Json<AgentCard>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -276,9 +449,12 @@ async fn update_agent(
             .build()
     );
 
-    let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
+    let write = match resolve_agent_write(&req, &body, false) {
+        Ok(write) => write,
+        Err(response) => return response,
+    };
     match service
-        .update_agent_card(&body.into_inner(), ns, "manual")
+        .update_agent_card(&write.card, &write.namespace, "manual")
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success("ok")),
@@ -434,8 +610,7 @@ async fn create_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentDraftForm>,
-    body: web::Json<AgentCard>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -445,9 +620,12 @@ async fn create_draft(
             .build()
     );
 
-    let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
+    let write = match resolve_agent_write(&req, &body, true) {
+        Ok(write) => write,
+        Err(response) => return response,
+    };
     match service
-        .create_agent_draft(ns, &body.into_inner(), query.overwrite.unwrap_or(false))
+        .create_agent_draft(&write.namespace, &write.card, write.overwrite)
         .await
     {
         Ok(detail) => HttpResponse::Ok().json(Result::success(detail)),
@@ -461,8 +639,7 @@ async fn update_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentDraftForm>,
-    body: web::Json<AgentCard>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -472,11 +649,16 @@ async fn update_draft(
             .build()
     );
 
-    // `AgentCard` carries no namespace, so it comes from the query like every
-    // other form field.
-    let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
-    let card = body.into_inner();
-    match service.update_agent_draft(ns, &card).await {
+    // `AgentCard` carries no namespace, so it comes from the merged admin
+    // parameters (query or form body) like every other form field.
+    let write = match resolve_agent_write(&req, &body, true) {
+        Ok(write) => write,
+        Err(response) => return response,
+    };
+    match service
+        .update_agent_draft(&write.namespace, &write.card)
+        .await
+    {
         Ok(detail) => HttpResponse::Ok().json(Result::success(detail)),
         Err(e) => Result::<()>::http_internal_error(e),
     }
@@ -514,7 +696,7 @@ async fn submit_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
+    query: AdminForm<AgentVersionForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -540,7 +722,7 @@ async fn publish_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
+    query: AdminForm<AgentVersionForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -566,7 +748,7 @@ async fn force_publish_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
+    query: AdminForm<AgentVersionForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -592,7 +774,7 @@ async fn redraft_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
+    query: AdminForm<AgentVersionForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -618,7 +800,7 @@ async fn online_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
+    query: AdminForm<AgentVersionForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -644,7 +826,7 @@ async fn offline_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
+    query: AdminForm<AgentVersionForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -670,8 +852,7 @@ async fn update_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
-    body: web::Json<AgentLabelsForm>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -681,6 +862,16 @@ async fn update_labels(
             .build()
     );
 
+    let params = AdminParams::from_request(&req, &body);
+    let query: AgentVersionForm = match params.decode() {
+        Ok(query) => query,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
     let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
     let name = match query.agent_name.as_deref().filter(|n| !n.is_empty()) {
         Some(n) => n,
@@ -691,11 +882,17 @@ async fn update_labels(
             );
         }
     };
+    let labels = match params.labels(&body) {
+        Ok(labels) => labels,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
 
-    match service
-        .update_agent_labels(ns, name, body.into_inner().labels)
-        .await
-    {
+    match service.update_agent_labels(ns, name, labels).await {
         Ok(labels) => HttpResponse::Ok().json(Result::success(labels)),
         Err(e) => Result::<()>::http_internal_error(e),
     }
@@ -707,7 +904,7 @@ async fn update_scope(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<dyn A2aAgentService>>,
-    query: web::Query<AgentVersionForm>,
+    query: AdminForm<AgentVersionForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -765,4 +962,133 @@ pub fn admin_routes() -> actix_web::Scope {
         .service(offline_agent)
         .service(update_labels)
         .service(update_scope)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::test::TestRequest;
+
+    fn ga_form() -> AgentWriteForm {
+        AgentWriteForm {
+            namespace_id: Some("ns-1".to_string()),
+            agent_name: Some("ga-agent".to_string()),
+            version: Some("2.1.0".to_string()),
+            display_name: Some("GA Agent".to_string()),
+            description: Some("created from a GA form".to_string()),
+            icon_url: Some("https://example.com/icon.png".to_string()),
+            provider: Some(r#"{"name":"acme","url":"https://acme.example"}"#.to_string()),
+            tags: Some(r#"["coding","writing"]"#.to_string()),
+            extensions: Some(r#"{"team":"ai","seats":3}"#.to_string()),
+            author: Some("alice".to_string()),
+            change_description: Some("initial draft".to_string()),
+            based_on_version: Some("2.0.0".to_string()),
+            status: Some("ONLINE".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ga_flat_form_maps_every_supported_field() {
+        let card = agent_card_from_form(&ga_form(), true).expect("flat form must map");
+        assert_eq!(card.name, "ga-agent");
+        assert_eq!(card.version, "2.1.0");
+        assert_eq!(card.display_name, "GA Agent");
+        assert_eq!(card.description, "created from a GA form");
+        assert_eq!(
+            card.icon_url.as_deref(),
+            Some("https://example.com/icon.png")
+        );
+        let provider = card.provider.expect("provider must map");
+        assert_eq!(provider.organization, "acme");
+        assert_eq!(provider.url, "https://acme.example");
+        assert_eq!(card.tags, vec!["coding", "writing"]);
+        assert_eq!(card.metadata.get("team").map(String::as_str), Some("ai"));
+        assert_eq!(card.metadata.get("seats").map(String::as_str), Some("3"));
+        assert_eq!(
+            card.metadata.get("ga.author").map(String::as_str),
+            Some("alice")
+        );
+        assert_eq!(
+            card.metadata
+                .get("ga.changeDescription")
+                .map(String::as_str),
+            Some("initial draft")
+        );
+        assert_eq!(
+            card.metadata.get("ga.basedOnVersion").map(String::as_str),
+            Some("2.0.0")
+        );
+        assert_eq!(
+            card.metadata.get("ga.status").map(String::as_str),
+            Some("ONLINE")
+        );
+    }
+
+    #[test]
+    fn ga_call_interfaces_are_rejected_instead_of_dropped() {
+        let mut form = ga_form();
+        form.call_interfaces = Some(r#"[{"protocol":"JSONRPC"}]"#.to_string());
+        assert!(agent_card_from_form(&form, true).is_err());
+        // An empty list is harmless and must stay accepted.
+        form.call_interfaces = Some("[]".to_string());
+        assert!(agent_card_from_form(&form, true).is_ok());
+    }
+
+    #[test]
+    fn flat_form_identity_and_version_are_validated() {
+        let mut form = ga_form();
+        form.agent_name = Some("  ".to_string());
+        assert!(agent_card_from_form(&form, true).is_err());
+        form.agent_name = Some("ga-agent".to_string());
+        form.version = None;
+        assert!(agent_card_from_form(&form, true).is_err());
+        // `PUT /agents` has no version in GA, so it must still work.
+        assert!(agent_card_from_form(&form, false).is_ok());
+    }
+
+    #[test]
+    fn malformed_ga_json_fields_are_rejected() {
+        let mut form = ga_form();
+        form.tags = Some("not json".to_string());
+        assert!(agent_card_from_form(&form, true).is_err());
+        form.tags = Some(r#"["coding"]"#.to_string());
+        form.extensions = Some(r#"["not","an","object"]"#.to_string());
+        assert!(agent_card_from_form(&form, true).is_err());
+    }
+
+    #[test]
+    fn ga_form_body_is_merged_with_the_query_which_wins() {
+        let req =
+            TestRequest::with_uri("/v3/admin/ai/agents/draft?namespaceId=ns-query&overwrite=true")
+                .insert_header(("content-type", "application/x-www-form-urlencoded"))
+                .to_http_request();
+        let body = b"namespaceId=ns-body&agentName=ga-agent&version=3.0.0&overwrite=false";
+        let write = resolve_agent_write(&req, body, true).expect("form write");
+        assert_eq!(write.namespace, "ns-query");
+        assert!(write.overwrite, "the query value must win");
+        assert_eq!(write.card.name, "ga-agent");
+        assert_eq!(write.card.version, "3.0.0");
+    }
+
+    #[test]
+    fn nested_json_agent_card_wire_is_unchanged() {
+        let req =
+            TestRequest::with_uri("/v3/admin/ai/agents/draft?namespaceId=ns-1&overwrite=true")
+                .insert_header(("content-type", "application/json"))
+                .to_http_request();
+        let card = AgentCard {
+            name: "json-agent".to_string(),
+            version: "4.0.0".to_string(),
+            description: "nested wire".to_string(),
+            ..Default::default()
+        };
+        let body = serde_json::to_vec(&card).expect("serialize card");
+        let write = resolve_agent_write(&req, &body, true).expect("json write");
+        assert_eq!(write.namespace, "ns-1");
+        assert!(write.overwrite);
+        assert_eq!(write.card.name, "json-agent");
+        assert_eq!(write.card.version, "4.0.0");
+        assert_eq!(write.card.description, "nested wire");
+    }
 }

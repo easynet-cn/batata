@@ -2782,3 +2782,1560 @@ async fn test_agents_update_labels_and_scope() {
             .unwrap()
     );
 }
+
+// ============================================================================
+// AI resource facades (`F-NAC-MAINT-007`) — GA delegates' read surface + ZIP I/O
+// ============================================================================
+
+use wiremock::{Match, Request};
+
+/// Return true when `needle` occurs anywhere in `haystack`.
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Guard the multipart contract: both GA and batata look for a part named
+/// `file`, and the ZIP bytes must be transmitted unchanged.
+struct ZipFilePart(Vec<u8>);
+
+impl Match for ZipFilePart {
+    fn matches(&self, request: &Request) -> bool {
+        contains_bytes(&request.body, b"name=\"file\"") && contains_bytes(&request.body, &self.0)
+    }
+}
+
+fn zip_bytes() -> &'static [u8] {
+    b"PK\x03\x04-batata-zip-fixture"
+}
+
+/// Decode one `application/x-www-form-urlencoded` component.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                if let Ok(value) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
+                    out.push(value);
+                    i += 3;
+                } else {
+                    out.push(b'%');
+                    i += 1;
+                }
+            }
+            other => {
+                out.push(other);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Parse a urlencoded body into an exact, comparable field map.
+fn form_fields(request: &Request) -> HashMap<String, String> {
+    String::from_utf8_lossy(&request.body)
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            Some((percent_decode(key), percent_decode(value)))
+        })
+        .collect()
+}
+
+/// Guard the *whole* form contract: a missing, extra or renamed field must not
+/// match, so a mutant that drops an optional parameter turns the test red.
+struct FormFields(HashMap<String, String>);
+
+impl Match for FormFields {
+    fn matches(&self, request: &Request) -> bool {
+        form_fields(request) == self.0
+    }
+}
+
+fn form(expected: &[(&str, &str)]) -> FormFields {
+    FormFields(
+        expected
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+    )
+}
+
+/// Mount one AI ADMIN write endpoint. POST/PUT carry identity in the form body;
+/// DELETE carries it in the query string, matching GA's `ClientHttpProxy`.
+async fn mount_ai_write(
+    server: &MockServer,
+    verb: &'static str,
+    route: &'static str,
+    expected: &[(&str, &str)],
+    data: serde_json::Value,
+) {
+    let mut builder = Mock::given(method(verb)).and(path(route));
+    if verb == "DELETE" {
+        for (key, value) in expected {
+            builder = builder.and(query_param((*key).to_string(), (*value).to_string()));
+        }
+    } else {
+        builder = builder.and(form(expected));
+    }
+    builder.respond_with(api_ok_raw(data)).mount(server).await;
+}
+
+#[tokio::test]
+async fn test_skill_reads_and_download() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/skills"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("skillName", "my-skill"))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "namespaceId": "ns-1",
+            "name": "my-skill",
+            "owner": "alice",
+            "enable": true,
+            "labels": {"latest": "1.0.0"},
+            "onlineCnt": 2,
+            "versions": [{"version": "1.0.0", "status": "online", "commitMsg": "first"}],
+            "untypedGaField": "kept"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/skills/version"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("skillName", "my-skill"))
+        .and(query_param("version", "1.0"))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "namespaceId": "ns-1",
+            "name": "my-skill",
+            "skillMd": "# demo",
+            "resource": {
+                "template::demo.json": {
+                    "name": "demo.json",
+                    "type": "template",
+                    "content": "{}"
+                }
+            },
+            "version": "1.0"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/skills/version/download"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("skillName", "my-skill"))
+        .and(query_param("version", "1.0"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"SKILLZIP".to_vec()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/skills/list"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("skillName", "demo"))
+        .and(query_param("search", "blur"))
+        .and(query_param("orderBy", "download_count"))
+        .and(query_param("owner", "alice"))
+        .and(query_param("scope", "PUBLIC"))
+        .and(query_param("bizTag", "chat"))
+        .and(query_param("pageNo", "2"))
+        .and(query_param("pageSize", "5"))
+        .respond_with(api_ok_raw(page_json(
+            &[serde_json::json!({"name": "demo", "downloadCount": 9, "versions": []})],
+            1,
+        )))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let meta = client.skill_get_meta("ns-1", "my-skill").await.unwrap();
+    assert_eq!(meta.governance.name.as_deref(), Some("my-skill"));
+    assert_eq!(meta.governance.owner.as_deref(), Some("alice"));
+    assert_eq!(meta.governance.enable, Some(true));
+    assert_eq!(
+        meta.governance.labels.get("latest").map(String::as_str),
+        Some("1.0.0")
+    );
+    assert_eq!(meta.versions.len(), 1);
+    assert_eq!(meta.versions[0].commit_msg.as_deref(), Some("first"));
+    assert_eq!(meta.extra["untypedGaField"], "kept");
+    assert!(!meta.extra.contains_key("versions"));
+    let version = client
+        .skill_get_version_detail("ns-1", "my-skill", "1.0")
+        .await
+        .unwrap();
+    assert_eq!(version.name.as_deref(), Some("my-skill"));
+    assert_eq!(version.skill_md.as_deref(), Some("# demo"));
+    assert_eq!(
+        version.resource["template::demo.json"]
+            .resource_type
+            .as_deref(),
+        Some("template")
+    );
+    assert_eq!(version.extra["version"], "1.0");
+    let bytes = client
+        .skill_download_version("ns-1", "my-skill", "1.0")
+        .await
+        .unwrap();
+    assert_eq!(bytes, b"SKILLZIP");
+    let page = client
+        .skill_list(
+            "ns-1",
+            Some("demo"),
+            Some("blur"),
+            Some("download_count"),
+            Some("alice"),
+            Some("PUBLIC"),
+            Some("chat"),
+            2,
+            5,
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.total_count, 1);
+    assert_eq!(page.page_items[0].governance.name.as_deref(), Some("demo"));
+    assert_eq!(page.page_items[0].governance.download_count, Some(9));
+    assert!(page.page_items[0].extra.contains_key("versions"));
+}
+
+#[tokio::test]
+async fn test_skill_zip_uploads() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ai/skills/upload"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("overwrite", "true"))
+        .and(ZipFilePart(zip_bytes().to_vec()))
+        .respond_with(api_ok_raw(serde_json::json!("my-skill")))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ai/skills/upload/precheck"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("overwrite", "false"))
+        .and(ZipFilePart(zip_bytes().to_vec()))
+        .respond_with(api_ok_raw(serde_json::json!([{
+            "namespaceId": "ns-1",
+            "skillName": "my-skill",
+            "precheckCode": "READY",
+            "exists": false
+        }])))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ai/skills/upload/batch"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("overwrite", "true"))
+        .and(ZipFilePart(zip_bytes().to_vec()))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "succeeded": ["my-skill"],
+            "results": [{"name": "my-skill", "success": true, "errorCode": "SUCCESS"}],
+            "successCount": 1
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    assert_eq!(
+        client
+            .skill_upload_from_zip("ns-1", zip_bytes(), true, None, None, false, None)
+            .await
+            .unwrap(),
+        "my-skill"
+    );
+    let precheck = client
+        .skill_precheck_upload("ns-1", zip_bytes())
+        .await
+        .unwrap();
+    assert_eq!(precheck.len(), 1);
+    assert_eq!(precheck[0].skill_name.as_deref(), Some("my-skill"));
+    assert_eq!(precheck[0].precheck_code.as_deref(), Some("READY"));
+    let batch = client
+        .skill_batch_upload("ns-1", zip_bytes(), true)
+        .await
+        .unwrap();
+    assert_eq!(batch.succeeded, vec!["my-skill".to_string()]);
+    assert_eq!(batch.results[0].error_code.as_deref(), Some("SUCCESS"));
+    assert_eq!(batch.extra["successCount"], 1);
+}
+
+#[tokio::test]
+async fn test_prompt_reads_and_delete() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/prompt/list"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("promptKey", "hello"))
+        .and(query_param("search", "blur"))
+        .and(query_param("bizTags", "chat"))
+        .and(query_param("pageNo", "1"))
+        .and(query_param("pageSize", "20"))
+        .respond_with(api_ok_raw(page_json(
+            &[serde_json::json!({
+                "promptKey": "hello",
+                "schemaVersion": 1,
+                "versionDetails": []
+            })],
+            1,
+        )))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/prompt/versions"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("promptKey", "hello"))
+        .and(query_param("pageNo", "1"))
+        .and(query_param("pageSize", "10"))
+        .respond_with(api_ok_raw(page_json(
+            &[serde_json::json!({"promptKey": "hello", "version": "1.0", "status": "online"})],
+            1,
+        )))
+        .mount(&server)
+        .await;
+    for (route_path, value) in [
+        ("/v3/admin/ai/prompt/metadata", "metadata"),
+        ("/v3/admin/ai/prompt/governance", "governance"),
+        ("/v3/admin/ai/prompt/version", "version"),
+        ("/v3/admin/ai/prompt/detail", "detail"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route_path))
+            .and(query_param("namespaceId", "ns-1"))
+            .and(query_param("promptKey", "hello"))
+            .respond_with(api_ok_raw(serde_json::json!({
+                "kind": value,
+                "promptKey": "hello",
+                "version": "1.0",
+                "template": "hello {{name}}",
+                "schemaVersion": 1
+            })))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/prompt/version/download"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("promptKey", "hello"))
+        .and(query_param("version", "1.0"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"PROMPTZIP".to_vec()))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/v3/admin/ai/prompt"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("promptKey", "hello"))
+        .respond_with(api_ok_raw(serde_json::json!("ok")))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let listed = client
+        .prompt_list("ns-1", Some("hello"), Some("blur"), Some("chat"), 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(listed.page_items[0].prompt_key.as_deref(), Some("hello"));
+    assert_eq!(listed.page_items[0].schema_version, Some(1));
+    assert!(listed.page_items[0].extra.contains_key("versionDetails"));
+    let versions = client
+        .prompt_list_versions("ns-1", "hello", 1, 10)
+        .await
+        .unwrap();
+    assert_eq!(versions.page_items[0].version.as_deref(), Some("1.0"));
+    assert_eq!(versions.page_items[0].status.as_deref(), Some("online"));
+    let meta = client.prompt_get_meta("ns-1", "hello").await.unwrap();
+    assert_eq!(meta.prompt_key.as_deref(), Some("hello"));
+    assert_eq!(meta.extra["kind"], "metadata");
+    assert!(!meta.extra.contains_key("schemaVersion"));
+    let governance = client
+        .prompt_get_governance_detail("ns-1", "hello")
+        .await
+        .unwrap();
+    assert!(governance.versions.is_empty());
+    assert_eq!(governance.extra["kind"], "governance");
+    let version = client
+        .prompt_get_version_detail("ns-1", "hello", "1.0")
+        .await
+        .unwrap();
+    assert_eq!(version.version.as_deref(), Some("1.0"));
+    assert_eq!(version.template.as_deref(), Some("hello {{name}}"));
+    assert_eq!(version.extra["kind"], "version");
+    assert!(!version.extra.contains_key("template"));
+    let detail = client
+        .prompt_query_detail("ns-1", "hello", Some("1.0"), Some("stable"), Some("md5"))
+        .await
+        .unwrap();
+    assert_eq!(detail.template.as_deref(), Some("hello {{name}}"));
+    assert_eq!(detail.extra["kind"], "detail");
+    assert!(!detail.extra.contains_key("template"));
+    assert_eq!(
+        client
+            .prompt_download_version("ns-1", "hello", "1.0")
+            .await
+            .unwrap(),
+        b"PROMPTZIP"
+    );
+    assert!(client.prompt_delete("ns-1", "hello").await.unwrap());
+}
+
+#[tokio::test]
+async fn test_agentspec_reads_upload_and_delete() {
+    let server = MockServer::start().await;
+    for (route_path, value) in [
+        ("/v3/admin/ai/agentspecs", "detail"),
+        ("/v3/admin/ai/agentspecs/version", "version"),
+        ("/v3/admin/ai/agentspecs/version/meta", "version-meta"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route_path))
+            .and(query_param("namespaceId", "ns-1"))
+            .and(query_param("agentSpecName", "my-spec"))
+            .respond_with(api_ok_raw(serde_json::json!({
+                "kind": value,
+                "namespaceId": "ns-1",
+                "name": "my-spec",
+                "owner": "alice",
+                "content": "spec-body"
+            })))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agentspecs/list"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("agentSpecName", "my-spec"))
+        .and(query_param("search", "blur"))
+        .and(query_param("pageNo", "1"))
+        .and(query_param("pageSize", "20"))
+        .respond_with(api_ok_raw(page_json(
+            &[serde_json::json!({"namespaceId": "ns-1", "name": "my-spec"})],
+            1,
+        )))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agentspecs/version/download"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("agentSpecName", "my-spec"))
+        .and(query_param("version", "1.0"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"SPECZIP".to_vec()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ai/agentspecs/upload"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("overwrite", "true"))
+        .and(ZipFilePart(zip_bytes().to_vec()))
+        .respond_with(api_ok_raw(serde_json::json!("my-spec")))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/v3/admin/ai/agentspecs"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("agentSpecName", "my-spec"))
+        .respond_with(api_ok_raw(serde_json::json!(true)))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let detail = client
+        .agentspec_get_detail("ns-1", "my-spec")
+        .await
+        .unwrap();
+    assert_eq!(detail.governance.name.as_deref(), Some("my-spec"));
+    assert_eq!(detail.governance.owner.as_deref(), Some("alice"));
+    assert_eq!(detail.extra["kind"], "detail");
+    let version = client
+        .agentspec_get_version_detail("ns-1", "my-spec", "1.0")
+        .await
+        .unwrap();
+    assert_eq!(version.name.as_deref(), Some("my-spec"));
+    assert_eq!(version.extra["kind"], "version");
+    assert!(!version.extra.contains_key("content"));
+    let version_meta = client
+        .agentspec_get_version_meta("ns-1", "my-spec", "1.0")
+        .await
+        .unwrap();
+    assert_eq!(version_meta.name.as_deref(), Some("my-spec"));
+    assert_eq!(version_meta.extra["kind"], "version-meta");
+    let page = client
+        .agentspec_list("ns-1", Some("my-spec"), Some("blur"), 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(page.page_items[0].name.as_deref(), Some("my-spec"));
+    assert_eq!(
+        client
+            .agentspec_download_version("ns-1", "my-spec", "1.0")
+            .await
+            .unwrap(),
+        b"SPECZIP"
+    );
+    assert_eq!(
+        client
+            .agentspec_upload_from_zip("ns-1", zip_bytes(), true)
+            .await
+            .unwrap(),
+        "my-spec"
+    );
+    assert!(client.agentspec_delete("ns-1", "my-spec").await.unwrap());
+}
+
+#[tokio::test]
+async fn test_skill_delete_and_pipeline_reads() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/v3/admin/ai/skills"))
+        .and(query_param("namespaceId", ""))
+        .and(query_param("skillName", "my-skill"))
+        .respond_with(api_ok_raw(serde_json::json!(true)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/pipelines/detail"))
+        .and(query_param("pipelineId", "pipe-1"))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "id": "pipe-1",
+            "executionId": "pipe-1",
+            "resourceType": "skill",
+            "status": "SUCCESS"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/pipelines/list"))
+        .and(query_param("resourceType", "skill"))
+        .and(query_param("resourceName", "my-skill"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("version", "1.0"))
+        .and(query_param("pageNo", "1"))
+        .and(query_param("pageSize", "20"))
+        .respond_with(api_ok_raw(page_json(
+            &[serde_json::json!({
+                "id": "pipe-1",
+                "executionId": "pipe-1",
+                "status": "SUCCESS"
+            })],
+            1,
+        )))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    assert!(client.skill_delete("", "my-skill").await.unwrap());
+    let execution = client.pipeline_get_detail("pipe-1").await.unwrap();
+    assert_eq!(execution.execution_id.as_deref(), Some("pipe-1"));
+    assert_eq!(execution.status.as_deref(), Some("SUCCESS"));
+    assert_eq!(execution.extra["id"], "pipe-1");
+    assert!(!execution.extra.contains_key("executionId"));
+    let page = client
+        .pipeline_list_executions("skill", Some("my-skill"), Some("ns-1"), Some("1.0"), 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(page.page_items[0].execution_id.as_deref(), Some("pipe-1"));
+    assert_eq!(page.page_items[0].status.as_deref(), Some("SUCCESS"));
+    assert_eq!(page.page_items[0].extra["id"], "pipe-1");
+}
+
+/// A non-2xx response must surface as an error for reads, downloads and
+/// multipart uploads alike, rather than being decoded as an empty payload.
+#[tokio::test]
+async fn test_ai_resource_error_paths() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/skills"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/skills/version/download"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ai/skills/upload"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    assert!(client.skill_get_meta("", "my-skill").await.is_err());
+    assert!(
+        client
+            .skill_download_version("", "my-skill", "1.0")
+            .await
+            .is_err()
+    );
+    assert!(
+        client
+            .skill_upload_from_zip("", zip_bytes(), false, None, None, false, None)
+            .await
+            .is_err()
+    );
+}
+
+// ============================================================================
+// AI resource write facade (`F-NAC-MAINT-007`, batch 7)
+// ============================================================================
+
+/// Every skill lifecycle endpoint: verb, path and the exact form/query fields.
+#[tokio::test]
+async fn test_skill_write_lifecycle() {
+    let server = MockServer::start().await;
+    let card = r#"{"name":"demo"}"#;
+    let labels = r#"{"latest":"1.0.0"}"#;
+    let tags = r#"["chat"]"#;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/skills/draft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("basedOnVersion", "1.0.0"),
+            ("targetVersion", "1.1.0"),
+            ("skillCard", card),
+            ("commitMsg", "msg"),
+        ],
+        serde_json::json!("1.1.0"),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/skills/draft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("version", "1.1.0"),
+            ("skillCard", card),
+            ("setAsLatest", "true"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "DELETE",
+        "/v3/admin/ai/skills/draft",
+        &[("namespaceId", "ns-1"), ("skillName", "demo")],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/skills/submit",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!("1.1.0"),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/skills/publish",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("version", "1.1.0"),
+            ("updateLatestLabel", "false"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/skills/force-publish",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/skills/redraft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/skills/labels",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("labels", labels),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/skills/biz-tags",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("bizTags", tags),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/skills/online",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("scope", "skill"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/skills/offline",
+        &[("namespaceId", "ns-1"), ("skillName", "demo")],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/skills/scope",
+        &[
+            ("namespaceId", "ns-1"),
+            ("skillName", "demo"),
+            ("scope", "PUBLIC"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+
+    let client = make_client(&server).await;
+    assert_eq!(
+        client
+            .skill_create_draft(
+                "ns-1",
+                Some("demo"),
+                Some("1.0.0"),
+                Some("1.1.0"),
+                Some(card),
+                Some("msg"),
+            )
+            .await
+            .unwrap(),
+        "1.1.0"
+    );
+    assert!(
+        client
+            .skill_update_draft("ns-1", Some("demo"), Some("1.1.0"), card, Some(true), None,)
+            .await
+            .unwrap()
+    );
+    assert!(client.skill_delete_draft("ns-1", "demo").await.unwrap());
+    assert_eq!(
+        client.skill_submit("ns-1", "demo", "1.1.0").await.unwrap(),
+        "1.1.0"
+    );
+    assert!(
+        client
+            .skill_publish("ns-1", "demo", "1.1.0", Some(false))
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .skill_force_publish("ns-1", "demo", "1.1.0", None)
+            .await
+            .unwrap()
+    );
+    assert!(client.skill_redraft("ns-1", "demo", "1.1.0").await.unwrap());
+    assert!(
+        client
+            .skill_update_labels("ns-1", "demo", labels)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .skill_update_biz_tags("ns-1", "demo", tags)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .skill_change_online_status("ns-1", "demo", Some("skill"), Some("1.1.0"), true)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .skill_change_online_status("ns-1", "demo", None, None, false)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .skill_update_scope("ns-1", "demo", "PUBLIC")
+            .await
+            .unwrap()
+    );
+}
+
+/// Every prompt lifecycle endpoint plus the four legacy (deprecated) APIs.
+#[tokio::test]
+async fn test_prompt_write_lifecycle() {
+    let server = MockServer::start().await;
+    let variables = r#"[{"name":"who"}]"#;
+    let labels = r#"{"stable":"1.0.0"}"#;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt/draft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.1.0"),
+            ("targetVersion", "1.1.0"),
+            ("basedOnVersion", "1.0.0"),
+            ("template", "Hello {{who}}"),
+            ("variables", variables),
+            ("commitMsg", "msg"),
+            ("description", "greeting"),
+            ("bizTags", "chat"),
+        ],
+        serde_json::json!("1.1.0"),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/prompt/draft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("template", "Hello {{who}}"),
+            ("variables", variables),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "DELETE",
+        "/v3/admin/ai/prompt/draft",
+        &[("namespaceId", "ns-1"), ("promptKey", "hello")],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt/submit",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!("1.1.0"),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt/publish",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.1.0"),
+            ("updateLatestLabel", "true"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt/force-publish",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt/redraft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt/online",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt/offline",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.0.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/prompt/labels",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("labels", labels),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/prompt/description",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("description", "greeting"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/prompt/biz-tags",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("bizTags", "chat"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/prompt/label",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("label", "stable"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "DELETE",
+        "/v3/admin/ai/prompt/label",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("label", "stable"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/prompt",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("version", "1.1.0"),
+            ("template", "Hello {{who}}"),
+            ("commitMsg", "msg"),
+            ("description", "greeting"),
+            ("bizTags", "chat"),
+            ("variables", variables),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/prompt/metadata",
+        &[
+            ("namespaceId", "ns-1"),
+            ("promptKey", "hello"),
+            ("description", "greeting"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+
+    let client = make_client(&server).await;
+    assert_eq!(
+        client
+            .prompt_create_draft(
+                "ns-1",
+                "hello",
+                Some("1.1.0"),
+                Some("1.0.0"),
+                "Hello {{who}}",
+                Some(variables),
+                Some("msg"),
+                Some("greeting"),
+                Some("chat"),
+            )
+            .await
+            .unwrap(),
+        "1.1.0"
+    );
+    assert!(
+        client
+            .prompt_update_draft("ns-1", "hello", "Hello {{who}}", Some(variables), None)
+            .await
+            .unwrap()
+    );
+    assert!(client.prompt_delete_draft("ns-1", "hello").await.unwrap());
+    assert_eq!(
+        client
+            .prompt_submit("ns-1", "hello", "1.1.0")
+            .await
+            .unwrap(),
+        "1.1.0"
+    );
+    assert!(
+        client
+            .prompt_publish("ns-1", "hello", "1.1.0", Some(true))
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_force_publish("ns-1", "hello", "1.1.0", None)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_redraft("ns-1", "hello", "1.1.0")
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_change_online_status("ns-1", "hello", "1.1.0", true)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_change_online_status("ns-1", "hello", "1.0.0", false)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_update_labels("ns-1", "hello", labels)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_update_description("ns-1", "hello", "greeting")
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_update_biz_tags("ns-1", "hello", "chat")
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_bind_label("ns-1", "hello", "stable", "1.1.0")
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_unbind_label("ns-1", "hello", "stable")
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_publish_prompt(
+                "ns-1",
+                "hello",
+                "1.1.0",
+                "Hello {{who}}",
+                Some("msg"),
+                Some("greeting"),
+                Some("chat"),
+                Some(variables),
+            )
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .prompt_update_metadata("ns-1", "hello", Some("greeting"), None)
+            .await
+            .unwrap()
+    );
+}
+
+/// Every agentspec lifecycle endpoint and GA's admin item list.
+#[tokio::test]
+async fn test_agentspec_write_lifecycle() {
+    let server = MockServer::start().await;
+    let card = r#"{"name":"my-spec"}"#;
+    let labels = r#"{"latest":"1.0.0"}"#;
+    let tags = r#"["chat"]"#;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/agentspecs/draft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("basedOnVersion", "1.0.0"),
+            ("targetVersion", "1.1.0"),
+            ("agentSpecCard", card),
+            ("commitMsg", "msg"),
+        ],
+        serde_json::json!("1.1.0"),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/agentspecs/draft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("version", "1.1.0"),
+            ("agentSpecCard", card),
+            ("setAsLatest", "false"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "DELETE",
+        "/v3/admin/ai/agentspecs/draft",
+        &[("namespaceId", "ns-1"), ("agentSpecName", "my-spec")],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/agentspecs/submit",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!("1.1.0"),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/agentspecs/publish",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("version", "1.1.0"),
+            ("updateLatestLabel", "true"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/agentspecs/force-publish",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/agentspecs/redraft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/agentspecs/labels",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("labels", labels),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/agentspecs/biz-tags",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("bizTags", tags),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/agentspecs/online",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("scope", "spec"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "POST",
+        "/v3/admin/ai/agentspecs/offline",
+        &[("namespaceId", "ns-1"), ("agentSpecName", "my-spec")],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/agentspecs/scope",
+        &[
+            ("namespaceId", "ns-1"),
+            ("agentSpecName", "my-spec"),
+            ("scope", "PRIVATE"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agentspecs/list"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("agentSpecName", "my-spec"))
+        .and(query_param("search", "blur"))
+        .and(query_param("orderBy", "download_count"))
+        .and(query_param("owner", "alice"))
+        .and(query_param("scope", "PUBLIC"))
+        .and(query_param("pageNo", "2"))
+        .and(query_param("pageSize", "5"))
+        .respond_with(api_ok_raw(page_json(
+            &[serde_json::json!({"name": "my-spec"})],
+            1,
+        )))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let page = client
+        .agentspec_list_admin_items(
+            "ns-1",
+            Some("my-spec"),
+            Some("blur"),
+            Some("download_count"),
+            Some("alice"),
+            Some("PUBLIC"),
+            2,
+            5,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        page.page_items[0].governance.name.as_deref(),
+        Some("my-spec")
+    );
+    assert_eq!(
+        client
+            .agentspec_create_draft(
+                "ns-1",
+                "my-spec",
+                Some("1.0.0"),
+                Some("1.1.0"),
+                Some(card),
+                Some("msg"),
+            )
+            .await
+            .unwrap(),
+        "1.1.0"
+    );
+    assert!(
+        client
+            .agentspec_update_draft(
+                "ns-1",
+                Some("my-spec"),
+                Some("1.1.0"),
+                card,
+                Some(false),
+                None,
+            )
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_delete_draft("ns-1", "my-spec")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        client
+            .agentspec_submit("ns-1", "my-spec", "1.1.0")
+            .await
+            .unwrap(),
+        "1.1.0"
+    );
+    assert!(
+        client
+            .agentspec_publish("ns-1", "my-spec", "1.1.0", Some(true))
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_force_publish("ns-1", "my-spec", "1.1.0", None)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_redraft("ns-1", "my-spec", "1.1.0")
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_update_labels("ns-1", "my-spec", labels)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_update_biz_tags("ns-1", "my-spec", tags)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_change_online_status("ns-1", "my-spec", Some("spec"), Some("1.1.0"), true,)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_change_online_status("ns-1", "my-spec", None, None, false)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .agentspec_update_scope("ns-1", "my-spec", "PRIVATE")
+            .await
+            .unwrap()
+    );
+}
+
+/// The four MCP resource updates that batch 1 left out.
+#[tokio::test]
+async fn test_mcp_write_lifecycle() {
+    let server = MockServer::start().await;
+    let labels = r#"{"latest":"1.0.0"}"#;
+    mount_ai_write(
+        &server,
+        "DELETE",
+        "/v3/admin/ai/mcp/draft",
+        &[
+            ("namespaceId", "ns-1"),
+            ("mcpName", "my-mcp"),
+            ("version", "1.1.0"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/mcp/labels",
+        &[
+            ("namespaceId", "ns-1"),
+            ("mcpName", "my-mcp"),
+            ("labels", labels),
+        ],
+        serde_json::json!({"latest": "1.0.0"}),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/mcp/status",
+        &[
+            ("namespaceId", "ns-1"),
+            ("mcpName", "my-mcp"),
+            ("enabled", "false"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+    mount_ai_write(
+        &server,
+        "PUT",
+        "/v3/admin/ai/mcp/scope",
+        &[
+            ("namespaceId", "ns-1"),
+            ("mcpName", "my-mcp"),
+            ("scope", "PRIVATE"),
+        ],
+        serde_json::json!(true),
+    )
+    .await;
+
+    let client = make_client(&server).await;
+    assert!(
+        client
+            .mcp_server_delete_draft("ns-1", "my-mcp", "1.1.0")
+            .await
+            .unwrap()
+    );
+    let updated = client
+        .mcp_server_update_labels("ns-1", "my-mcp", labels)
+        .await
+        .unwrap();
+    assert_eq!(updated.get("latest").map(String::as_str), Some("1.0.0"));
+    assert!(
+        client
+            .mcp_server_update_status("ns-1", "my-mcp", false)
+            .await
+            .unwrap()
+    );
+    assert!(
+        client
+            .mcp_server_update_scope("ns-1", "my-mcp", "PRIVATE")
+            .await
+            .unwrap()
+    );
+}
+
+/// A non-2xx write must surface as an error for POST, PUT and DELETE alike.
+#[tokio::test]
+async fn test_ai_write_error_paths() {
+    let server = MockServer::start().await;
+    for (verb, route) in [
+        ("POST", "/v3/admin/ai/skills/draft"),
+        ("PUT", "/v3/admin/ai/skills/labels"),
+        ("DELETE", "/v3/admin/ai/skills/draft"),
+    ] {
+        Mock::given(method(verb))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+            .mount(&server)
+            .await;
+    }
+
+    let client = make_client(&server).await;
+    assert!(
+        client
+            .skill_create_draft("ns-1", Some("demo"), None, None, Some("{}"), None)
+            .await
+            .is_err()
+    );
+    assert!(
+        client
+            .skill_update_labels("ns-1", "demo", "{}")
+            .await
+            .is_err()
+    );
+    assert!(client.skill_delete_draft("ns-1", "demo").await.is_err());
+}
+
+/// A successful HTTP status with a failing envelope code is still a failed
+/// write: GA checks `ErrorCode.SUCCESS` rather than the transport status.
+#[tokio::test]
+async fn test_ai_write_failure_code_is_false() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/skills/labels"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 500,
+            "message": "denied",
+            "data": false
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    assert!(
+        !client
+            .skill_update_labels("ns-1", "demo", "{}")
+            .await
+            .unwrap()
+    );
+}

@@ -220,9 +220,17 @@ async fn status_of(store: &TestStore, version: &str) -> Option<String> {
 async fn force_publish_bypasses_review() {
     let (store, svc) = setup().await;
     store.clean(NAME).await;
-    svc.create_draft(NS, NAME, None, Some("1.0.0"), Some(&test_skill()), "tester")
-        .await
-        .expect("create draft");
+    svc.create_draft(
+        NS,
+        NAME,
+        None,
+        Some("1.0.0"),
+        Some(&test_skill()),
+        "tester",
+        None,
+    )
+    .await
+    .expect("create draft");
     let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/console/ai/skills";
@@ -258,9 +266,17 @@ async fn force_publish_bypasses_review() {
 async fn redraft_returns_a_version_to_draft() {
     let (store, svc) = setup().await;
     store.clean(NAME).await;
-    svc.create_draft(NS, NAME, None, Some("1.0.0"), Some(&test_skill()), "tester")
-        .await
-        .expect("create draft");
+    svc.create_draft(
+        NS,
+        NAME,
+        None,
+        Some("1.0.0"),
+        Some(&test_skill()),
+        "tester",
+        None,
+    )
+    .await
+    .expect("create draft");
     let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/console/ai/skills";

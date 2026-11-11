@@ -4,22 +4,25 @@ use std::collections::HashMap;
 
 use batata_client::model::OkOrBool;
 use batata_client::{BatataHttpClient, HttpClientConfig, TlsOptions};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     config::MaintainerClientConfig,
     constants::admin_api_path,
     model::common::ApiResponse,
     model::{
-        AgentCard, AgentCardDetailInfo, AgentCardVersionInfo, AgentVersionDetail, AgentVersionInfo,
+        AgentCard, AgentCardDetailInfo, AgentCardVersionInfo, AgentSpec, AgentSpecBasicInfo,
+        AgentSpecMeta, AgentSpecSummary, AgentVersionDetail, AgentVersionInfo, BatchUploadResult,
         ClientPublisherInfo, ClientServiceInfo, ClientSubscriberInfo, ClientSummaryInfo,
         ClusterHealthResponse, ClusterHealthSummary, ClusterInfo, ConfigBasicInfo, ConfigCloneInfo,
         ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
         ConfigListenerInfo, ConnectionInfo, IdGeneratorInfo, ImportResult, Instance,
         InstanceMetadataBatchResult, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
         McpServerVersionInfo, McpToolSpecification, Member, MetricsInfo, Namespace, Page,
-        PluginAvailability, PluginDetail, PluginInfo, SameConfigPolicy, SelfMemberResponse,
-        ServerLoaderMetrics, ServiceDetailInfo, ServiceView, SubscriberInfo,
+        PipelineExecution, PluginAvailability, PluginDetail, PluginInfo, PromptMetaInfo,
+        PromptMetaSummary, PromptVersionInfo, PromptVersionSummary, SameConfigPolicy,
+        SelfMemberResponse, ServerLoaderMetrics, ServiceDetailInfo, ServiceView, Skill, SkillMeta,
+        SkillSummary, SkillUploadPrecheckResult, SubscriberInfo,
     },
 };
 
@@ -87,6 +90,302 @@ struct AgentListQuery<'a> {
     page_no: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     page_size: Option<u64>,
+}
+
+// Query shapes for the AI resource facades (`F-NAC-MAINT-007`). All field
+// names are camelCase on the wire, matching both the GA maintainer client and
+// batata's `web::Query` extractors.
+
+/// Identity of a skill or one of its versions.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillIdentityQuery<'a> {
+    namespace_id: &'a str,
+    skill_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+}
+
+/// Filters accepted by the GA `listSkills` overloads. Batata currently applies
+/// only `namespaceId`, `skillName`, `search`, `orderBy` and pagination; the
+/// remaining filters are forwarded but ignored by the server.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillListQuery<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skill_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order_by: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    biz_tag: Option<&'a str>,
+    page_no: u64,
+    page_size: u64,
+}
+
+/// Query parameters shared by skill and agentspec ZIP uploads.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiUploadQuery<'a> {
+    namespace_id: &'a str,
+    overwrite: bool,
+    /// GA `targetVersion`: explicit version override for the uploaded draft.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_version: Option<&'a str>,
+    /// GA `uploadAction`: `CREATE_DRAFT` / `OVERWRITE_DRAFT` / `DELETE_DRAFT_AND_CREATE`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_action: Option<&'a str>,
+    /// GA `autoPublishIfNew`: force-publish the first upload automatically.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    auto_publish_if_new: bool,
+    /// GA `commitMsg`: stored as the version-level description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_msg: Option<&'a str>,
+}
+
+/// Identity of a prompt, optionally narrowed to a version, label or MD5.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptIdentityQuery<'a> {
+    namespace_id: &'a str,
+    prompt_key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    md5: Option<&'a str>,
+}
+
+/// Filters for the prompt list endpoint.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptListQuery<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    biz_tags: Option<&'a str>,
+    page_no: u64,
+    page_size: u64,
+}
+
+/// Pagination for the prompt version history endpoint.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptHistoryQuery<'a> {
+    namespace_id: &'a str,
+    prompt_key: &'a str,
+    page_no: u64,
+    page_size: u64,
+}
+
+/// Identity of an agentspec or one of its versions.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSpecIdentityQuery<'a> {
+    namespace_id: &'a str,
+    agent_spec_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+}
+
+/// Filters for the agentspec list endpoint.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSpecListQuery<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_spec_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<&'a str>,
+    page_no: u64,
+    page_size: u64,
+}
+
+/// Query parameters for a single pipeline execution.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PipelineDetailQuery<'a> {
+    pipeline_id: &'a str,
+}
+
+/// Filters for the pipeline execution list endpoint.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PipelineListQuery<'a> {
+    resource_type: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    page_no: u64,
+    page_size: u64,
+}
+
+// Write forms for the AI resource facades (`F-NAC-MAINT-007`, batch 7). GA's
+// `ClientHttpProxy.executeSync` sends POST/PUT parameters as an urlencoded form
+// body, and batata's skill/prompt/agentspec handlers read `web::Form` while MCP
+// reads `AdminForm`/`AdminParams` (query or form). Optional values are omitted
+// rather than sent blank, mirroring GA's `putIfNotBlank`. Keeping one struct
+// per resource puts every wire name in a single place.
+
+/// Every parameter accepted by the skill lifecycle endpoints.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SkillWriteForm<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skill_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    based_on_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skill_card: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_msg: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    set_as_latest: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_latest_label: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    biz_tags: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'a str>,
+}
+
+/// Every parameter accepted by the prompt lifecycle and legacy endpoints.
+///
+/// `version` is batata's spelling for the first draft version; GA calls it
+/// `targetVersion`. Both are sent so the same call works against either server.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PromptWriteForm<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    based_on_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    template: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variables: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_msg: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    biz_tags: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_latest_label: Option<bool>,
+}
+
+/// Every parameter accepted by the agentspec lifecycle endpoints.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AgentSpecWriteForm<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_spec_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    based_on_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_spec_card: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_msg: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    set_as_latest: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_latest_label: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    biz_tags: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'a str>,
+}
+
+/// Parameters accepted by the MCP resource updates not covered by batch 1.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct McpWriteForm<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'a str>,
+}
+
+/// GA `listAgentSpecAdminItems` adds three filters to the plain list endpoint.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSpecAdminListQuery<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_spec_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order_by: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'a str>,
+    page_no: u64,
+    page_size: u64,
+}
+
+/// HTTP verb used by an AI resource write. DELETE endpoints carry their
+/// identity in the query string, while POST/PUT carry it in the form body.
+#[derive(Clone, Copy)]
+enum AiWriteVerb {
+    Post,
+    Put,
+    Delete,
+}
+
+/// Build the multipart body used by every AI ADMIN ZIP endpoint.
+///
+/// Both GA (`ClientHttpProxy.executeMultipartPost`) and batata
+/// (`read_zip_field`) look for a part literally named `file`.
+fn ai_zip_form(zip_bytes: &[u8]) -> reqwest::multipart::Form {
+    reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(zip_bytes.to_vec()).file_name("resource.zip"),
+    )
 }
 
 impl MaintainerClient {
@@ -4347,6 +4646,1579 @@ impl MaintainerClient {
             )
             .await?;
         Ok(response.code == 0 || response.code == 200)
+    }
+
+    // ============================================================================
+    // AI resource facades (Nacos `AiMaintainerService` delegates)
+    // ============================================================================
+    //
+    // The Java SDK exposes these capabilities through `skill()`, `prompt()`,
+    // `agentSpec()` and `pipeline()` sub-service objects. Rust uses flat
+    // `skill_*`/`prompt_*`/`agentspec_*`/`pipeline_*` methods instead. Read and
+    // DELETE endpoints carry identity in the query string; POST/PUT endpoints
+    // carry it in an urlencoded form body; ZIP endpoints use a `file` multipart
+    // part plus query parameters. All four wire shapes are now aligned with GA.
+
+    /// Send an AI resource write that reports success through its result code.
+    ///
+    /// GA checks `ErrorCode.SUCCESS` on the envelope, while batata uses
+    /// `code: 0`. Decoding `data` as a JSON value keeps the helper usable for
+    /// endpoints that answer with `true`, `"ok"` or an object.
+    async fn ai_write_ok<F: Serialize + ?Sized>(
+        &self,
+        verb: AiWriteVerb,
+        path: &str,
+        form: &F,
+    ) -> anyhow::Result<bool> {
+        let response: ApiResponse<serde_json::Value> = match verb {
+            AiWriteVerb::Post => self.http_client.post_form(path, form).await?,
+            AiWriteVerb::Put => self.http_client.put_form(path, form).await?,
+            AiWriteVerb::Delete => self.http_client.delete_with_query(path, form).await?,
+        };
+        Ok(response.code == 0 || response.code == 200)
+    }
+
+    /// Send a POST that returns a version string (draft creation or submission).
+    async fn ai_write_version<F: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        form: &F,
+    ) -> anyhow::Result<String> {
+        let response: ApiResponse<String> = self.http_client.post_form(path, form).await?;
+        Ok(response.data)
+    }
+
+    /// Get skill metadata and governance information.
+    ///
+    /// Wraps `GET /v3/admin/ai/skills`, the batata equivalent of GA
+    /// `SkillMaintainerService.getSkillMeta`. GA `SkillMeta` fields are typed;
+    /// unmodelled fields stay reachable through `extra`.
+    pub async fn skill_get_meta(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+    ) -> anyhow::Result<SkillMeta> {
+        let response: ApiResponse<SkillMeta> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_SKILLS,
+                &SkillIdentityQuery {
+                    namespace_id,
+                    skill_name,
+                    version: None,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get the detail of one published skill version.
+    pub async fn skill_get_version_detail(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        version: &str,
+    ) -> anyhow::Result<Skill> {
+        let response: ApiResponse<Skill> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_SKILLS_VERSION,
+                &SkillIdentityQuery {
+                    namespace_id,
+                    skill_name,
+                    version: Some(version),
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Download one skill version as a raw ZIP archive.
+    pub async fn skill_download_version(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        version: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.http_client
+            .get_bytes_with_query(
+                admin_api_path::AI_SKILLS_VERSION_DOWNLOAD,
+                &SkillIdentityQuery {
+                    namespace_id,
+                    skill_name,
+                    version: Some(version),
+                },
+            )
+            .await
+    }
+
+    /// List skills with GA's full filter set.
+    ///
+    /// `owner`, `scope` and `biz_tag` are forwarded for GA parity; batata's
+    /// `SkillListForm` currently ignores them.
+    pub async fn skill_list(
+        &self,
+        namespace_id: &str,
+        skill_name: Option<&str>,
+        search: Option<&str>,
+        order_by: Option<&str>,
+        owner: Option<&str>,
+        scope: Option<&str>,
+        biz_tag: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<SkillSummary>> {
+        let response: ApiResponse<Page<SkillSummary>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_SKILLS_LIST,
+                &SkillListQuery {
+                    namespace_id,
+                    skill_name,
+                    search,
+                    order_by,
+                    owner,
+                    scope,
+                    biz_tag,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Delete a skill and all of its versions.
+    pub async fn skill_delete(&self, namespace_id: &str, skill_name: &str) -> anyhow::Result<bool> {
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .delete_with_query(
+                admin_api_path::AI_SKILLS,
+                &SkillIdentityQuery {
+                    namespace_id,
+                    skill_name,
+                    version: None,
+                },
+            )
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// Upload a skill ZIP archive and return the stored skill name.
+    ///
+    /// Mirrors the GA `POST /v3/admin/ai/skills/upload` contract: `target_version`,
+    /// `upload_action`, `auto_publish_if_new` and `commit_msg` are sent as query
+    /// parameters alongside the multipart `file` body.
+    pub async fn skill_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        overwrite: bool,
+        target_version: Option<&str>,
+        upload_action: Option<&str>,
+        auto_publish_if_new: bool,
+        commit_msg: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let response: ApiResponse<String> = self
+            .http_client
+            .post_multipart_with_query(
+                admin_api_path::AI_SKILLS_UPLOAD,
+                &AiUploadQuery {
+                    namespace_id,
+                    overwrite,
+                    target_version,
+                    upload_action,
+                    auto_publish_if_new,
+                    commit_msg,
+                },
+                ai_zip_form(zip_bytes),
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Report what a skill ZIP upload would do, without applying it.
+    pub async fn skill_precheck_upload(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+    ) -> anyhow::Result<Vec<SkillUploadPrecheckResult>> {
+        let response: ApiResponse<Vec<SkillUploadPrecheckResult>> = self
+            .http_client
+            .post_multipart_with_query(
+                admin_api_path::AI_SKILLS_UPLOAD_PRECHECK,
+                &AiUploadQuery {
+                    namespace_id,
+                    overwrite: false,
+                    target_version: None,
+                    upload_action: None,
+                    auto_publish_if_new: false,
+                    commit_msg: None,
+                },
+                ai_zip_form(zip_bytes),
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Upload every skill contained in a ZIP archive.
+    ///
+    /// GA `/upload/batch` only binds `namespaceId` / `overwrite` / `file`, so the
+    /// optional upload-action parameters are omitted from the wire here.
+    pub async fn skill_batch_upload(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        overwrite: bool,
+    ) -> anyhow::Result<BatchUploadResult> {
+        let response: ApiResponse<BatchUploadResult> = self
+            .http_client
+            .post_multipart_with_query(
+                admin_api_path::AI_SKILLS_UPLOAD_BATCH,
+                &AiUploadQuery {
+                    namespace_id,
+                    overwrite,
+                    target_version: None,
+                    upload_action: None,
+                    auto_publish_if_new: false,
+                    commit_msg: None,
+                },
+                ai_zip_form(zip_bytes),
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// List prompts with pagination and optional filters.
+    pub async fn prompt_list(
+        &self,
+        namespace_id: &str,
+        prompt_key: Option<&str>,
+        search: Option<&str>,
+        biz_tags: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<PromptMetaSummary>> {
+        let response: ApiResponse<Page<PromptMetaSummary>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_PROMPT_LIST,
+                &PromptListQuery {
+                    namespace_id,
+                    prompt_key,
+                    search,
+                    biz_tags,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// List the version history of a prompt.
+    pub async fn prompt_list_versions(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<PromptVersionSummary>> {
+        let response: ApiResponse<Page<PromptVersionSummary>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_PROMPT_VERSIONS,
+                &PromptHistoryQuery {
+                    namespace_id,
+                    prompt_key,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get prompt metadata without version content.
+    pub async fn prompt_get_meta(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<PromptMetaInfo> {
+        self.prompt_get::<PromptMetaInfo>(
+            admin_api_path::AI_PROMPT_METADATA,
+            namespace_id,
+            prompt_key,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Get prompt governance detail, including all version summaries.
+    pub async fn prompt_get_governance_detail(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<PromptMetaInfo> {
+        self.prompt_get::<PromptMetaInfo>(
+            admin_api_path::AI_PROMPT_GOVERNANCE,
+            namespace_id,
+            prompt_key,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Get one prompt version by its version string.
+    pub async fn prompt_get_version_detail(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<PromptVersionInfo> {
+        self.prompt_get::<PromptVersionInfo>(
+            admin_api_path::AI_PROMPT_VERSION,
+            namespace_id,
+            prompt_key,
+            Some(version),
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Query prompt detail, resolving an optional version, label or MD5.
+    pub async fn prompt_query_detail(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: Option<&str>,
+        label: Option<&str>,
+        md5: Option<&str>,
+    ) -> anyhow::Result<PromptVersionInfo> {
+        self.prompt_get::<PromptVersionInfo>(
+            admin_api_path::AI_PROMPT_DETAIL,
+            namespace_id,
+            prompt_key,
+            version,
+            label,
+            md5,
+        )
+        .await
+    }
+
+    /// Shared implementation of the prompt read endpoints.
+    async fn prompt_get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: Option<&str>,
+        label: Option<&str>,
+        md5: Option<&str>,
+    ) -> anyhow::Result<T> {
+        let response: ApiResponse<T> = self
+            .http_client
+            .get_with_query(
+                path,
+                &PromptIdentityQuery {
+                    namespace_id,
+                    prompt_key,
+                    version,
+                    label,
+                    md5,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Download one prompt version as raw bytes.
+    pub async fn prompt_download_version(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.http_client
+            .get_bytes_with_query(
+                admin_api_path::AI_PROMPT_VERSION_DOWNLOAD,
+                &PromptIdentityQuery {
+                    namespace_id,
+                    prompt_key,
+                    version: Some(version),
+                    label: None,
+                    md5: None,
+                },
+            )
+            .await
+    }
+
+    /// Delete a prompt and all of its versions.
+    pub async fn prompt_delete(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<bool> {
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .delete_with_query(
+                admin_api_path::AI_PROMPT,
+                &PromptIdentityQuery {
+                    namespace_id,
+                    prompt_key,
+                    version: None,
+                    label: None,
+                    md5: None,
+                },
+            )
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// Get agentspec detail, including governance and version information.
+    pub async fn agentspec_get_detail(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+    ) -> anyhow::Result<AgentSpecMeta> {
+        self.agentspec_get::<AgentSpecMeta>(
+            admin_api_path::AI_AGENTSPECS,
+            namespace_id,
+            agent_spec_name,
+            None,
+        )
+        .await
+    }
+
+    /// Get the full detail of one agentspec version.
+    pub async fn agentspec_get_version_detail(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentSpec> {
+        self.agentspec_get::<AgentSpec>(
+            admin_api_path::AI_AGENTSPECS_VERSION,
+            namespace_id,
+            agent_spec_name,
+            Some(version),
+        )
+        .await
+    }
+
+    /// Get one agentspec version without loading resource file contents.
+    pub async fn agentspec_get_version_meta(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentSpec> {
+        self.agentspec_get::<AgentSpec>(
+            admin_api_path::AI_AGENTSPECS_VERSION_META,
+            namespace_id,
+            agent_spec_name,
+            Some(version),
+        )
+        .await
+    }
+
+    /// Shared implementation of the agentspec read endpoints.
+    async fn agentspec_get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: Option<&str>,
+    ) -> anyhow::Result<T> {
+        let response: ApiResponse<T> = self
+            .http_client
+            .get_with_query(
+                path,
+                &AgentSpecIdentityQuery {
+                    namespace_id,
+                    agent_spec_name,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// List agentspecs with pagination and optional filters.
+    pub async fn agentspec_list(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: Option<&str>,
+        search: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<AgentSpecBasicInfo>> {
+        let response: ApiResponse<Page<AgentSpecBasicInfo>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_AGENTSPECS_LIST,
+                &AgentSpecListQuery {
+                    namespace_id,
+                    agent_spec_name,
+                    search,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Download one agentspec version as a raw ZIP archive.
+    pub async fn agentspec_download_version(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.http_client
+            .get_bytes_with_query(
+                admin_api_path::AI_AGENTSPECS_VERSION_DOWNLOAD,
+                &AgentSpecIdentityQuery {
+                    namespace_id,
+                    agent_spec_name,
+                    version: Some(version),
+                },
+            )
+            .await
+    }
+
+    /// Upload an agentspec ZIP archive and return the stored spec name.
+    pub async fn agentspec_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        overwrite: bool,
+    ) -> anyhow::Result<String> {
+        let response: ApiResponse<String> = self
+            .http_client
+            .post_multipart_with_query(
+                admin_api_path::AI_AGENTSPECS_UPLOAD,
+                &AiUploadQuery {
+                    namespace_id,
+                    overwrite,
+                    target_version: None,
+                    upload_action: None,
+                    auto_publish_if_new: false,
+                    commit_msg: None,
+                },
+                ai_zip_form(zip_bytes),
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Delete an agentspec and all of its versions.
+    pub async fn agentspec_delete(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+    ) -> anyhow::Result<bool> {
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .delete_with_query(
+                admin_api_path::AI_AGENTSPECS,
+                &AgentSpecIdentityQuery {
+                    namespace_id,
+                    agent_spec_name,
+                    version: None,
+                },
+            )
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// Get one pipeline execution by ID.
+    pub async fn pipeline_get_detail(
+        &self,
+        pipeline_id: &str,
+    ) -> anyhow::Result<PipelineExecution> {
+        let response: ApiResponse<PipelineExecution> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_PIPELINES_DETAIL,
+                &PipelineDetailQuery { pipeline_id },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// List pipeline executions for a resource type with optional filters.
+    pub async fn pipeline_list_executions(
+        &self,
+        resource_type: &str,
+        resource_name: Option<&str>,
+        namespace_id: Option<&str>,
+        version: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<PipelineExecution>> {
+        let response: ApiResponse<Page<PipelineExecution>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_PIPELINES_LIST,
+                &PipelineListQuery {
+                    resource_type,
+                    resource_name,
+                    namespace_id,
+                    version,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    // ============================================================================
+    // AI resource write facade (Nacos `AiMaintainerService` delegates, batch 7)
+    // ============================================================================
+
+    /// Create a new skill draft or fork an existing version.
+    ///
+    /// Wraps GA `SkillMaintainerService.createDraft` (`POST
+    /// /v3/admin/ai/skills/draft`). `skill_card` is required for a brand-new
+    /// skill and ignored when `based_on_version` is set.
+    pub async fn skill_create_draft(
+        &self,
+        namespace_id: &str,
+        skill_name: Option<&str>,
+        based_on_version: Option<&str>,
+        target_version: Option<&str>,
+        skill_card: Option<&str>,
+        commit_msg: Option<&str>,
+    ) -> anyhow::Result<String> {
+        self.ai_write_version(
+            admin_api_path::AI_SKILLS_DRAFT,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name,
+                based_on_version,
+                target_version,
+                skill_card,
+                commit_msg,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the current skill draft content.
+    pub async fn skill_update_draft(
+        &self,
+        namespace_id: &str,
+        skill_name: Option<&str>,
+        version: Option<&str>,
+        skill_card: &str,
+        set_as_latest: Option<bool>,
+        commit_msg: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_SKILLS_DRAFT,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name,
+                version,
+                skill_card: Some(skill_card),
+                set_as_latest,
+                commit_msg,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Discard the current skill draft.
+    pub async fn skill_delete_draft(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Delete,
+            admin_api_path::AI_SKILLS_DRAFT,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Submit a skill version for pipeline review; returns the submitted version.
+    pub async fn skill_submit(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        version: &str,
+    ) -> anyhow::Result<String> {
+        self.ai_write_version(
+            admin_api_path::AI_SKILLS_SUBMIT,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Publish an approved skill version.
+    pub async fn skill_publish(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        version: &str,
+        update_latest_label: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_SKILLS_PUBLISH,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                version: Some(version),
+                update_latest_label,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Publish a skill version without the pipeline review gate.
+    pub async fn skill_force_publish(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        version: &str,
+        update_latest_label: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_SKILLS_FORCE_PUBLISH,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                version: Some(version),
+                update_latest_label,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Move a reviewed skill version back to draft.
+    pub async fn skill_redraft(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        version: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_SKILLS_REDRAFT,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the skill's runtime label-to-version mapping (JSON string).
+    pub async fn skill_update_labels(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        labels: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_SKILLS_LABELS,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                labels: Some(labels),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the skill's business tags (JSON string).
+    pub async fn skill_update_biz_tags(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        biz_tags: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_SKILLS_BIZ_TAGS,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                biz_tags: Some(biz_tags),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Enable or disable a skill (`scope = "skill"`) or one of its versions.
+    pub async fn skill_change_online_status(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        scope: Option<&str>,
+        version: Option<&str>,
+        online: bool,
+    ) -> anyhow::Result<bool> {
+        let path = if online {
+            admin_api_path::AI_SKILLS_ONLINE
+        } else {
+            admin_api_path::AI_SKILLS_OFFLINE
+        };
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            path,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                scope,
+                version,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Change the skill's visibility scope (`PUBLIC` / `PRIVATE`).
+    pub async fn skill_update_scope(
+        &self,
+        namespace_id: &str,
+        skill_name: &str,
+        scope: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_SKILLS_SCOPE,
+            &SkillWriteForm {
+                namespace_id,
+                skill_name: Some(skill_name),
+                scope: Some(scope),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Create a prompt draft, optionally forking an existing version.
+    ///
+    /// GA calls the first version `targetVersion`; batata's
+    /// `PromptDraftCreateForm` calls it `version`. Both are sent.
+    pub async fn prompt_create_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        target_version: Option<&str>,
+        based_on_version: Option<&str>,
+        template: &str,
+        variables: Option<&str>,
+        commit_msg: Option<&str>,
+        description: Option<&str>,
+        biz_tags: Option<&str>,
+    ) -> anyhow::Result<String> {
+        self.ai_write_version(
+            admin_api_path::AI_PROMPT_DRAFT,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                version: target_version,
+                target_version,
+                based_on_version,
+                template: Some(template),
+                variables,
+                commit_msg,
+                description,
+                biz_tags,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the current prompt draft content.
+    pub async fn prompt_update_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        template: &str,
+        variables: Option<&str>,
+        commit_msg: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_PROMPT_DRAFT,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                template: Some(template),
+                variables,
+                commit_msg,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Discard the current prompt draft.
+    pub async fn prompt_delete_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Delete,
+            admin_api_path::AI_PROMPT_DRAFT,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Submit a prompt version for pipeline review.
+    pub async fn prompt_submit(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<String> {
+        self.ai_write_version(
+            admin_api_path::AI_PROMPT_SUBMIT,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Publish a reviewed prompt version.
+    pub async fn prompt_publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+        update_latest_label: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_PROMPT_PUBLISH,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                version: Some(version),
+                update_latest_label,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Publish a prompt version without the pipeline review gate.
+    pub async fn prompt_force_publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+        update_latest_label: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_PROMPT_FORCE_PUBLISH,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                version: Some(version),
+                update_latest_label,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Move a reviewed prompt version back to draft.
+    pub async fn prompt_redraft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_PROMPT_REDRAFT,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Enable or disable one prompt version.
+    pub async fn prompt_change_online_status(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+        online: bool,
+    ) -> anyhow::Result<bool> {
+        let path = if online {
+            admin_api_path::AI_PROMPT_ONLINE
+        } else {
+            admin_api_path::AI_PROMPT_OFFLINE
+        };
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            path,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the prompt's label-to-version mapping (JSON string).
+    pub async fn prompt_update_labels(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        labels: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_PROMPT_LABELS,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                labels: Some(labels),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Update the prompt description.
+    pub async fn prompt_update_description(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        description: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_PROMPT_DESCRIPTION,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                description: Some(description),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the prompt's business tags.
+    pub async fn prompt_update_biz_tags(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        biz_tags: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_PROMPT_BIZ_TAGS,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                biz_tags: Some(biz_tags),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Legacy single-label bind (deprecated upstream, still mounted).
+    pub async fn prompt_bind_label(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        label: &str,
+        version: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_PROMPT_LABEL,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                label: Some(label),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Legacy single-label unbind (deprecated upstream, still mounted).
+    pub async fn prompt_unbind_label(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        label: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Delete,
+            admin_api_path::AI_PROMPT_LABEL,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                label: Some(label),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Legacy one-shot publish of a prompt version.
+    pub async fn prompt_publish_prompt(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+        template: &str,
+        commit_msg: Option<&str>,
+        description: Option<&str>,
+        biz_tags: Option<&str>,
+        variables: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_PROMPT,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                version: Some(version),
+                template: Some(template),
+                commit_msg,
+                description,
+                biz_tags,
+                variables,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Legacy prompt metadata update (deprecated upstream, still mounted).
+    pub async fn prompt_update_metadata(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        description: Option<&str>,
+        biz_tags: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_PROMPT_METADATA,
+            &PromptWriteForm {
+                namespace_id,
+                prompt_key: Some(prompt_key),
+                description,
+                biz_tags,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// List agentspecs with GA's admin filter set (`listAgentSpecAdminItems`).
+    pub async fn agentspec_list_admin_items(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: Option<&str>,
+        search: Option<&str>,
+        order_by: Option<&str>,
+        owner: Option<&str>,
+        scope: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<AgentSpecSummary>> {
+        let response: ApiResponse<Page<AgentSpecSummary>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_AGENTSPECS_LIST,
+                &AgentSpecAdminListQuery {
+                    namespace_id,
+                    agent_spec_name,
+                    search,
+                    order_by,
+                    owner,
+                    scope,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Create a new agentspec draft or fork an existing version.
+    pub async fn agentspec_create_draft(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        based_on_version: Option<&str>,
+        target_version: Option<&str>,
+        agent_spec_card: Option<&str>,
+        commit_msg: Option<&str>,
+    ) -> anyhow::Result<String> {
+        self.ai_write_version(
+            admin_api_path::AI_AGENTSPECS_DRAFT,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                based_on_version,
+                target_version,
+                agent_spec_card,
+                commit_msg,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the current agentspec draft content.
+    pub async fn agentspec_update_draft(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: Option<&str>,
+        version: Option<&str>,
+        agent_spec_card: &str,
+        set_as_latest: Option<bool>,
+        commit_msg: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_AGENTSPECS_DRAFT,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name,
+                version,
+                agent_spec_card: Some(agent_spec_card),
+                set_as_latest,
+                commit_msg,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Discard the current agentspec draft.
+    pub async fn agentspec_delete_draft(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Delete,
+            admin_api_path::AI_AGENTSPECS_DRAFT,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Submit an agentspec version for pipeline review.
+    pub async fn agentspec_submit(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: &str,
+    ) -> anyhow::Result<String> {
+        self.ai_write_version(
+            admin_api_path::AI_AGENTSPECS_SUBMIT,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Publish an approved agentspec version.
+    pub async fn agentspec_publish(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: &str,
+        update_latest_label: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_AGENTSPECS_PUBLISH,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                version: Some(version),
+                update_latest_label,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Publish an agentspec version without the pipeline review gate.
+    pub async fn agentspec_force_publish(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: &str,
+        update_latest_label: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_AGENTSPECS_FORCE_PUBLISH,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                version: Some(version),
+                update_latest_label,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Move a reviewed agentspec version back to draft.
+    pub async fn agentspec_redraft(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        version: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            admin_api_path::AI_AGENTSPECS_REDRAFT,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the agentspec's runtime labels (JSON string).
+    pub async fn agentspec_update_labels(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        labels: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_AGENTSPECS_LABELS,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                labels: Some(labels),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace the agentspec's business tags (JSON string).
+    pub async fn agentspec_update_biz_tags(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        biz_tags: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_AGENTSPECS_BIZ_TAGS,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                biz_tags: Some(biz_tags),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Enable or disable an agentspec or one of its versions.
+    pub async fn agentspec_change_online_status(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        scope: Option<&str>,
+        version: Option<&str>,
+        online: bool,
+    ) -> anyhow::Result<bool> {
+        let path = if online {
+            admin_api_path::AI_AGENTSPECS_ONLINE
+        } else {
+            admin_api_path::AI_AGENTSPECS_OFFLINE
+        };
+        self.ai_write_ok(
+            AiWriteVerb::Post,
+            path,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                scope,
+                version,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Change the agentspec's visibility scope.
+    pub async fn agentspec_update_scope(
+        &self,
+        namespace_id: &str,
+        agent_spec_name: &str,
+        scope: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_AGENTSPECS_SCOPE,
+            &AgentSpecWriteForm {
+                namespace_id,
+                agent_spec_name: Some(agent_spec_name),
+                scope: Some(scope),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Delete an MCP server draft (`deleteMcpServerDraft`).
+    pub async fn mcp_server_delete_draft(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Delete,
+            admin_api_path::AI_MCP_DRAFT,
+            &McpWriteForm {
+                namespace_id,
+                mcp_name: Some(mcp_name),
+                version: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Replace an MCP server's label-to-version mapping (JSON string).
+    pub async fn mcp_server_update_labels(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        labels: &str,
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let response: ApiResponse<HashMap<String, String>> = self
+            .http_client
+            .put_form(
+                admin_api_path::AI_MCP_LABELS,
+                &McpWriteForm {
+                    namespace_id,
+                    mcp_name: Some(mcp_name),
+                    labels: Some(labels),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Enable or disable an MCP server.
+    pub async fn mcp_server_update_status(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        enabled: bool,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_MCP_STATUS,
+            &McpWriteForm {
+                namespace_id,
+                mcp_name: Some(mcp_name),
+                enabled: Some(enabled),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Change an MCP server's visibility scope.
+    pub async fn mcp_server_update_scope(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        scope: &str,
+    ) -> anyhow::Result<bool> {
+        self.ai_write_ok(
+            AiWriteVerb::Put,
+            admin_api_path::AI_MCP_SCOPE,
+            &McpWriteForm {
+                namespace_id,
+                mcp_name: Some(mcp_name),
+                scope: Some(scope),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     // ============================================================================

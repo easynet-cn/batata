@@ -576,6 +576,60 @@ impl BatataHttpClient {
         .await
     }
 
+    /// Make a GET request with query parameters and return raw bytes.
+    ///
+    /// The AI ADMIN download endpoints take identity parameters in the query
+    /// and reply with a ZIP archive instead of a JSON `Result` envelope.
+    pub async fn get_bytes_with_query<Q: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        query: &Q,
+    ) -> anyhow::Result<Vec<u8>> {
+        let max_retries = self.config.server_addrs.len();
+        let mut last_error = None;
+
+        for _ in 0..max_retries {
+            let url = self.build_url(path);
+            let (auth_key, auth_val) = self.ensure_auth_header().await?;
+
+            match self
+                .client
+                .get(&url)
+                .header(&auth_key, &auth_val)
+                .query(query)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        return Ok(response.bytes().await?.to_vec());
+                    } else if response.status() == StatusCode::UNAUTHORIZED
+                        && !self.use_identity_auth()
+                    {
+                        warn!("Token expired, re-authenticating...");
+                        self.authenticate().await?;
+                        continue;
+                    } else {
+                        let status = response.status();
+                        let body = response.text().await.unwrap_or_default();
+                        last_error = Some(anyhow::anyhow!(
+                            "Request failed with status {}: {}",
+                            status,
+                            body
+                        ));
+                    }
+                }
+                Err(e) => {
+                    warn!("Request failed: {}, switching to next server", e);
+                    self.switch_to_next_server();
+                    last_error = Some(e.into());
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All servers failed")))
+    }
+
     /// Make a GET request and return raw bytes
     pub async fn get_bytes(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         let max_retries = self.config.server_addrs.len();
@@ -695,6 +749,44 @@ impl BatataHttpClient {
                     warn!("Token expired, re-authenticating...");
                     self.authenticate().await?;
                     // Token expired, caller should retry
+                    return Err(anyhow::anyhow!("Token expired, please retry"));
+                }
+                self.handle_response(response).await
+            }
+            Err(e) => {
+                warn!("Request failed: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Make a POST request with query parameters and multipart form data.
+    ///
+    /// The AI ADMIN ZIP upload endpoints keep `namespaceId`/`overwrite` in the
+    /// query and the archive itself in a `file` multipart part. Multipart forms
+    /// are not cloneable, so this request is not retried across servers.
+    pub async fn post_multipart_with_query<T: DeserializeOwned, Q: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        query: &Q,
+        form: reqwest::multipart::Form,
+    ) -> anyhow::Result<T> {
+        let url = self.build_url(path);
+        let (auth_key, auth_val) = self.ensure_auth_header().await?;
+
+        match self
+            .client
+            .post(&url)
+            .header(&auth_key, &auth_val)
+            .query(query)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth() {
+                    warn!("Token expired, re-authenticating...");
+                    self.authenticate().await?;
                     return Err(anyhow::anyhow!("Token expired, please retry"));
                 }
                 self.handle_response(response).await

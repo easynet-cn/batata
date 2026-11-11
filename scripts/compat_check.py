@@ -5,14 +5,17 @@ Checks:
   1. feature-ID format           F-<PROTO>-<MODULE>-<NNN>  (PROTO: NAC|CON|APO|SYS)
   2. global uniqueness of every feature ID across all inventories
   3. per (PROTO, MODULE) contiguous numbering 1..N with no gaps/duplicates
-  4. every feature row carries a valid Status enum cell
-  5. each features.md Summary **Total** row matches recomputed rows/status/rate
+  4. every feature row carries a valid Status enum cell; the status is read
+     from that cell, so status markers quoted inside notes cannot reclassify it
+  5. each features.md Summary **Total** row matches recomputed rows/status/rate,
+     and the per-module Summary rows add up to that Total row
   6. README global summary matches recomputed features + T-ID data-row counts
   7. 🟢 rows in anchor-bearing inventories carry a resolvable crate anchor
   8. F-ID references anywhere under docs/compat resolve to a known feature
   9. backticked file links in README resolve to an existing path
  10. the declared Nacos alignment target matches every executable/config
      version declaration (Java SDK pom, server compat version, inventory headings)
+ 11. README layout F-ID counts match the recomputed per-inventory row counts
 
 Rationale: the old checker only validated ID syntax and one number in the
 Summary row, so hand-maintained inventories could drift (false 🟢 rows, stale
@@ -46,6 +49,7 @@ TOTAL_RE = re.compile(r"^\|\s*\*\*Total\*\*\s*\|")
 GS_ROW_RE = re.compile(r"^\|\s*(Nacos|Consul|Apollo|\*\*Total\*\*)\s*\|")
 PATH_REF_RE = re.compile(r"`((?:docs/compat|scripts|reports|crates|sdk-tests)/[^`]+)`")
 TARGET_RE = re.compile(r"Alignment target: Nacos (\d+\.\d+\.\d+) GA")
+LAYOUT_FIDS_RE = re.compile(r"\b(\d+) F-IDs\b")
 # (relative path, regex capturing the declared version, whether the file is required)
 VERSION_DECLARATIONS = (
     (
@@ -86,9 +90,14 @@ def cells(line: str) -> list[str]:
 
 
 def row_status(line: str) -> str | None:
-    # Status emoji lives in different column positions across tables; scan the row.
-    # STATUS is ordered so a row containing several markers is classified deterministically.
-    return next((s for s in STATUS if s in line), None)
+    # Status emoji lives in different column positions across tables, so scan
+    # the cells rather than the whole line. A cell may carry a suffix such as
+    # `🟢 [D]`; notes may quote other markers and must not reclassify the row.
+    for cell in cells(line):
+        head = cell.split(maxsplit=1)[0] if cell else ""
+        if head in STATUS_SET:
+            return head
+    return None
 
 
 def number(cell: str) -> int | None:
@@ -229,6 +238,34 @@ def main(argv: list[str]) -> int:
                         f"{pct(tally['🟢'], rows)}%"
                     )
 
+        # Check 5b: the per-module Summary rows must add up to the Total row.
+        # Check 5 recomputes only the Total row from F-ID rows, so a single
+        # stale module row used to stay green as long as the Total was right.
+        summary_start = next(
+            (i for i, line in enumerate(lines) if line.startswith("# Summary")), None
+        )
+        if summary_start is not None and total_lines:
+            ln, total_line = total_lines[-1]
+            expected_total = [number(x) for x in cells(total_line)[1:7]]
+            component_total = [0] * 6
+            component_rows = 0
+            for line in lines[summary_start:]:
+                if not line.startswith("|") or TOTAL_RE.match(line):
+                    continue
+                c = cells(line)
+                if len(c) < 8:
+                    continue
+                values = [number(x) for x in c[1:7]]
+                if any(v is None for v in values):
+                    continue  # header or separator row
+                component_total = [a + b for a, b in zip(component_total, values)]
+                component_rows += 1
+            if component_rows and component_total != expected_total:
+                problems.append(
+                    f"{label}:{ln}: Summary module rows sum to {component_total} "
+                    f"!= Total row {expected_total}"
+                )
+
     # Check 3: contiguity.
     for (proto, mod), nums in sorted(per_module.items()):
         n = len(nums)
@@ -295,6 +332,18 @@ def main(argv: list[str]) -> int:
         for key in expected:
             if key not in found:
                 problems.append(f"{README.relative_to(ROOT)}: missing global summary row for {key}")
+
+        # Check 11: the hand-written layout block must not keep stale F-ID
+        # counts (it is prose, so checks 5/6 never see it). Only enforce when
+        # all inventories were passed, i.e. the default full-inventory run.
+        if len(tallies) == len(PROTO_NAMES):
+            layout_counts = sorted(int(x) for x in LAYOUT_FIDS_RE.findall(README.read_text()))
+            expected_counts = sorted(rows for rows, _ in tallies.values())
+            if layout_counts != expected_counts:
+                problems.append(
+                    f"{README.relative_to(ROOT)}: layout F-ID counts {layout_counts} "
+                    f"!= recomputed inventories {expected_counts}"
+                )
 
         # Check 10: one declared alignment target across pom/config/headings.
         declared_target = check_baseline_versions(problems)

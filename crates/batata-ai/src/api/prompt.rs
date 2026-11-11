@@ -13,6 +13,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
+use crate::api::admin_form::AdminForm;
 use crate::model::prompt::PromptVariable;
 use crate::service::prompt::PromptOperationService;
 
@@ -747,16 +748,22 @@ pub struct PromptDraftCreateForm {
     pub namespace_id: String,
     /// Prompt key (identifier).
     pub prompt_key: String,
-    /// Version to create; defaults to `0.0.1` when absent.
+    /// Version to create (batata alias); GA sends `targetVersion` instead.
     #[serde(default)]
     pub version: Option<String>,
-    /// Prompt template content.
+    /// GA `targetVersion`; takes priority over `version` when both are sent.
+    pub target_version: Option<String>,
+    /// GA `basedOnVersion`: fork the content from an existing version.
+    pub based_on_version: Option<String>,
+    /// Prompt template content (optional when forking).
     #[serde(default)]
     pub template: String,
     /// Optional description.
     pub description: Option<String>,
-    /// Optional commit message.
+    /// Optional commit message, stored as the version-level description.
     pub commit_msg: Option<String>,
+    /// GA `bizTags`: comma-separated tags applied to a brand-new prompt.
+    pub biz_tags: Option<String>,
     /// JSON array of PromptVariable.
     pub variables: Option<String>,
 }
@@ -839,7 +846,7 @@ async fn create_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     prompt_service: web::Data<Arc<PromptOperationService>>,
-    body: web::Form<PromptDraftCreateForm>,
+    body: AdminForm<PromptDraftCreateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -861,13 +868,20 @@ async fn create_draft(
         .as_deref()
         .and_then(|v| serde_json::from_str(v).ok());
 
+    // GA sends `targetVersion`; batata's console sends `version`. Batch 7's
+    // client sends both, so the GA name wins when both are present.
+    let target_version = form.target_version.as_deref().or(form.version.as_deref());
+
     match prompt_service
-        .create_draft(
+        .create_draft_with_options(
             ns,
             &form.prompt_key,
-            form.version.as_deref(),
+            target_version,
+            form.based_on_version.as_deref(),
             &form.template,
             form.description.as_deref(),
+            form.commit_msg.as_deref(),
+            form.biz_tags.as_deref(),
             variables,
             &src_user,
         )

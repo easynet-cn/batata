@@ -62,7 +62,7 @@ async fn skill_force_publish_and_redraft() {
         ..Default::default()
     };
     let created = svc
-        .create_draft(NS, name, None, Some(version), Some(&card), "tester")
+        .create_draft(NS, name, None, Some(version), Some(&card), "tester", None)
         .await
         .expect("create draft");
     assert_eq!(created, version);

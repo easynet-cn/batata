@@ -16,8 +16,10 @@ use actix_web::http::StatusCode;
 use actix_web::{App, test, web};
 use ai_store::TestStore;
 use batata_ai::PromptOperationService;
+use batata_common::model::ai::prompt::PromptStorage;
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
 use batata_persistence::PersistenceService;
+use batata_persistence::model::{AiResourceInfo, AiResourceVersionInfo};
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
@@ -385,4 +387,238 @@ async fn governance_and_download_refuse_an_unknown_prompt() {
         "an unknown prompt must 404 on download"
     );
     println!("ok: both read endpoints refuse an unknown prompt");
+}
+
+// ============================================================================
+// Batch 10: GA-only fields on POST /v3/admin/ai/prompt/draft
+//
+// GA `PromptDraftCreateForm` binds `targetVersion`, `basedOnVersion`,
+// `commitMsg` and `bizTags`; `PromptAdminController.java:188-191` forwards all
+// of them. `commitMsg` becomes the version-row description
+// (`AiResourceManager.insertVersionRow`), `bizTags` initializes the metadata
+// of a brand-new prompt, and `basedOnVersion` forks the stored template.
+// ============================================================================
+
+async fn version_row(store: &TestStore, key: &str, version: &str) -> Option<AiResourceVersionInfo> {
+    store
+        .store()
+        .ai_resource_version_find("public", key, "prompt", version)
+        .await
+        .expect("version lookup")
+}
+
+async fn resource_row(store: &TestStore, key: &str) -> Option<AiResourceInfo> {
+    store
+        .store()
+        .ai_resource_find("public", key, "prompt")
+        .await
+        .expect("resource lookup")
+}
+
+fn stored_template(row: &AiResourceVersionInfo) -> String {
+    let raw = row.storage.as_deref().expect("version storage");
+    serde_json::from_str::<PromptStorage>(raw)
+        .expect("decode PromptStorage")
+        .template
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// The GA form channel: commitMsg -> version desc, bizTags -> resource metadata.
+#[actix_web::test]
+async fn ga_draft_fields_form_channel() {
+    let (store, svc) = setup().await;
+    let key = "ga-prompt-fields";
+    store.clean(key).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let form = format!(
+        "promptKey={key}&targetVersion=1.0.0&template={}&description=meta+desc&commitMsg={}&bizTags={}",
+        percent_encode("ga template"),
+        percent_encode("ga prompt commit"),
+        percent_encode("alpha,beta")
+    );
+    let (status, body) = post_form(&app, "/v3/admin/ai/prompt/draft", &form).await;
+    assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
+
+    let row = version_row(&store, key, "1.0.0").await.expect("draft row");
+    assert_eq!(
+        row.description.as_deref(),
+        Some("ga prompt commit"),
+        "commitMsg must become the version-level description"
+    );
+    assert_eq!(stored_template(&row), "ga template");
+    let storage: PromptStorage =
+        serde_json::from_str(row.storage.as_deref().expect("storage")).expect("decode storage");
+    assert_eq!(storage.commit_msg.as_deref(), Some("ga prompt commit"));
+
+    let resource = resource_row(&store, key).await.expect("prompt resource");
+    assert_eq!(
+        resource.biz_tags.as_deref(),
+        Some("alpha,beta"),
+        "bizTags must initialize the metadata of a brand-new prompt"
+    );
+    store.clean(key).await;
+}
+
+/// Spring `@RequestParam` also accepts the query string; `AdminForm` must
+/// resolve the same four GA wire keys there.
+#[actix_web::test]
+async fn ga_draft_fields_query_channel() {
+    let (store, svc) = setup().await;
+    let key = "ga-prompt-query";
+    store.clean(key).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let query = format!(
+        "promptKey={key}&targetVersion=2.0.0&template={}&commitMsg={}&bizTags={}",
+        percent_encode("query template"),
+        percent_encode("query commit"),
+        percent_encode("gamma")
+    );
+    let (status, body) = post_form(&app, &format!("/v3/admin/ai/prompt/draft?{query}"), "").await;
+    assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
+    let row = version_row(&store, key, "2.0.0").await.expect("draft row");
+    assert_eq!(row.description.as_deref(), Some("query commit"));
+    assert_eq!(stored_template(&row), "query template");
+    assert_eq!(
+        resource_row(&store, key)
+            .await
+            .expect("prompt resource")
+            .biz_tags
+            .as_deref(),
+        Some("gamma")
+    );
+    store.clean(key).await;
+}
+
+/// Batch 7 sends both alias; GA `targetVersion` wins over batata `version`.
+#[actix_web::test]
+async fn ga_target_version_takes_priority_over_batata_alias() {
+    let (store, svc) = setup().await;
+    let key = "ga-prompt-alias";
+    store.clean(key).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let form = format!(
+        "promptKey={key}&version=3.0.0&targetVersion=2.0.0&template={}",
+        percent_encode("alias template")
+    );
+    let (status, body) = post_form(&app, "/v3/admin/ai/prompt/draft", &form).await;
+    assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
+    assert!(
+        version_row(&store, key, "2.0.0").await.is_some(),
+        "targetVersion must win"
+    );
+    assert!(
+        version_row(&store, key, "3.0.0").await.is_none(),
+        "the batata alias must not create a second version"
+    );
+    store.clean(key).await;
+}
+
+/// `basedOnVersion` forks the base template and bumps the patch number.
+#[actix_web::test]
+async fn ga_based_on_version_forks_stored_template() {
+    let (store, svc) = setup().await;
+    let key = "ga-prompt-fork";
+    store.clean(key).await;
+    let app = build_app(store.store(), svc.clone()).await;
+    let base = "/v3/admin/ai/prompt";
+
+    let first = format!(
+        "promptKey={key}&targetVersion=1.0.0&template={}",
+        percent_encode("fork base template")
+    );
+    let (status, body) = post_form(&app, &format!("{base}/draft"), &first).await;
+    assert_eq!(status, StatusCode::OK, "base draft failed: {body}");
+
+    // Submitting clears the single editing slot so a second draft can start.
+    let (status, body) = post_form(
+        &app,
+        &format!("{base}/submit"),
+        &format!("promptKey={key}&version=1.0.0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "submit failed: {body}");
+
+    // No template in the request: the fork must copy it from version 1.0.0.
+    let fork = format!(
+        "promptKey={key}&basedOnVersion=1.0.0&commitMsg={}",
+        percent_encode("fork commit")
+    );
+    let (status, body) = post_form(&app, &format!("{base}/draft"), &fork).await;
+    assert_eq!(status, StatusCode::OK, "fork draft failed: {body}");
+    let row = version_row(&store, key, "1.0.1").await.expect("fork row");
+    assert_eq!(
+        stored_template(&row),
+        "fork base template",
+        "a fork must reuse the base version's template"
+    );
+    assert_eq!(row.description.as_deref(), Some("fork commit"));
+    store.clean(key).await;
+}
+
+/// An unknown base version is a structured error, not a silent empty draft.
+#[actix_web::test]
+async fn ga_based_on_unknown_version_is_refused() {
+    let (store, svc) = setup().await;
+    let key = "ga-prompt-bad-base";
+    store.clean(key).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let form = format!(
+        "promptKey={key}&basedOnVersion=9.9.9&template={}",
+        percent_encode("unused")
+    );
+    let (status, body) = post_form(&app, "/v3/admin/ai/prompt/draft", &form).await;
+    assert!(
+        status.is_client_error(),
+        "an unknown base version must be refused, got {status}: {body}"
+    );
+    assert!(
+        body.contains("Base version"),
+        "the 400 must name the missing base version, not a generic template error: {body}"
+    );
+    assert!(
+        version_row(&store, key, "9.9.10").await.is_none(),
+        "no fork row may be written on a missing base"
+    );
+    store.clean(key).await;
+}
+
+/// With none of the GA fields present, behaviour is exactly the historical one.
+#[actix_web::test]
+async fn absent_ga_fields_preserve_historical_behaviour() {
+    let (store, svc) = setup().await;
+    let key = "ga-prompt-plain";
+    store.clean(key).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let (status, body) = post_form(
+        &app,
+        "/v3/admin/ai/prompt/draft",
+        &format!("promptKey={key}&version=1.0.0&template=plain"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
+    let row = version_row(&store, key, "1.0.0").await.expect("draft row");
+    assert_eq!(row.description, None);
+    assert_eq!(stored_template(&row), "plain");
+    assert_eq!(
+        resource_row(&store, key).await.expect("resource").biz_tags,
+        None
+    );
+    store.clean(key).await;
 }

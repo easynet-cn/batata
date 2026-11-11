@@ -1,6 +1,7 @@
 //! Model types for maintainer client API responses
 
 pub mod ai;
+pub mod ai_resource;
 pub mod client;
 pub mod cluster;
 pub mod common;
@@ -16,6 +17,14 @@ pub use ai::{
     AgentCard, AgentCardBasicInfo, AgentCardDetailInfo, AgentCardVersionInfo, AgentInterface,
     AgentVersionDetail, AgentVersionInfo, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
     McpServerVersionInfo, McpToolSpecification, ServerVersionDetail,
+};
+pub use ai_resource::{
+    AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecResource, AgentSpecSummary,
+    AgentSpecVersionSummary, AiExtra, AiResourceGovernance, BatchUploadFailedItem,
+    BatchUploadItemResult, BatchUploadResult, PipelineCheckpoint, PipelineExecution,
+    PipelineNodeResult, PromptMetaInfo, PromptMetaSummary, PromptVariable, PromptVersionInfo,
+    PromptVersionSummary, Skill, SkillMeta, SkillResource, SkillSummary, SkillUploadPrecheckResult,
+    SkillVersionSummary,
 };
 pub use client::{ClientPublisherInfo, ClientServiceInfo, ClientSubscriberInfo, ClientSummaryInfo};
 pub use cluster::{

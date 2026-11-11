@@ -21,8 +21,8 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
 use batata_common::McpServerService;
 use batata_common::model::ai::mcp::{
-    McpDeleteQuery, McpDetailQuery, McpDraftCreateQuery, McpLabelsRequest, McpListQuery,
-    McpScopeQuery, McpServerRegistration, McpStatusQuery, McpVersionsQuery,
+    McpDeleteQuery, McpDetailQuery, McpDraftCreateQuery, McpListQuery, McpScopeQuery,
+    McpServerRegistration, McpStatusQuery, McpVersionsQuery,
 };
 use batata_common::{ActionTypes, ApiType, SignType};
 use batata_server_common::model::app_state::AppState;
@@ -30,6 +30,7 @@ use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 use serde::Deserialize;
 
+use super::admin_form::{AdminForm, AdminParams};
 pub use crate::registry::mcp::configure;
 
 /// Empty namespaces mean the default one.
@@ -104,30 +105,6 @@ fn resolve_version_status(
     }
 }
 
-/// Read the label map from either upstream's `labels` parameter or a JSON body.
-///
-/// `McpServerLabelsForm` carries `labels` as a JSON *string* parameter — the
-/// maintainer client serializes the map into it — while the console posts the
-/// map as a body. An absent value means "no custom labels", not an error.
-fn parse_labels(
-    from_param: Option<&str>,
-    body: &[u8],
-) -> std::result::Result<std::collections::HashMap<String, String>, HttpResponse> {
-    if let Some(raw) = from_param.map(str::trim).filter(|s| !s.is_empty()) {
-        return serde_json::from_str(raw).map_err(|e| invalid(format!("Invalid labels: {e}")));
-    }
-    let body = String::from_utf8_lossy(body);
-    let body = body.trim();
-    if body.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    // `{"labels": {...}}` is the documented shape; a bare map is accepted too.
-    if let Ok(request) = serde_json::from_str::<McpLabelsRequest>(body) {
-        return Ok(request.labels);
-    }
-    serde_json::from_str(body).map_err(|e| invalid(format!("Invalid labels: {e}")))
-}
-
 /// The request's content type, lower-cased.
 fn content_type(req: &HttpRequest) -> String {
     use actix_web::http::header::CONTENT_TYPE;
@@ -160,10 +137,10 @@ pub(crate) fn parse_registration(
     form.into_registration()
 }
 
-/// `PUT /labels` parameters.
+/// `PUT /labels` identity parameters.
 ///
-/// Upstream's `McpServerLabelsForm` carries `labels` as a JSON *string*
-/// parameter, not a body, so the maintainer client's call has to land.
+/// The label map itself is decoded by `AdminParams::labels`, which accepts the
+/// GA form parameter, an urlencoded body and the console's JSON body alike.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct McpLabelsQuery {
@@ -173,9 +150,6 @@ struct McpLabelsQuery {
     /// Server name.
     #[serde(default)]
     mcp_name: Option<String>,
-    /// Label name -> version, as JSON.
-    #[serde(default)]
-    labels: Option<String>,
 }
 
 /// The SDK's create/update encoding: specifications as JSON strings in a form.
@@ -557,7 +531,6 @@ async fn create_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDraftCreateQuery>,
     body: web::Bytes,
 ) -> impl Responder {
     secured!(
@@ -567,6 +540,15 @@ async fn create_draft(
             .api_type(ApiType::AdminApi)
             .build()
     );
+
+    // The GA client puts `namespaceId` / `overwrite` in the form body, not in
+    // the query string. Resolve the admin parameters before overriding the
+    // namespace carried by the registration itself.
+    let params = AdminParams::from_request(&req, &body);
+    let query: McpDraftCreateQuery = match params.decode() {
+        Ok(query) => query,
+        Err(e) => return invalid(e),
+    };
 
     let mut registration = match parse_registration(&content_type(&req), &body) {
         Ok(reg) => reg,
@@ -702,7 +684,7 @@ async fn submit_version(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDetailQuery>,
+    query: AdminForm<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -729,7 +711,7 @@ async fn publish_version(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDetailQuery>,
+    query: AdminForm<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -756,7 +738,7 @@ async fn force_publish_version(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDetailQuery>,
+    query: AdminForm<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -783,7 +765,7 @@ async fn redraft_version(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDetailQuery>,
+    query: AdminForm<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -810,7 +792,7 @@ async fn online_version(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDetailQuery>,
+    query: AdminForm<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -837,7 +819,7 @@ async fn offline_version(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDetailQuery>,
+    query: AdminForm<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -864,7 +846,6 @@ async fn update_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpLabelsQuery>,
     body: web::Bytes,
 ) -> impl Responder {
     secured!(
@@ -875,13 +856,18 @@ async fn update_labels(
             .build()
     );
 
+    let params = AdminParams::from_request(&req, &body);
+    let query: McpLabelsQuery = match params.decode() {
+        Ok(query) => query,
+        Err(e) => return invalid(e),
+    };
     let ns = normalize_namespace(query.namespace_id.as_deref());
     let Some(name) = query.mcp_name.as_deref().filter(|n| !n.is_empty()) else {
         return missing("mcpName");
     };
-    let labels = match parse_labels(query.labels.as_deref(), &body) {
+    let labels = match params.labels(&body) {
         Ok(labels) => labels,
-        Err(response) => return response,
+        Err(e) => return invalid(e),
     };
     match mcp_service.update_mcp_server_labels(ns, name, labels).await {
         Ok(labels) => HttpResponse::Ok().json(Result::success(labels)),
@@ -898,7 +884,7 @@ async fn update_status(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpStatusQuery>,
+    query: AdminForm<McpStatusQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -937,7 +923,7 @@ async fn update_scope(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpScopeQuery>,
+    query: AdminForm<McpScopeQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -990,6 +976,15 @@ pub fn admin_routes() -> Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::test::TestRequest;
+
+    fn test_request(uri: &str, content_type: Option<&str>) -> HttpRequest {
+        let mut builder = TestRequest::with_uri(uri);
+        if let Some(content_type) = content_type {
+            builder = builder.insert_header(("content-type", content_type));
+        }
+        builder.to_http_request()
+    }
 
     /// Upstream's maintainer client posts the specifications as JSON strings
     /// in a form; that is what `createMcpServer` and `createMcpServerDraft`
@@ -1048,23 +1043,46 @@ mod tests {
         );
     }
 
-    /// `McpServerLabelsForm` carries `labels` as a JSON string parameter.
-    #[test]
-    fn labels_are_read_from_the_upstream_parameter() {
-        let labels = parse_labels(Some(r#"{"stable":"1.0.0"}"#), b"").expect("parse");
-        assert_eq!(labels.get("stable").map(String::as_str), Some("1.0.0"));
+    /// `McpServerLabelsForm` carries `labels` as a JSON string parameter; the
+    /// GA client sends it in the form body, so both sources must land.
+    #[actix_web::test]
+    async fn labels_are_read_from_the_upstream_form_parameter() {
+        let req = test_request(
+            "/v3/admin/ai/mcp/labels",
+            Some("application/x-www-form-urlencoded"),
+        );
+        let body = b"mcpName=my-mcp&labels=%7B%22stable%22%3A%221.0.0%22%7D";
+        let params = AdminParams::from_request(&req, body);
+        assert_eq!(
+            params
+                .labels(body)
+                .unwrap()
+                .get("stable")
+                .map(String::as_str),
+            Some("1.0.0")
+        );
     }
 
-    /// The console posts the map as a body instead.
-    #[test]
-    fn labels_are_read_from_a_json_body() {
-        let labels = parse_labels(None, br#"{"labels":{"beta":"2.0.0"}}"#).expect("parse");
+    /// The console posts the map as a JSON body instead.
+    #[actix_web::test]
+    async fn labels_are_read_from_a_json_body() {
+        let req = test_request("/v3/admin/ai/mcp/labels", Some("application/json"));
+        let body = br#"{"labels":{"beta":"2.0.0"}}"#;
+        let labels = AdminParams::from_request(&req, body)
+            .labels(body)
+            .expect("parse");
         assert_eq!(labels.get("beta").map(String::as_str), Some("2.0.0"));
     }
 
-    #[test]
-    fn absent_labels_mean_no_custom_labels() {
-        assert!(parse_labels(None, b"").expect("parse").is_empty());
+    #[actix_web::test]
+    async fn absent_labels_mean_no_custom_labels() {
+        let req = test_request("/v3/admin/ai/mcp/labels", None);
+        assert!(
+            AdminParams::from_request(&req, b"")
+                .labels(b"")
+                .expect("parse")
+                .is_empty()
+        );
     }
 
     /// `enabled=false` is how the maintainer client disables a server. Reading

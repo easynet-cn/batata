@@ -638,3 +638,29 @@ enforces these totals.
 > methods, TG-03) are batata's own tests, not ported upstream IT cases, so by
 > the convention above they are **not** T-ID rows and do not change the 401
 > count. Mutant evidence is in `docs/compat/review-report.md` §9.3.
+>
+> **Rust SDK-native coverage (2026-11-10, batch 3)**: the 6 further AI
+> resource wiremock cases (122 → 128) in the same `client_test.rs` are also
+> batata-native tests, so the 401 T-ID / 1040 global counts are unchanged.
+> Mutant evidence is in `docs/compat/review-report.md` §10.3.
+>
+> **Rust-native coverage (2026-11-10, batch 4)**: the 8 unit tests in
+> `crates/batata-ai/src/api/admin_form.rs` and the 7 route-level tests in
+> `crates/batata-server/tests/ai_admin_form_encoding.rs` are batata-native
+> guards for the GA AI ADMIN form encoding, not ported upstream IT cases. The
+> 401 T-ID / 1040 global counts are unchanged. Mutant evidence is in
+> `docs/compat/review-report.md` §11.3.
+>
+> **Rust-native coverage (2026-11-10, batch 5)**: 6 further unit tests in
+> `crates/batata-ai/src/api/agent.rs` and 7 further route tests in
+> `crates/batata-server/tests/ai_admin_form_encoding.rs` (7 → 14) guard the
+> GA flat Agent draft form wire. These are batata-native guards, not ported
+> upstream IT cases, so the 401 T-ID / 1040 global counts are unchanged.
+> Mutant evidence is in `docs/compat/review-report.md` §12.4.
+>
+> **Rust-native coverage (2026-11-10, batch 6)**: 3 further route tests
+> in `crates/batata-server/tests/ai_admin_form_encoding.rs` (14 → 17)
+> guard first-draft Agent metadata initialization for both the GA flat
+> form and batata's nested JSON wire. These are batata-native guards, not
+> ported upstream IT cases, so the 401 T-ID / 1040 global counts are
+> unchanged. Mutant evidence is in `docs/compat/review-report.md` §13.3.

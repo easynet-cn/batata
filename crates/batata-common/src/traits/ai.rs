@@ -224,6 +224,7 @@ pub trait SkillService: Send + Sync {
     ) -> anyhow::Result<Page<SkillSummary>>;
 
     /// The `upload_skill` method.
+    #[allow(clippy::too_many_arguments)]
     async fn upload_skill(
         &self,
         namespace_id: &str,
@@ -231,6 +232,10 @@ pub trait SkillService: Send + Sync {
         skill: &Skill,
         author: &str,
         overwrite: bool,
+        target_version: Option<&str>,
+        upload_action: Option<&str>,
+        auto_publish_if_new: bool,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<String>;
 
     /// Check what uploading a skill ZIP would do, persisting nothing.
@@ -251,6 +256,7 @@ pub trait SkillService: Send + Sync {
     ) -> anyhow::Result<BatchUploadResult>;
 
     /// The `create_draft` method.
+    #[allow(clippy::too_many_arguments)]
     async fn create_draft(
         &self,
         namespace_id: &str,
@@ -259,6 +265,7 @@ pub trait SkillService: Send + Sync {
         target_version: Option<&str>,
         initial_content: Option<&Skill>,
         author: &str,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<String>;
 
     /// The `update_draft` method.
@@ -268,6 +275,7 @@ pub trait SkillService: Send + Sync {
         name: &str,
         skill: &Skill,
         user: Option<&str>,
+        commit_msg: Option<&str>,
     ) -> anyhow::Result<()>;
 
     /// The `delete_draft` method.

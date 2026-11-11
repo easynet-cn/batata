@@ -264,6 +264,15 @@ pub struct ConsoleSkillUploadQuery {
     /// Whether to overwrite an existing skill with the same name.
     #[serde(default)]
     pub overwrite: bool,
+    /// GA `targetVersion`: explicit version override for the uploaded draft.
+    pub target_version: Option<String>,
+    /// GA `uploadAction`: `CREATE_DRAFT` / `OVERWRITE_DRAFT` / `DELETE_DRAFT_AND_CREATE`.
+    pub upload_action: Option<String>,
+    /// GA `autoPublishIfNew`: force-publish the first upload automatically.
+    #[serde(default)]
+    pub auto_publish_if_new: bool,
+    /// GA `commitMsg`: stored as the version-level description.
+    pub commit_msg: Option<String>,
 }
 
 /// Read the `file` field of a multipart upload, enforcing the ZIP size limit.
@@ -344,7 +353,17 @@ async fn upload_skill(
     let name = skill.name.clone();
 
     let result = skill_service
-        .upload_skill(ns, &name, &skill, &author, overwrite)
+        .upload_skill(
+            ns,
+            &name,
+            &skill,
+            &author,
+            overwrite,
+            query.target_version.as_deref(),
+            query.upload_action.as_deref(),
+            query.auto_publish_if_new,
+            query.commit_msg.as_deref(),
+        )
         .await;
     trace_write(
         &req,
@@ -411,6 +430,7 @@ async fn create_draft(
             form.target_version.as_deref(),
             initial_content.as_ref(),
             &author,
+            form.commit_msg.as_deref(),
         )
         .await;
     trace_write(
@@ -492,7 +512,13 @@ async fn update_draft(
     }
 
     let result = skill_service
-        .update_draft(ns, skill_name, &skill, Some(get_username(&req).as_str()))
+        .update_draft(
+            ns,
+            skill_name,
+            &skill,
+            Some(get_username(&req).as_str()),
+            form.commit_msg.as_deref(),
+        )
         .await;
     trace_write(
         &req,

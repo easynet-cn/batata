@@ -12,7 +12,7 @@ docs/compat/
 ├── README.md           # This file: conventions + metric definitions
 ├── review-report.md    # Source-code audit report (2026-11-09, client SDK focus)
 ├── nacos/
-│   ├── features.md     # Upstream feature × batata implementation status (194 F-IDs)
+│   ├── features.md     # Upstream feature × batata implementation status (197 F-IDs)
 │   └── tests.md        # Upstream test inventory (401 T-IDs mapped to F-IDs)
 ├── consul/
 │   ├── features.md     # 181 F-IDs
@@ -33,10 +33,10 @@ Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 194      | 176 | 4  | 0 | 11 | 3  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 197      | 179 | 4  | 0 | 10 | 4  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 179 | 2  | 0 | 0  | 0  | 99%       | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **574** | **524** | **9** | **0** | **38** | **3** | **91%** | **1040** | |
+| **Total** | **577** | **527** | **9** | **0** | **37** | **4** | **91%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -79,15 +79,16 @@ headings all declare the same target. Consul tracks `2.1.0-dev`, Apollo the
 
 The audit in `review-report.md` compares `batata-client` /
 `batata-maintainer-client` with the upstream Nacos Java client. `🟢` rows that
-were falsely marked full have been downgraded. Every gap is now **registered as
-a `⚪ planned` F-ID** in `docs/compat/nacos/features.md` sections B.8/B.9, so
-the checker can detect a status that drifts from reality:
+were falsely marked full have been downgraded. Every gap is **registered as an
+F-ID** in `docs/compat/nacos/features.md` sections B.8/B.9 (client SDK) or
+B.10 (server AI ADMIN), so the checker can detect a status that drifts from reality. Rows whose status has since moved to
+`🟢`/`🟡` stay in the table as an audit trail, with the remaining work stated:
 
 | Area | F-ID | Missing capability |
 |------|------|--------------------|
-| maintainer-client | F-NAC-MAINT-006 | MCP server version lifecycle |
-| maintainer-client | F-NAC-MAINT-007 | `AiMaintainerService` delegates + ZIP uploads |
-| maintainer-client | F-NAC-MAINT-008 | Agent draft/publish lifecycle + `agent_get(version)` |
+| maintainer-client | F-NAC-MAINT-006 | MCP server version lifecycle — closed in batch 1 |
+| maintainer-client | F-NAC-MAINT-007 | GA `/skills/upload` `targetVersion` / `uploadAction` / `autoPublishIfNew` — **closed in batch 11** (`🟢`): the three params are now consumed by `SkillUploadQuery` / `ConsoleSkillUploadQuery` / `SkillService::upload_skill` and the `skill_upload_from_zip` SDK; typed DTOs, the full read/write facade, Skill ADMIN `commitMsg` and Prompt draft fork metadata landed in batches 3/7/8/10. Batch 9/10 audits corrected two over-registered field lists |
+| maintainer-client | F-NAC-MAINT-008 | Legacy A2A facade + GA-only agent methods (query lifecycle landed in batch 2) |
 | batata-client | F-NAC-CSDK-001 | `NamingSelector` subscribe overload |
 | batata-client | F-NAC-CSDK-002 | `LockService::renew` / watchdog |
 | batata-client | F-NAC-CSDK-003 | `AiService` sub-services + `AgentDiscoveryService` |
@@ -95,7 +96,10 @@ the checker can detect a status that drifts from reality:
 | batata-client | F-NAC-CSDK-005 | OIDC auth + `configSnapshotEnabled` |
 | batata-client | F-NAC-CSDK-006 | HTTP `requestId` correlation |
 | batata-core | F-NAC-CSDK-007 | GA `SetupAckRequest.ability_table` RAD keys |
-| batata-ai | F-NAC-MAINT-010 | AI ADMIN POST/PUT form-vs-query channel (GA Java client) |
+| batata-ai | F-NAC-MAINT-010 | AI ADMIN POST/PUT form-vs-query channel — **closed in batch 5** (`🟢`); the ARD model divergence moved to `F-NAC-AISRV-001` |
+| batata-ai (server) | F-NAC-AISRV-001 | GA ARD Agent model (typed `AgentVersionDetail` / `AgentCallInterface`, `Page` responses, RAD endpoints, first-draft `callInterfaces`) — draft-created metadata closed in batch 6 |
+| batata-ai (server) | F-NAC-AISRV-002 | `/v3/admin/ai/import` controller — **false gap, closed in batch 6** (`🟢`, already in `batata-console`, also `F-NAC-ADM-AI-008`) |
+| batata-ai (server) | F-NAC-AISRV-003 | `/v3/admin/ai/pipelines` deprecated reads — **⛔ won't support** (GA returns 410 unless an opt-in compatibility flag is set) |
 
 `F-NAC-CSDK-007` is **deferred on purpose**: GA Java clients gate RAD gRPC
 routing on `radV1`/`radWatchV1`, and batata's AI handlers only cover
@@ -116,15 +120,196 @@ protocol-neutral `agents_*` facade on `/v3/admin/ai/agents` covers
 version reads, the six transitions, draft create/update/delete, labels and
 scope (7 mutant-checked wiremock cases). GA bytecode inspection found a
 broader server-side divergence: the 3.3.0 Java maintainer client sends
-POST/PUT admin AI parameters as a **form body**, while batata's AI ADMIN
-handlers read them from the query (and the agent draft/labels handlers
-additionally require JSON bodies). That is registered separately as
+POST/PUT admin AI parameters as a **form body**, while batata's MCP/Agent
+ADMIN write handlers read them from the query (and the agent draft/labels
+handlers additionally require JSON bodies). That is registered separately as
 `F-NAC-MAINT-010` rather than being counted as full compatibility; batata's
 own Rust SDK follows the batata wire and Spring `@RequestParam` accepts query,
 so the new methods work against both servers. TG-03 is closed: all 10
 `BatataAiService` public methods now have direct wiremock tests in
 `crates/batata-client/tests/ai_service_test.rs`. See
 `docs/compat/review-report.md` §9.
+
+**Batch 3 implemented (2026-11-10)**: `F-NAC-MAINT-007` is now `🟡`. The GA
+`AiMaintainerService` delegates' **read surface** is exposed as 25 flat
+`skill_*` / `prompt_*` / `agentspec_*` / `pipeline_*` methods on
+`MaintainerClient`, plus Skill/Prompt/AgentSpec ZIP upload, precheck, download
+and delete. GA bytecode (`nacos-maintainer-client-3.3.0.jar`) and batata's
+route table agree on these GET/DELETE query endpoints and on the `file`
+multipart part, so no server change was needed. Two HTTP helpers
+(`get_bytes_with_query`, `post_multipart_with_query`) were added to
+`batata-client`. Six wiremock cases (122 → **128**) and six killed mutants
+cover paths, query shapes, multipart parts and raw-byte responses. The
+POST/PUT lifecycle, typed DTOs and GA-style sub-service objects remain open,
+so the row stays `🟡` rather than `🟢`. See `review-report.md` §10.
+
+**Batch 4 implemented (2026-11-10)**: `F-NAC-MAINT-010` is now `🟡`. A source
+re-read showed the original registration was too broad: the Skill/Prompt/
+AgentSpec write endpoints in `crates/batata-ai/src/api/skill.rs`,
+`crates/batata-ai/src/api/prompt.rs` and `crates/batata-ai/src/api/agentspec.rs`
+already take `web::Form`, ZIP uploads keep identity fields in the query and the
+payload in `Multipart`, and MCP create/draft already parse form-or-JSON
+specifications. The real gap was 15 MCP/Agent POST/PUT handlers bound to
+`web::Query` only, plus the MCP `create_draft` and MCP/Agent `labels`
+parameters. `crates/batata-ai/src/api/admin_form.rs` adds `AdminParams` (query
++ urlencoded form + JSON object, query wins, multipart excluded) and the
+`AdminForm<T>` extractor, wired through `crates/batata-ai/src/api/mcp.rs` and
+`crates/batata-ai/src/api/agent.rs`. Eight unit tests and seven route-level
+form-vs-query equivalence tests in
+`crates/batata-server/tests/ai_admin_form_encoding.rs` guard both channels,
+including real success paths; 11 mutants were killed. Four initial survivors
+exposed weak guards (no duplicate key in the precedence test, no observable
+`overwrite` parameter, and agent labels checked only the HTTP status), so those
+assertions were strengthened. At the end of batch 4 the row stayed `🟡` because
+`create_agent` / `update_agent` / `create_draft` / `update_draft` still required
+a nested `AgentCard` JSON body while GA sends flat draft metadata form fields;
+batch 5 closed that last channel (see below). See
+`docs/compat/review-report.md` §11. No `--full` gate was run: the change is
+limited to AI ADMIN request extraction.
+
+**Batch 5 / server alignment audit (2026-11-10)**: the GA AI ADMIN controllers
+at release commit `b64bc9118` were compared endpoint-by-endpoint with the
+batata route tables. MCP (19/19), Agent (18/19), Skill (20/20), Prompt (24/24),
+AgentSpec (18/19) and the legacy `/v3/admin/ai/a2a` facade (6/8) are all
+mounted; Skill/Prompt/AgentSpec already use `web::Form`, so the remaining
+`F-NAC-MAINT-007` write facade is a **client SDK** gap, not a server gap. Only
+three server areas are genuinely missing: the GA ARD Agent model, the
+`/v3/admin/ai/import` controller, and two pipeline read endpoints. They are
+registered as `F-NAC-AISRV-001..003` in the new `features.md` section B.10.
+
+**Batch 6 audit correction (2026-11-10)**: two of those three rows were false
+gaps. The import controller is fully implemented (4/4) in
+`crates/batata-console/src/v3/ai_import.rs` with 18 route tests and is already
+tracked as `F-NAC-ADM-AI-008` — the batch 5 audit had grepped only
+`crates/batata-ai`. The two "missing" pipeline reads are
+`@Deprecated(forRemoval=true)` endpoints that GA gates behind
+`nacos.core.api.compatibility.enabled` and answers with **410 Gone** by
+default; batata deliberately does not ship them. So `F-NAC-AISRV-002` is now
+`🟢`, `F-NAC-AISRV-003` is `⛔`, and `F-NAC-AISRV-001` is the only real
+server-side gap. See `docs/compat/review-report.md` §13.
+
+**Batch 7 implemented (2026-11-10)**: `F-NAC-MAINT-007` now covers the whole
+GA AI ADMIN **write** surface, not just reads. A source re-read showed the
+batch-3 note in `crates/batata-maintainer-client/src/client.rs` was stale:
+`crates/batata-ai/src/api/{skill,prompt,agentspec}.rs` write handlers already
+take `web::Form`, and MCP takes `AdminForm` / `AdminParams`, so GA's
+`postForm` / `putForm` connect directly once `F-NAC-MAINT-010` is closed.
+`crates/batata-maintainer-client` gained 35 ADMIN path constants and 42 flat
+write methods (Skill/Prompt/AgentSpec draft + version transitions + labels /
+biz-tags / scope / online-offline, four legacy prompt APIs,
+`listAgentSpecAdminItems`, and MCP draft delete / labels / status / scope).
+6 new wiremock cases (128 → **134**) assert exact urlencoded form field maps,
+verbs and paths; 15 code mutants were killed. `getAgentSpecAdminDetail` was
+confirmed to be a **false gap** already covered by `agentspec_get_detail`.
+The row stays `🟡` only because typed AI resource DTOs are still unmodelled,
+and some GA-only fields are forwarded but not consumed by batata's form
+handlers. F-ID and status totals are unchanged. **Batch 9 correction**: the
+`updateLatestLabel` half of that claim was false (GA ignores it on ADMIN);
+see `docs/compat/review-report.md` §16. See §14 for the batch 7 evidence.
+
+**Batch 8 implemented (2026-11-10)**: the `F-NAC-MAINT-007` read surface now
+returns typed AI resource DTOs instead of `serde_json::Value`. Re-reading the
+GA 3.3.0 maintainer-client implementations and `nacos-api` model classes found
+**zero post-GA drift** in the skill / prompt / agentspec / pipeline models, so
+`crates/batata-maintainer-client/src/model/ai_resource.rs` types the shared
+wire fields and keeps every other field in `#[serde(flatten)] extra` (the same
+convention as `model/ai.rs`). 24 DTOs and 18 typed read facades (plus 2 generic
+helpers) cover Skill / Prompt / AgentSpec / Pipeline reads and ZIP upload
+results; both
+shared read helpers are now generic over the decoded DTO. 7 serde unit tests
+and 15 compile-safe mutants guard camelCase keys, `type` aliases,
+null-tolerant collections, `extra` preservation and the exact DTO chosen by
+each endpoint. The row stays `🟡` because a few GA-only optional fields are
+still not consumed by batata's form handlers — a **server-side** semantic
+divergence, not a client SDK gap. F-ID and status totals are unchanged. See
+`docs/compat/review-report.md` §15. No `--full`, commit, push or publish was
+performed.
+
+**Batch 9 audit (2026-11-10)**: a GA-source re-read of the batch 8 residual
+claim found three of its four fields were over-registered. GA deliberately
+ignores `updateLatestLabel`: the publish forms bind it as an "ignored" flag and
+the operation services say "retained for compatibility and ignored; latest is
+server-managed". `basedOnVersion` / `bizTags` are already consumed by batata's Skill/AgentSpec
+draft forms and the dedicated `update_biz_tags` endpoints wherever GA binds
+them. The only open server-side divergences are `commitMsg` on Skill ADMIN
+`POST/PUT /skills/draft` + `POST /skills/upload` (stored by GA as
+`versionDesc`) and `basedOnVersion` / `bizTags` on Prompt ADMIN
+`POST /prompt/draft`. The row stays partial until those are consumed; no F-ID,
+status or count changed, and no code changed. See
+`docs/compat/review-report.md` §16.
+
+**Batch 10 implemented (2026-11-10)**: both batch 9 gaps are now consumed by
+the server. Skill ADMIN `POST/PUT /skills/draft` and `POST /skills/upload`
+accept `commitMsg` on the form, query and multipart-query channels and store it
+as the version-level description (`version_description` in
+`crates/batata-ai/src/service/skill_service.rs`); the public `SkillService`
+trait, its single impl, the admin and console handlers and the tests were
+threaded through together. Prompt ADMIN `POST /prompt/draft` now uses
+`AdminForm<PromptDraftCreateForm>` plus
+`PromptOperationService::create_draft_with_options`: `basedOnVersion` forks the
+stored template/variables and bumps the patch version, `bizTags` initializes a
+brand-new prompt's metadata, `targetVersion` wins over batata's `version`
+alias, and `commitMsg` reaches both the version description and
+`PromptStorage` — closing a **false claim in §16.2**, where a declared-but-never-
+forwarded field was counted as "consumed". Absent fields keep the historical
+behaviour. 13 new route tests (7 in `skill_admin_routes.rs`, 6 in
+`prompt_admin_routes.rs`) and **19/19 mutants killed** guard both parameter
+channels, the ZIP channel, exact wire keys, error paths and the absent-field
+baseline. A fresh GA re-read found three further `/skills/upload` parameters
+(`targetVersion`, `uploadAction`, `autoPublishIfNew`) that GA binds and consumes
+but batata does not expose, so `F-NAC-MAINT-007` **stays 🟡** at the close of
+batch 10; those three params are consumed in batch 11 (below), promoting the row
+to `🟢`. F-ID, status and count totals are unchanged. See
+`docs/compat/review-report.md` §17. No `--full`, commit, push or publish was
+performed.
+
+**Batch 11 implemented (2026-11-10)**: `F-NAC-MAINT-007` is now `🟢`. The three
+remaining GA `/skills/upload` parameters — `targetVersion`, `uploadAction`,
+`autoPublishIfNew` — are consumed end to end. `SkillUploadQuery` (ADMIN) and
+`ConsoleSkillUploadQuery` (console) gained the fields; `SkillService::upload_skill`
+gained `target_version` / `upload_action` / `auto_publish_if_new` and mirrors GA
+`doUploadSingleSkill` exactly: a blank action falls back to
+`overwrite ? overwriteUploadedSkill : createUploadedSkillDraft`, an explicit
+`CREATE_DRAFT` / `OVERWRITE_DRAFT` / `DELETE_DRAFT_AND_CREATE` selects the
+matching branch (any other value → `PARAMETER_VALIDATE_ERROR` "Unsupported
+uploadAction"), and `autoPublishIfNew` force-publishes only the first upload of a
+brand-new skill (`meta == null`). The maintainer-client SDK `skill_upload_from_zip`
+exposes the same wire via `AiUploadQuery` with `skip_serializing_if`, so the GA
+`/upload/batch` endpoint (which binds only `namespaceId` / `overwrite` / `file`)
+stays faithful and `skill_batch_upload` / `agentspec_upload_from_zip` are
+unchanged. Six new route tests in `crates/batata-server/tests/skill_admin_routes.rs`
+(target-version override, `OVERWRITE_DRAFT` success, `CREATE_DRAFT` rejection,
+unsupported action, `autoPublishIfNew` publish / keep-draft) and **4/4
+compile-safe mutants killed** guard the new branches and the absent-field
+baseline. `compat_check.py`, `cargo fmt`, `git diff --check`, clippy `-D warnings`
+and the route-test suite all pass. No `--full`, commit, push or publish was
+performed.
+
+Batch 5 then made the four remaining Agent write handlers dual-wire:
+`crates/batata-ai/src/api/agent.rs` (`resolve_agent_write`) decodes either batata's
+nested `AgentCard` JSON or the GA flat `AgentDraftCreateForm` /
+`AgentUpdateForm` parameters (query still wins), maps the overlapping fields,
+preserves GA-only governance values in batata `metadata`, and rejects ARD
+`callInterfaces` fail-closed. `F-NAC-MAINT-010` is now `🟢`. Six unit tests and
+seven new route tests (14 total in
+`crates/batata-server/tests/ai_admin_form_encoding.rs`) guard the mapping,
+overwrite, validation and query precedence; **16/16 mutants killed**. These
+are batata-native guards, so the 401 / 1040 T-ID counts are unchanged. See
+`docs/compat/review-report.md` §12. No `--full` gate, commit, push or publish
+was performed.
+
+**Batch 6 implemented (2026-11-10)**: `create_agent_draft` now initializes
+the Agent metadata row on a first draft, matching GA
+`AgentOperationService.createValidatedDraft` (`b64bc9118:368-378`) and the
+existing `mcp_service.rs::create_initial_draft_resource`. Before this, a first
+`POST /v3/admin/ai/agents/draft` on a fresh Agent returned an internal
+"agent not found" error. Three route tests in
+`crates/batata-server/tests/ai_admin_form_encoding.rs` (14 → 17) cover the GA
+flat form, the nested JSON wire and the persisted version index;
+**9/9 code mutants killed**. `F-NAC-AISRV-001` stays `⚪` because typed ARD
+DTOs, `Page` responses, RAD endpoints and GA first-draft `callInterfaces`
+remain. See `docs/compat/review-report.md` §13. No `--full`, commit, push or
+publish was performed.
 
 Two earlier "gaps" were corrected on re-reading upstream source:
 cross-namespace `cloneConfig` is only a `default` interface method that throws
@@ -236,10 +421,14 @@ grep -c "🟢" docs/compat/nacos/features.md
 ### Automated validation (`scripts/compat_check.py`)
 
 Validates every `features.md` (ID format, global uniqueness, per-module
-contiguous numbering, valid status enum), recomputes each file's Summary row and
-the global summary in this README, checks that every Nacos `🟢` row has a
-resolvable `batata impl` source anchor, and rejects dangling F-ID references and
-dead file links. Run from repo root:
+contiguous numbering, valid status enum), recomputes each file's Summary **Total**
+row and the global summary in this README, verifies the per-module Summary rows
+add up to that Total, checks that every Nacos `🟢` row has a resolvable
+`batata impl` source anchor, rejects dangling F-ID references and dead file
+links, and keeps the F-ID counts in the **Layout** block in sync with the
+recomputed inventories (check 11). The status of a row is read from its own
+cell, so a status marker quoted in a Notes cell cannot reclassify the row
+(check 4, hardened in batch 6). Run from repo root:
 
 ```bash
 python3 scripts/compat_check.py

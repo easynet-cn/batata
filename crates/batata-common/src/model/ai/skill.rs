@@ -334,6 +334,8 @@ pub struct SkillDraftCreateForm {
     pub based_on_version: Option<String>,
     /// Target version for the draft
     pub target_version: Option<String>,
+    /// GA `commitMsg`: stored as the version-level description (`versionDesc`).
+    pub commit_msg: Option<String>,
     /// Full skill content as JSON string (required for new skill, optional for fork)
     pub skill_card: Option<String>,
 }
@@ -359,6 +361,8 @@ pub struct SkillUpdateForm {
     #[serde(default)]
     /// The `set_as_latest` field.
     pub set_as_latest: bool,
+    /// GA `commitMsg`: replaces the version-level description on update.
+    pub commit_msg: Option<String>,
 }
 
 /// Submit form (POST body)

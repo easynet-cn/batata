@@ -23,6 +23,7 @@ use tracing::debug;
 use batata_common::model::ai::ResourceVersionInfo;
 
 use crate::model::prompt::*;
+use crate::model::skill::next_patch_version;
 use crate::repository::{meta_status, resource_type, scope, version_status};
 use crate::service::version_lifecycle;
 
@@ -520,6 +521,10 @@ impl PromptOperationService {
     // ========================================================================
 
     /// Create a draft version, which is not served until it is published.
+    ///
+    /// Kept as the console / `PromptService` facade: it delegates to
+    /// [`Self::create_draft_with_options`] with no GA-only fields so the
+    /// historical behaviour is unchanged when they are absent.
     pub async fn create_draft(
         &self,
         namespace_id: &str,
@@ -530,7 +535,58 @@ impl PromptOperationService {
         variables: Option<Vec<PromptVariable>>,
         src_user: &str,
     ) -> anyhow::Result<String> {
-        if template.is_empty() {
+        self.create_draft_with_options(
+            namespace_id,
+            prompt_key,
+            target_version,
+            None,
+            template,
+            description,
+            None,
+            None,
+            variables,
+            src_user,
+        )
+        .await
+    }
+
+    /// ADMIN create-draft with the GA-only fields.
+    ///
+    /// `basedOnVersion` forks the stored template/variables from an existing
+    /// version and bumps its patch number when no `targetVersion` is given;
+    /// `bizTags` is applied to a brand-new prompt's metadata (GA only does so
+    /// on `initOrUpdateMetaForDraft`); `commitMsg` is the version-level
+    /// description (`AiResourceManager.insertVersionRow(..., description, ...)`).
+    /// When all three are absent this is exactly [`Self::create_draft`].
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_draft_with_options(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        target_version: Option<&str>,
+        based_on_version: Option<&str>,
+        template: &str,
+        description: Option<&str>,
+        commit_msg: Option<&str>,
+        biz_tags: Option<&str>,
+        variables: Option<Vec<PromptVariable>>,
+        src_user: &str,
+    ) -> anyhow::Result<String> {
+        let base = based_on_version.filter(|v| !v.is_empty());
+
+        // A fork reuses the base version's content; the request template is
+        // optional in that case (GA `PromptDraftCreateForm.validate()`).
+        let (effective_template, effective_variables) = if let Some(base_version) = base {
+            let content = self
+                .load_version(namespace_id, prompt_key, base_version)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Base version '{}' not found", base_version))?;
+            (content.template, content.variables)
+        } else {
+            (template.to_string(), variables)
+        };
+
+        if effective_template.is_empty() {
             anyhow::bail!("Template cannot be empty");
         }
 
@@ -541,7 +597,9 @@ impl PromptOperationService {
                 }
                 v.to_string()
             }
-            None => PROMPT_DEFAULT_VERSION.to_string(),
+            None => base
+                .map(next_patch_version)
+                .unwrap_or_else(|| PROMPT_DEFAULT_VERSION.to_string()),
         };
 
         if self
@@ -558,11 +616,11 @@ impl PromptOperationService {
         }
 
         // Ensure the prompt exists and load its bookkeeping.
-        if self
+        let is_new = self
             .find_resource(namespace_id, prompt_key)
             .await?
-            .is_none()
-        {
+            .is_none();
+        if is_new {
             self.persistence
                 .ai_resource_insert(&AiResourceInfo {
                     name: prompt_key.to_string(),
@@ -578,6 +636,22 @@ impl PromptOperationService {
                     ..Default::default()
                 })
                 .await?;
+
+            // GA applies `description` / `bizTags` to the metadata only when
+            // the prompt is created for the first time.
+            if let Some(raw) = biz_tags {
+                let tags = Self::parse_biz_tags(Some(raw));
+                if !tags.is_empty() {
+                    self.persistence
+                        .ai_resource_update_biz_tags(
+                            namespace_id,
+                            prompt_key,
+                            resource_type::PROMPT,
+                            &tags.join(","),
+                        )
+                        .await?;
+                }
+            }
         }
         let mut meta = self.require_meta(namespace_id, prompt_key).await?;
 
@@ -589,12 +663,14 @@ impl PromptOperationService {
         let now = chrono::Utc::now().timestamp_millis();
         let storage = PromptStorage {
             prompt_key: prompt_key.to_string(),
-            template: template.to_string(),
-            md5: Some(const_hex::encode(md5::Md5::digest(template.as_bytes()))),
-            commit_msg: None,
+            template: effective_template.clone(),
+            md5: Some(const_hex::encode(md5::Md5::digest(
+                effective_template.as_bytes(),
+            ))),
+            commit_msg: commit_msg.map(str::to_string),
             src_user: Some(src_user.to_string()),
             gmt_modified: Some(now),
-            variables,
+            variables: effective_variables,
         };
         self.persistence
             .ai_resource_version_insert(&AiResourceVersionInfo {
@@ -604,7 +680,9 @@ impl PromptOperationService {
                 version: version.clone(),
                 status: version_status::DRAFT.to_string(),
                 author: Some(src_user.to_string()),
-                description: description.map(|d| d.to_string()),
+                description: commit_msg
+                    .map(str::to_string)
+                    .or_else(|| description.map(str::to_string)),
                 storage: Some(serde_json::to_string(&storage)?),
                 download_count: 0,
                 ..Default::default()

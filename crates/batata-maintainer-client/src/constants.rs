@@ -189,6 +189,14 @@ pub mod admin_api_path {
     pub const AI_MCP_ONLINE: &str = "/v3/admin/ai/mcp/online";
     /// The `AI_MCP_OFFLINE` constant.
     pub const AI_MCP_OFFLINE: &str = "/v3/admin/ai/mcp/offline";
+    /// The `AI_MCP_DRAFT` constant.
+    pub const AI_MCP_DRAFT: &str = "/v3/admin/ai/mcp/draft";
+    /// The `AI_MCP_LABELS` constant.
+    pub const AI_MCP_LABELS: &str = "/v3/admin/ai/mcp/labels";
+    /// The `AI_MCP_STATUS` constant.
+    pub const AI_MCP_STATUS: &str = "/v3/admin/ai/mcp/status";
+    /// The `AI_MCP_SCOPE` constant.
+    pub const AI_MCP_SCOPE: &str = "/v3/admin/ai/mcp/scope";
 
     // AI Agent (A2A)
     /// The `AI_AGENT` constant.
@@ -225,6 +233,122 @@ pub mod admin_api_path {
     pub const AI_AGENTS_ONLINE: &str = "/v3/admin/ai/agents/online";
     /// The `AI_AGENTS_OFFLINE` constant.
     pub const AI_AGENTS_OFFLINE: &str = "/v3/admin/ai/agents/offline";
+
+    // AI Skill resources
+    /// The `AI_SKILLS` constant.
+    pub const AI_SKILLS: &str = "/v3/admin/ai/skills";
+    /// The `AI_SKILLS_LIST` constant.
+    pub const AI_SKILLS_LIST: &str = "/v3/admin/ai/skills/list";
+    /// The `AI_SKILLS_VERSION` constant.
+    pub const AI_SKILLS_VERSION: &str = "/v3/admin/ai/skills/version";
+    /// The `AI_SKILLS_VERSION_DOWNLOAD` constant.
+    pub const AI_SKILLS_VERSION_DOWNLOAD: &str = "/v3/admin/ai/skills/version/download";
+    /// The `AI_SKILLS_UPLOAD` constant.
+    pub const AI_SKILLS_UPLOAD: &str = "/v3/admin/ai/skills/upload";
+    /// The `AI_SKILLS_UPLOAD_PRECHECK` constant.
+    pub const AI_SKILLS_UPLOAD_PRECHECK: &str = "/v3/admin/ai/skills/upload/precheck";
+    /// The `AI_SKILLS_UPLOAD_BATCH` constant.
+    pub const AI_SKILLS_UPLOAD_BATCH: &str = "/v3/admin/ai/skills/upload/batch";
+    /// The `AI_SKILLS_DRAFT` constant.
+    pub const AI_SKILLS_DRAFT: &str = "/v3/admin/ai/skills/draft";
+    /// The `AI_SKILLS_SUBMIT` constant.
+    pub const AI_SKILLS_SUBMIT: &str = "/v3/admin/ai/skills/submit";
+    /// The `AI_SKILLS_PUBLISH` constant.
+    pub const AI_SKILLS_PUBLISH: &str = "/v3/admin/ai/skills/publish";
+    /// The `AI_SKILLS_FORCE_PUBLISH` constant.
+    pub const AI_SKILLS_FORCE_PUBLISH: &str = "/v3/admin/ai/skills/force-publish";
+    /// The `AI_SKILLS_REDRAFT` constant.
+    pub const AI_SKILLS_REDRAFT: &str = "/v3/admin/ai/skills/redraft";
+    /// The `AI_SKILLS_LABELS` constant.
+    pub const AI_SKILLS_LABELS: &str = "/v3/admin/ai/skills/labels";
+    /// The `AI_SKILLS_BIZ_TAGS` constant.
+    pub const AI_SKILLS_BIZ_TAGS: &str = "/v3/admin/ai/skills/biz-tags";
+    /// The `AI_SKILLS_ONLINE` constant.
+    pub const AI_SKILLS_ONLINE: &str = "/v3/admin/ai/skills/online";
+    /// The `AI_SKILLS_OFFLINE` constant.
+    pub const AI_SKILLS_OFFLINE: &str = "/v3/admin/ai/skills/offline";
+    /// The `AI_SKILLS_SCOPE` constant.
+    pub const AI_SKILLS_SCOPE: &str = "/v3/admin/ai/skills/scope";
+
+    // AI Prompt resources
+    /// The `AI_PROMPT` constant.
+    pub const AI_PROMPT: &str = "/v3/admin/ai/prompt";
+    /// The `AI_PROMPT_LIST` constant.
+    pub const AI_PROMPT_LIST: &str = "/v3/admin/ai/prompt/list";
+    /// The `AI_PROMPT_VERSIONS` constant.
+    pub const AI_PROMPT_VERSIONS: &str = "/v3/admin/ai/prompt/versions";
+    /// The `AI_PROMPT_METADATA` constant.
+    pub const AI_PROMPT_METADATA: &str = "/v3/admin/ai/prompt/metadata";
+    /// The `AI_PROMPT_DETAIL` constant.
+    pub const AI_PROMPT_DETAIL: &str = "/v3/admin/ai/prompt/detail";
+    /// The `AI_PROMPT_VERSION` constant.
+    pub const AI_PROMPT_VERSION: &str = "/v3/admin/ai/prompt/version";
+    /// The `AI_PROMPT_GOVERNANCE` constant.
+    pub const AI_PROMPT_GOVERNANCE: &str = "/v3/admin/ai/prompt/governance";
+    /// The `AI_PROMPT_VERSION_DOWNLOAD` constant.
+    pub const AI_PROMPT_VERSION_DOWNLOAD: &str = "/v3/admin/ai/prompt/version/download";
+    /// The `AI_PROMPT_LABEL` constant (deprecated label bind/unbind endpoint).
+    pub const AI_PROMPT_LABEL: &str = "/v3/admin/ai/prompt/label";
+    /// The `AI_PROMPT_DRAFT` constant.
+    pub const AI_PROMPT_DRAFT: &str = "/v3/admin/ai/prompt/draft";
+    /// The `AI_PROMPT_SUBMIT` constant.
+    pub const AI_PROMPT_SUBMIT: &str = "/v3/admin/ai/prompt/submit";
+    /// The `AI_PROMPT_PUBLISH` constant.
+    pub const AI_PROMPT_PUBLISH: &str = "/v3/admin/ai/prompt/publish";
+    /// The `AI_PROMPT_FORCE_PUBLISH` constant.
+    pub const AI_PROMPT_FORCE_PUBLISH: &str = "/v3/admin/ai/prompt/force-publish";
+    /// The `AI_PROMPT_REDRAFT` constant.
+    pub const AI_PROMPT_REDRAFT: &str = "/v3/admin/ai/prompt/redraft";
+    /// The `AI_PROMPT_ONLINE` constant.
+    pub const AI_PROMPT_ONLINE: &str = "/v3/admin/ai/prompt/online";
+    /// The `AI_PROMPT_OFFLINE` constant.
+    pub const AI_PROMPT_OFFLINE: &str = "/v3/admin/ai/prompt/offline";
+    /// The `AI_PROMPT_LABELS` constant.
+    pub const AI_PROMPT_LABELS: &str = "/v3/admin/ai/prompt/labels";
+    /// The `AI_PROMPT_DESCRIPTION` constant.
+    pub const AI_PROMPT_DESCRIPTION: &str = "/v3/admin/ai/prompt/description";
+    /// The `AI_PROMPT_BIZ_TAGS` constant.
+    pub const AI_PROMPT_BIZ_TAGS: &str = "/v3/admin/ai/prompt/biz-tags";
+
+    // AI AgentSpec resources
+    /// The `AI_AGENTSPECS` constant.
+    pub const AI_AGENTSPECS: &str = "/v3/admin/ai/agentspecs";
+    /// The `AI_AGENTSPECS_LIST` constant.
+    pub const AI_AGENTSPECS_LIST: &str = "/v3/admin/ai/agentspecs/list";
+    /// The `AI_AGENTSPECS_VERSION` constant.
+    pub const AI_AGENTSPECS_VERSION: &str = "/v3/admin/ai/agentspecs/version";
+    /// The `AI_AGENTSPECS_VERSION_META` constant.
+    pub const AI_AGENTSPECS_VERSION_META: &str = "/v3/admin/ai/agentspecs/version/meta";
+    /// The `AI_AGENTSPECS_VERSION_DOWNLOAD` constant.
+    pub const AI_AGENTSPECS_VERSION_DOWNLOAD: &str = "/v3/admin/ai/agentspecs/version/download";
+    /// The `AI_AGENTSPECS_UPLOAD` constant.
+    pub const AI_AGENTSPECS_UPLOAD: &str = "/v3/admin/ai/agentspecs/upload";
+    /// The `AI_AGENTSPECS_DRAFT` constant.
+    pub const AI_AGENTSPECS_DRAFT: &str = "/v3/admin/ai/agentspecs/draft";
+    /// The `AI_AGENTSPECS_SUBMIT` constant.
+    pub const AI_AGENTSPECS_SUBMIT: &str = "/v3/admin/ai/agentspecs/submit";
+    /// The `AI_AGENTSPECS_PUBLISH` constant.
+    pub const AI_AGENTSPECS_PUBLISH: &str = "/v3/admin/ai/agentspecs/publish";
+    /// The `AI_AGENTSPECS_FORCE_PUBLISH` constant.
+    pub const AI_AGENTSPECS_FORCE_PUBLISH: &str = "/v3/admin/ai/agentspecs/force-publish";
+    /// The `AI_AGENTSPECS_REDRAFT` constant.
+    pub const AI_AGENTSPECS_REDRAFT: &str = "/v3/admin/ai/agentspecs/redraft";
+    /// The `AI_AGENTSPECS_LABELS` constant.
+    pub const AI_AGENTSPECS_LABELS: &str = "/v3/admin/ai/agentspecs/labels";
+    /// The `AI_AGENTSPECS_BIZ_TAGS` constant.
+    pub const AI_AGENTSPECS_BIZ_TAGS: &str = "/v3/admin/ai/agentspecs/biz-tags";
+    /// The `AI_AGENTSPECS_ONLINE` constant.
+    pub const AI_AGENTSPECS_ONLINE: &str = "/v3/admin/ai/agentspecs/online";
+    /// The `AI_AGENTSPECS_OFFLINE` constant.
+    pub const AI_AGENTSPECS_OFFLINE: &str = "/v3/admin/ai/agentspecs/offline";
+    /// The `AI_AGENTSPECS_SCOPE` constant.
+    pub const AI_AGENTSPECS_SCOPE: &str = "/v3/admin/ai/agentspecs/scope";
+
+    // AI Pipeline executions
+    /// The `AI_PIPELINES_LIST` constant.
+    pub const AI_PIPELINES_LIST: &str = "/v3/admin/ai/pipelines/list";
+    /// The `AI_PIPELINES_DETAIL` constant.
+    pub const AI_PIPELINES_DETAIL: &str = "/v3/admin/ai/pipelines/detail";
 
     // Plugin Management
     /// The `PLUGIN_LIST` constant.

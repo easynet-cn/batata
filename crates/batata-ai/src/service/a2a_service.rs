@@ -855,6 +855,18 @@ impl A2aServerOperationService {
     // Drafts
     // ========================================================================
 
+    /// Split a persisted resource row into the values the draft handlers need.
+    fn resource_parts(
+        resource: AiResourceInfo,
+    ) -> (AiResourceInfo, ResourceVersionInfo, String, String) {
+        let version_info = version_lifecycle::parse_version_info(&resource);
+        let ext = Self::parse_ext(&resource).unwrap_or(A2aResourceExt {
+            id: String::new(),
+            registration_type: String::new(),
+        });
+        (resource, version_info, ext.id, ext.registration_type)
+    }
+
     /// The resource-level version index plus the extension that carries the
     /// agent id, for a resource that must already exist.
     async fn existing_resource(
@@ -869,15 +881,78 @@ impl A2aServerOperationService {
             resource_type::AGENT,
         )
         .await?;
-        let version_info = version_lifecycle::parse_version_info(&resource);
-        let ext = Self::parse_ext(&resource).unwrap_or(A2aResourceExt {
-            id: String::new(),
-            registration_type: String::new(),
-        });
-        Ok((resource, version_info, ext.id, ext.registration_type))
+        Ok(Self::resource_parts(resource))
     }
 
-    /// Create a draft version for an agent that already exists.
+    /// Initialize the Agent directory on its first draft.
+    ///
+    /// GA `AgentOperationService.createValidatedDraft` (release `b64bc9118`,
+    /// lines 368-378) calls `createInitialDraft` when `findMeta` returns null,
+    /// writing the resource metadata together with the first draft version.
+    /// Batata used to fail with "agent not found" here, so a brand-new Agent
+    /// could only be created as an online version through `register_agent`.
+    /// This mirrors `mcp_service.rs::create_initial_draft_resource`: insert the
+    /// metadata row with an empty version index, then re-read it so the CAS in
+    /// `save_version_info` uses the persisted `meta_version`.
+    async fn create_initial_draft_resource(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+        registration_type: &str,
+    ) -> anyhow::Result<AiResourceInfo> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().naive_utc().to_string();
+
+        // Both index shapes read this column: `version_lifecycle` interprets
+        // the unknown fields as an empty `ResourceVersionInfo`, while the
+        // legacy A2A reader gets a complete `AgentCardVersionInfo`.
+        let version_info = AgentCardVersionInfo {
+            id: id.clone(),
+            name: card.name.clone(),
+            latest_published_version: String::new(),
+            registration_type: registration_type.to_string(),
+            version_details: Vec::new(),
+        };
+
+        self.persistence
+            .ai_resource_insert(&AiResourceInfo {
+                id: 0,
+                name: card.name.clone(),
+                resource_type: resource_type::AGENT.to_string(),
+                description: Some(card.description.clone()),
+                status: Some(meta_status::ENABLE.to_string()),
+                namespace_id: namespace.to_string(),
+                biz_tags: None,
+                ext: Some(Self::ext_json(&id, registration_type)?),
+                from: AGENT_DEFAULT_FROM.to_string(),
+                version_info: Some(serde_json::to_string(&version_info)?),
+                meta_version: 1,
+                scope: scope::PRIVATE.to_string(),
+                owner: String::new(),
+                download_count: 0,
+                gmt_create: Some(now.clone()),
+                gmt_modified: Some(now),
+            })
+            .await?;
+
+        let resource = version_lifecycle::find_resource(
+            self.persistence.as_ref(),
+            namespace,
+            &card.name,
+            resource_type::AGENT,
+        )
+        .await?;
+
+        info!(
+            agent_name = %card.name,
+            agent_id = %id,
+            namespace = %namespace,
+            "A2A agent metadata initialized by first draft"
+        );
+        Ok(resource)
+    }
+
+    /// Create a draft version, initializing the Agent metadata when absent.
     ///
     /// Mirrors `create_mcp_server_draft`: at most one draft is being edited at
     /// a time, and `overwrite` is required to replace it.
@@ -890,8 +965,19 @@ impl A2aServerOperationService {
         let name = &card.name;
         let version = &card.version;
 
-        let (resource, mut version_info, id, registration_type) =
-            self.existing_resource(namespace, name).await?;
+        let (resource, mut version_info, id, registration_type) = match self
+            .persistence
+            .ai_resource_find(namespace, name, resource_type::AGENT)
+            .await?
+        {
+            Some(resource) => Self::resource_parts(resource),
+            None => {
+                let resource = self
+                    .create_initial_draft_resource(namespace, card, "manual")
+                    .await?;
+                Self::resource_parts(resource)
+            }
+        };
 
         if let Some(ref editing) = version_info.editing_version {
             if !overwrite {
