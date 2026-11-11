@@ -6,11 +6,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use batata_api::naming::model::Instance;
+use batata_api::naming::model::{DEFAULT_GROUP_NAME, Instance};
 
 use crate::config::listener::{ConfigChangeEventListener, ConfigChangeListener};
 use crate::error::Result;
-use crate::naming::listener::EventListener;
+use crate::naming::listener::{EventListener, NamingEvent};
+use crate::naming::selector::{NamingSelector, SelectorEventListener};
 
 /// Default timeout for SDK operations (3 seconds).
 pub const DEFAULT_TIMEOUT_MS: u64 = 3000;
@@ -243,6 +244,50 @@ pub trait NamingService: Send + Sync {
         clusters: &str,
         listener: Arc<dyn EventListener>,
     ) -> Result<Vec<Instance>>;
+
+    /// Subscribe with a GA `NamingSelector` (client-side instance filter).
+    ///
+    /// Mirrors Nacos 3.3.0 GA `NamingService.subscribe(serviceName, groupName,
+    /// NamingSelector, EventListener)`. The default implementation wraps the
+    /// listener in a [`SelectorEventListener`] and applies the selector to the
+    /// initial snapshot as well as to every change event, matching GA's
+    /// `NamingSelectorWrapper`. Implementations that override `subscribe`
+    /// therefore get selector support without extra work.
+    async fn subscribe_with_selector(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        clusters: &str,
+        selector: Arc<dyn NamingSelector>,
+        listener: Arc<dyn EventListener>,
+    ) -> Result<Vec<Instance>> {
+        let wrapper = SelectorEventListener::wrap(Arc::clone(&selector), listener);
+        let hosts = self
+            .subscribe(service_name, group_name, clusters, wrapper.clone())
+            .await?;
+        let initial = NamingEvent {
+            service_name: service_name.to_string(),
+            group_name: group_name.to_string(),
+            clusters: clusters.to_string(),
+            instances: hosts,
+            diff: None,
+        };
+        Ok(wrapper.filter_event(&initial).instances)
+    }
+
+    /// Subscribe with a selector using GA's default group and no cluster filter.
+    ///
+    /// Mirrors `NamingService.subscribe(serviceName, NamingSelector,
+    /// EventListener)`.
+    async fn subscribe_with_selector_default_group(
+        &self,
+        service_name: &str,
+        selector: Arc<dyn NamingSelector>,
+        listener: Arc<dyn EventListener>,
+    ) -> Result<Vec<Instance>> {
+        self.subscribe_with_selector(service_name, DEFAULT_GROUP_NAME, "", selector, listener)
+            .await
+    }
 
     /// Unsubscribe from service changes.
     async fn unsubscribe(&self, service_name: &str, group_name: &str, clusters: &str)

@@ -49,6 +49,7 @@ futures = { workspace = true }
 uuid = { workspace = true }
 md-5 = { workspace = true }
 const-hex = { workspace = true }
+regex = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

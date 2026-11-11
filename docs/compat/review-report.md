@@ -1808,3 +1808,96 @@ B.9 row + Summary Total, `README.md` global table and F-ID narrative updated.
 `cargo test -p batata-client` (372 lib + 2 ai + 11 tls + 25 unit + 3 request_id
 + 2 doctests) all pass. No `--full` matrix, commit, push, publish, yank, archive
 or tag was performed (commit/push handled separately).
+
+## 23. F-NAC-CSDK-001 — NamingSelector subscribe overloads (2026-11-11)
+
+### 23.1 Summary
+
+The registered gap was that `crates/batata-client/src/traits.rs:239` exposed
+only the 4-argument `subscribe(serviceName, groupName, clusters, listener)`,
+while Nacos 3.3.0 GA additionally declares two `NamingSelector` overloads. GA
+`b64bc9118` was re-read (not inferred): `NamingService.java:524,530`.
+
+### 23.2 GA contract (source-verified)
+
+- `NamingSelector` extends `api/selector/client/Selector<NamingContext,
+  NamingResult>`: one method `select(NamingContext)` returning a result whose
+  `getResult()` is `List<Instance>`.
+- `NamingContext` carries `serviceName`, `groupName`, `clusters`, `instances`.
+- `DefaultNamingSelector` filters with a `Predicate<Instance>` and returns an
+  empty list for a null input.
+- `NamingSelectorFactory` supplies `EMPTY_SELECTOR`, `HEALTHY_SELECTOR`,
+  `newClusterSelector(Collection<String>)` (empty collection → empty selector),
+  `newIpSelector(regex)` (`Pattern.matches`, i.e. whole-string),
+  `newMetadataSelector(map[, isAny])` and `getUniqueClusterString` (TreeSet,
+  comma-joined). For `isAny = true` GA ORs each entry match into the initial
+  `metadata.size() >= requested.size()` predicate — a quirk that is preserved
+  deliberately, not "corrected".
+- `NacosNamingService` shows the selector is **client-side only**: the 4-arg
+  overload builds a cluster selector and delegates to `doSubscribe`, which
+  merely registers a `NamingSelectorWrapper` with the local change notifier and
+  calls `clientProxy.subscribe(...)` with `Constants.NULL` clusters. The wrapper
+  filters the current list and each of the added/removed/modified diff buckets
+  before invoking the user listener.
+
+### 23.3 Implementation
+
+`crates/batata-client/src/naming/selector.rs` (new): `NamingContext<'a>`
+(borrowed instance slice), the `NamingSelector` trait,
+`DefaultNamingSelector<F>`, `NamingSelectorFactory` with all five constructors,
+and `SelectorEventListener` — the Rust equivalent of `NamingSelectorWrapper`,
+whose `filter_event` mirrors `buildListenerEvent`.
+
+`crates/batata-client/src/naming/mod.rs`: `subscribe_with_selector` and
+`subscribe_with_selector_default_group`. Both call `SelectorEventListener::wrap`
+and then reuse the *same* wrapper's `filter_event` on the initial snapshot, so
+the returned list is filtered exactly like GA's `notifyIfSubscribed` path. The
+existing 4-arg `subscribe` (redo, cache, gRPC request) is unchanged.
+
+`crates/batata-client/src/traits.rs`: the two contract methods added to
+`NamingService` with default implementations, so any implementor inherits
+selector support. Rust has no overloads, so the two GA signatures become named
+methods; `subscribe_with_selector_default_group` fixes `DEFAULT_GROUP` and an
+empty cluster string.
+
+`crates/batata-client/src/lib.rs` re-exports the selector types plus
+`EventListener` / `NamingEvent`. `regex = { workspace = true }` was added to the
+crate's `[dependencies]` for the IP selector.
+
+### 23.4 Scope
+
+Client-only. No server, wire, gRPC or T-ID change: selectors run locally on the
+push-dispatch task. `NamingSelector` requires `Send + Sync` because the filter
+executes there. No new F-ID row was registered — this closes an existing ⚪ row.
+
+### 23.5 Guards
+
+12 tests: 11 in `selector.rs` (empty / healthy / cluster / empty-cluster /
+IP whole-match / invalid-regex error / metadata all / metadata any /
+unique-cluster-string / wrapper diff buckets / wrapper listener invocation) and
+1 in `naming/mod.rs` that registers `SelectorEventListener::wrap(...)` into
+`subscriptions` and triggers the real `handle_notify_subscriber`, asserting both
+the current instance list and the added bucket are filtered.
+
+**4/4 compile-safe mutants killed** (no compile errors, real assertion
+failures), each red in both the unit suite and the real-dispatch test:
+
+| Mutant | Change |
+|--------|--------|
+| M1 | `DefaultNamingSelector::select` drops the predicate (returns all) |
+| M2 | `filter_event` leaves diff buckets unfiltered (`event.diff.clone()`) |
+| M3 | `on_event` passes the raw event through |
+| M4 | `filter_instances` returns all instances |
+
+### 23.6 Status and promotion
+
+`F-NAC-CSDK-001` → 🟢. Counts: B.9 `4🟢/1🟡/3⚪/0⛔` (rate 38%→50%); Nacos Total
+`182🟢/5🟡/6⚪/4⛔/197` → `183🟢/5🟡/5⚪/4⛔/197` (rate 92%→93%). `features.md`
+B.9 row + Summary Total, `README.md` global table and F-ID narrative updated.
+
+### 23.7 Validation and no-ops
+
+`cargo fmt -p batata-client -- --check`, `scripts/compat_check.py` and
+`cargo test -p batata-client` (384 lib + 2 ai + 3 request_id + 11 tls + 25 unit
++ 2 doctests, 0 failed) all pass. No `--full` matrix, commit, push, publish,
+yank, archive or tag was performed (commit/push handled separately).

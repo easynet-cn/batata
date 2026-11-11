@@ -85,6 +85,13 @@ pub use naming::fuzzy_watch::{NamingFuzzyWatchEvent, NamingFuzzyWatchService};
 // Instance diff
 pub use naming::instances_diff::InstancesDiff;
 
+// Naming events and selectors (GA NamingSelector parity)
+pub use naming::listener::{EventListener, FnEventListener, NamingEvent};
+pub use naming::selector::{
+    DefaultNamingSelector, NamingContext, NamingSelector, NamingSelectorFactory,
+    SelectorEventListener,
+};
+
 // Client labels
 pub use labels::ClientLabelsCollector;
 

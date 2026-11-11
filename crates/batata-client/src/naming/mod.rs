@@ -10,6 +10,7 @@ pub mod instances_diff;
 pub mod listener;
 pub mod protect_mode;
 pub mod redo;
+pub mod selector;
 pub mod service_info_holder;
 
 use std::sync::Arc;
@@ -18,10 +19,10 @@ use batata_api::{
     grpc::Payload,
     naming::model::{
         BATCH_DE_REGISTER_INSTANCE, BATCH_REGISTER_INSTANCE, BatchInstanceRequest,
-        BatchInstanceResponse, DE_REGISTER_INSTANCE, Instance, InstanceRequest, InstanceResponse,
-        NotifySubscriberRequest, NotifySubscriberResponse, QueryServiceResponse, REGISTER_INSTANCE,
-        ServiceListRequest, ServiceListResponse, ServiceQueryRequest, SubscribeServiceRequest,
-        SubscribeServiceResponse,
+        BatchInstanceResponse, DE_REGISTER_INSTANCE, DEFAULT_GROUP_NAME, Instance, InstanceRequest,
+        InstanceResponse, NotifySubscriberRequest, NotifySubscriberResponse, QueryServiceResponse,
+        REGISTER_INSTANCE, ServiceListRequest, ServiceListResponse, ServiceQueryRequest,
+        SubscribeServiceRequest, SubscribeServiceResponse,
     },
     remote::model::ResponseTrait,
 };
@@ -36,6 +37,7 @@ use crate::grpc::{GrpcClient, ServerPushHandler};
 
 use self::listener::{EventListener, NamingEvent};
 use self::redo::{InstanceRedoData, NamingGrpcRedoService, SubscriberRedoData};
+use self::selector::{NamingSelector, SelectorEventListener};
 use self::service_info_holder::{ServiceInfoHolder, build_service_key};
 
 /// Batata naming service backed by gRPC (Nacos-compatible).
@@ -245,6 +247,73 @@ impl BatataNamingService {
         );
 
         Ok(resp.service_info.hosts)
+    }
+
+    /// Subscribe with a GA `NamingSelector` (client-side instance filter).
+    ///
+    /// Mirrors `NamingService.subscribe(serviceName, groupName, NamingSelector,
+    /// EventListener)` from Nacos 3.3.0 GA. The selector is applied **locally**:
+    /// the returned initial snapshot and every change event delivered to
+    /// `listener` contain only the selected instances. The gRPC subscription
+    /// itself is unchanged (still keyed by `clusters`), so redo, caching and
+    /// push dispatch behave exactly as for [`Self::subscribe`].
+    ///
+    /// GA registers a `NamingSelectorWrapper` with the local change notifier;
+    /// [`SelectorEventListener`] is that wrapper's Rust equivalent.
+    pub async fn subscribe_with_selector(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        clusters: &str,
+        selector: Arc<dyn NamingSelector>,
+        listener: Arc<dyn EventListener>,
+    ) -> Result<Vec<Instance>> {
+        let wrapper = SelectorEventListener::wrap(Arc::clone(&selector), listener);
+        let hosts = self
+            .subscribe(
+                namespace,
+                group_name,
+                service_name,
+                clusters,
+                wrapper.clone(),
+            )
+            .await?;
+
+        // GA delivers the initial list through the same wrapper
+        // (`notifyIfSubscribed` → `NamingSelectorWrapper.buildListenerEvent`),
+        // so the returned snapshot is filtered with the identical code path.
+        let initial = NamingEvent {
+            service_name: service_name.to_string(),
+            group_name: group_name.to_string(),
+            clusters: clusters.to_string(),
+            instances: hosts,
+            diff: None,
+        };
+        Ok(wrapper.filter_event(&initial).instances)
+    }
+
+    /// Subscribe with a selector using GA's default group.
+    ///
+    /// Mirrors `NamingService.subscribe(serviceName, NamingSelector,
+    /// EventListener)`, which delegates to `DEFAULT_GROUP` with no cluster
+    /// filter.
+    pub async fn subscribe_with_selector_default_group(
+        &self,
+        namespace: &str,
+        service_name: &str,
+        selector: Arc<dyn NamingSelector>,
+        listener: Arc<dyn EventListener>,
+    ) -> Result<Vec<Instance>> {
+        self.subscribe_with_selector(
+            namespace,
+            DEFAULT_GROUP_NAME,
+            service_name,
+            "",
+            selector,
+            listener,
+        )
+        .await
     }
 
     /// Unsubscribe from service changes.
@@ -988,6 +1057,76 @@ mod tests {
         let key1 = build_instance_redo_key("ns", "group", "svc", &inst1);
         let key2 = build_instance_redo_key("ns", "group", "svc", &inst2);
         assert_ne!(key1, key2);
+    }
+
+    /// A selector-based subscription must deliver filtered events through the
+    /// *real* push-dispatch path (`handle_notify_subscriber`), including the
+    /// diff buckets. Registering the bare listener here would let unhealthy
+    /// instances through and fail the assertions.
+    #[test]
+    fn test_selector_subscription_filters_push_events() {
+        use std::sync::Mutex;
+
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client);
+
+        let received = Arc::new(Mutex::new(Vec::<(Vec<String>, Vec<String>)>::new()));
+        let received_clone = Arc::clone(&received);
+        let listener = listener::FnEventListener::new(move |event: listener::NamingEvent| {
+            let current: Vec<String> = event.instances.iter().map(|i| i.ip.clone()).collect();
+            let added: Vec<String> = event
+                .diff
+                .as_ref()
+                .map(|d| d.added_instances.iter().map(|i| i.ip.clone()).collect())
+                .unwrap_or_default();
+            received_clone.lock().unwrap().push((current, added));
+        });
+
+        // Exactly the wrapper installed by subscribe_with_selector.
+        let wrapped: Arc<dyn EventListener> = SelectorEventListener::wrap(
+            selector::NamingSelectorFactory::healthy_selector(),
+            Arc::new(listener),
+        );
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        naming_service
+            .subscriptions
+            .entry(key.clone())
+            .or_default()
+            .push(wrapped);
+
+        // Seed the cache so the notification computes a non-empty diff.
+        naming_service.service_info_holder.update(
+            &key,
+            Service {
+                name: "test-service".to_string(),
+                group_name: "DEFAULT_GROUP".to_string(),
+                hosts: vec![make_instance("10.0.0.1", 8080, true)],
+                ..Default::default()
+            },
+        );
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            Service {
+                name: "test-service".to_string(),
+                group_name: "DEFAULT_GROUP".to_string(),
+                hosts: vec![
+                    make_instance("10.0.0.1", 8080, true),
+                    make_instance("10.0.0.2", 8080, false),
+                    make_instance("10.0.0.3", 8080, true),
+                ],
+                ..Default::default()
+            },
+        );
+        naming_service.handle_notify_subscriber(&req);
+
+        let seen = received.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, vec!["10.0.0.1", "10.0.0.3"]);
+        assert_eq!(seen[0].1, vec!["10.0.0.3"]);
     }
 
     #[test]
