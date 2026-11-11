@@ -11,18 +11,20 @@ use crate::{
     constants::admin_api_path,
     model::common::ApiResponse,
     model::{
-        AgentCard, AgentCardDetailInfo, AgentCardVersionInfo, AgentSpec, AgentSpecBasicInfo,
-        AgentSpecMeta, AgentSpecSummary, AgentVersionDetail, AgentVersionInfo, BatchUploadResult,
-        ClientPublisherInfo, ClientServiceInfo, ClientSubscriberInfo, ClientSummaryInfo,
-        ClusterHealthResponse, ClusterHealthSummary, ClusterInfo, ConfigBasicInfo, ConfigCloneInfo,
-        ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
-        ConfigListenerInfo, ConnectionInfo, IdGeneratorInfo, ImportResult, Instance,
-        InstanceMetadataBatchResult, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
-        McpServerVersionInfo, McpToolSpecification, Member, MetricsInfo, Namespace, Page,
-        PipelineExecution, PluginAvailability, PluginDetail, PluginInfo, PromptMetaInfo,
-        PromptMetaSummary, PromptVersionInfo, PromptVersionSummary, SameConfigPolicy,
-        SelfMemberResponse, ServerLoaderMetrics, ServiceDetailInfo, ServiceView, Skill, SkillMeta,
-        SkillSummary, SkillUploadPrecheckResult, SubscriberInfo,
+        AgentCard, AgentCardDetailInfo, AgentCardVersionInfo, AgentDraftCreateForm,
+        AgentDraftUpdateForm, AgentLabelsUpdateForm, AgentSpec, AgentSpecBasicInfo, AgentSpecMeta,
+        AgentSpecSummary, AgentSummary, AgentUpdateForm, AgentVersionDetail, AgentVersionInfo,
+        BatchUploadResult, ClientPublisherInfo, ClientServiceInfo, ClientSubscriberInfo,
+        ClientSummaryInfo, ClusterHealthResponse, ClusterHealthSummary, ClusterInfo,
+        ConfigBasicInfo, ConfigCloneInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+        ConfigHistoryDetailInfo, ConfigListenerInfo, ConnectionInfo, IdGeneratorInfo, ImportResult,
+        Instance, InstanceMetadataBatchResult, McpEndpointSpec, McpServerBasicInfo,
+        McpServerDetailInfo, McpServerVersionInfo, McpToolSpecification, Member, MetricsInfo,
+        Namespace, Page, PipelineExecution, PluginAvailability, PluginDetail, PluginInfo,
+        PromptMetaInfo, PromptMetaSummary, PromptVersionInfo, PromptVersionSummary,
+        RuntimeEndpointSnapshot, SameConfigPolicy, SelfMemberResponse, ServerLoaderMetrics,
+        ServiceDetailInfo, ServiceView, Skill, SkillMeta, SkillSummary, SkillUploadPrecheckResult,
+        SubscriberInfo,
     },
 };
 
@@ -4009,7 +4011,13 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
-    /// Agent get.
+    /// Agent get (legacy `/v3/admin/ai/a2a` facade).
+    ///
+    /// GA `getAgentCard` binds AND consumes a `version` query parameter, but
+    /// the legacy 3-argument signature cannot express it. This method keeps
+    /// that signature for backward compatibility and delegates to
+    /// [`Self::agent_get_with_version`] with `version: None`; use the latter
+    /// to actually send the GA `version` query.
     ///
     /// # Arguments
     /// * `agent_name` - The `agent_name` parameter.
@@ -4027,12 +4035,31 @@ impl MaintainerClient {
         namespace_id: &str,
         registration_type: &str,
     ) -> anyhow::Result<AgentCardDetailInfo> {
+        self.agent_get_with_version(agent_name, namespace_id, registration_type, None)
+            .await
+    }
+
+    /// Agent get with an optional GA `version` query parameter.
+    ///
+    /// Wraps `GET /v3/admin/ai/a2a`. When `version` is `Some`, the request
+    /// carries `version=<..>` (GA `A2aAdminController` binds and consumes it);
+    /// when `None` the field is omitted entirely through
+    /// `skip_serializing_if`, preserving the legacy query shape.
+    pub async fn agent_get_with_version(
+        &self,
+        agent_name: &str,
+        namespace_id: &str,
+        registration_type: &str,
+        version: Option<&str>,
+    ) -> anyhow::Result<AgentCardDetailInfo> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
             agent_name: &'a str,
             namespace_id: &'a str,
             registration_type: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            version: Option<&'a str>,
         }
 
         let response: ApiResponse<AgentCardDetailInfo> = self
@@ -4043,6 +4070,7 @@ impl MaintainerClient {
                     agent_name,
                     namespace_id,
                     registration_type,
+                    version,
                 },
             )
             .await?;
@@ -4322,12 +4350,11 @@ impl MaintainerClient {
 
     /// List the versions of one agent.
     ///
-    /// Wraps `GET /v3/admin/ai/agents/versions`. Batata's admin handler
-    /// returns a plain array of version details, whereas upstream GA returns
-    /// a `Page<AgentVersionSummary>`; the `status`/`pageNo`/`pageSize` query
-    /// fields are forwarded for upstream parity but batata does not paginate
-    /// this endpoint. Callers talking to a real Nacos server should use the
-    /// raw HTTP client until the paged shape is unified.
+    /// Wraps `GET /v3/admin/ai/agents/versions`. Upstream GA returns a
+    /// `Page<AgentVersionSummary>` and batata's admin handler (batch 12) now
+    /// returns the same paged shape, so the client decodes `Page` rather than
+    /// the old plain array. `status`/`pageNo`/`pageSize` are forwarded as GA
+    /// query parameters.
     pub async fn agents_list_versions(
         &self,
         namespace_id: &str,
@@ -4335,8 +4362,8 @@ impl MaintainerClient {
         status: &str,
         page_no: u64,
         page_size: u64,
-    ) -> anyhow::Result<Vec<AgentVersionInfo>> {
-        let response: ApiResponse<Vec<AgentVersionInfo>> = self
+    ) -> anyhow::Result<Page<AgentVersionInfo>> {
+        let response: ApiResponse<Page<AgentVersionInfo>> = self
             .http_client
             .get_with_query(
                 admin_api_path::AI_AGENTS_VERSIONS,
@@ -4379,13 +4406,30 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
-    /// Create a draft version from an agent card.
+    /// Create a draft version using the GA urlencoded form wire.
     ///
-    /// Wraps `POST /v3/admin/ai/agents/draft`. Batata's admin handler takes
-    /// the card as a JSON body plus `namespaceId`/`overwrite` in the query;
-    /// upstream GA sends the draft fields as a form body instead, so this
-    /// method follows the batata server wire. See `docs/compat/nacos/features.md`.
+    /// Wraps `POST /v3/admin/ai/agents/draft` (GA `createDraft`). GA sends
+    /// every field as an urlencoded form value, with nested objects collapsed
+    /// into a single JSON string; batata's `resolve_agent_write` accepts this
+    /// same flat form. Use [`Self::agents_create_draft_json`] for the legacy
+    /// batata JSON-body channel.
     pub async fn agents_create_draft(
+        &self,
+        form: &AgentDraftCreateForm,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        let response: ApiResponse<AgentVersionInfo> = self
+            .http_client
+            .post_form(admin_api_path::AI_AGENTS_DRAFT, form)
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Legacy batata JSON-body variant of [`Self::agents_create_draft`].
+    ///
+    /// Keeps the previous `post_json_with_query` wire (`AgentCard` body plus
+    /// `namespaceId`/`overwrite` query) so the batata dual-channel admin
+    /// handler and existing callers keep working.
+    pub async fn agents_create_draft_json(
         &self,
         namespace_id: &str,
         card: &AgentCard,
@@ -4412,11 +4456,25 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
-    /// Replace the draft version currently being edited.
+    /// Replace the draft version using the GA urlencoded form wire.
     ///
-    /// Wraps `PUT /v3/admin/ai/agents/draft`; same JSON-body wire as
-    /// [`Self::agents_create_draft`].
+    /// Wraps `PUT /v3/admin/ai/agents/draft` (GA `updateDraft`). GA sends
+    /// identity plus `callInterfaces` (JSON string) and `changeDescription`
+    /// as form values. Use [`Self::agents_update_draft_json`] for the legacy
+    /// batata JSON-body channel.
     pub async fn agents_update_draft(
+        &self,
+        form: &AgentDraftUpdateForm,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        let response: ApiResponse<AgentVersionInfo> = self
+            .http_client
+            .put_form(admin_api_path::AI_AGENTS_DRAFT, form)
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Legacy batata JSON-body variant of [`Self::agents_update_draft`].
+    pub async fn agents_update_draft_json(
         &self,
         namespace_id: &str,
         card: &AgentCard,
@@ -4583,13 +4641,37 @@ impl MaintainerClient {
         .await
     }
 
-    /// Replace the custom version labels, preserving the server-managed
-    /// `latest` label.
+    /// Replace the custom version labels using the GA urlencoded form wire.
     ///
-    /// Wraps `PUT /v3/admin/ai/agents/labels`. Batata's handler reads the
-    /// labels from a JSON body (`{"labels": {...}}`) plus identity fields in
-    /// the query; upstream GA sends `labels` as a JSON string inside a form.
+    /// Wraps `PUT /v3/admin/ai/agents/labels` (GA `updateLabels`). GA sends
+    /// `labels` as a SINGLE JSON string form value (`putJsonIfNotNull`), so
+    /// the map is serialized to one JSON string here. Returns GA
+    /// `AgentSummary`; use [`Self::agents_update_labels_json`] for the legacy
+    /// batata JSON-body channel (which returns the labels map).
     pub async fn agents_update_labels(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        labels: &HashMap<String, String>,
+    ) -> anyhow::Result<AgentSummary> {
+        let labels_json = serde_json::to_string(labels)?;
+        let form = AgentLabelsUpdateForm {
+            namespace_id: namespace_id.to_string(),
+            agent_name: agent_name.to_string(),
+            labels: Some(labels_json),
+        };
+        let response: ApiResponse<AgentSummary> = self
+            .http_client
+            .put_form(admin_api_path::AI_AGENTS_LABELS, &form)
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Legacy batata JSON-body variant of [`Self::agents_update_labels`].
+    ///
+    /// Keeps the `{"labels": {...}}` JSON body plus identity query and returns
+    /// the batata labels map unchanged.
+    pub async fn agents_update_labels_json(
         &self,
         namespace_id: &str,
         agent_name: &str,
@@ -4648,6 +4730,86 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
+    /// Update the agent's current metadata using the GA urlencoded form wire.
+    ///
+    /// Wraps `PUT /v3/admin/ai/agents` (GA `updateAgent`). The form carries
+    /// `namespaceId`/`agentName` plus `displayName`/`description`/`iconUrl`/
+    /// `provider`/`tags`/`extensions`/`status` — and deliberately NO `version`.
+    /// Returns GA `AgentSummary`.
+    pub async fn agents_update_agent(
+        &self,
+        form: &AgentUpdateForm,
+    ) -> anyhow::Result<AgentSummary> {
+        let response: ApiResponse<AgentSummary> = self
+            .http_client
+            .put_form(admin_api_path::AI_AGENTS, form)
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Delete an agent (GA `deleteAgent`).
+    ///
+    /// Wraps `DELETE /v3/admin/ai/agents` with ONLY `namespaceId` and
+    /// `agentName` in the query (no `version`). GA returns void; success is
+    /// reported through the envelope code.
+    pub async fn agents_delete_agent(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+    ) -> anyhow::Result<bool> {
+        let response: ApiResponse<serde_json::Value> = self
+            .http_client
+            .delete_with_query(
+                admin_api_path::AI_AGENTS,
+                &AgentIdentityQuery {
+                    namespace_id,
+                    agent_name,
+                    version: None,
+                },
+            )
+            .await?;
+        Ok(response.code == 0 || response.code == 200)
+    }
+
+    /// Fetch the runtime endpoint snapshot for an agent version.
+    ///
+    /// Wraps `GET /v3/admin/ai/agents/runtime-endpoints` (GA
+    /// `getRuntimeEndpoints`). `protocol` and `version` are optional query
+    /// fields. The response is decoded into a tolerant DTO because batata's
+    /// snapshot shape is known to differ from GA's (`F-NAC-AISRV-001`).
+    pub async fn agents_get_runtime_endpoints(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        protocol: Option<&str>,
+        version: Option<&str>,
+    ) -> anyhow::Result<RuntimeEndpointSnapshot> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            agent_name: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            protocol: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            version: Option<&'a str>,
+        }
+
+        let response: ApiResponse<RuntimeEndpointSnapshot> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_AGENTS_RUNTIME_ENDPOINTS,
+                &Query {
+                    namespace_id,
+                    agent_name,
+                    protocol,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
     // ============================================================================
     // AI resource facades (Nacos `AiMaintainerService` delegates)
     // ============================================================================
@@ -4657,7 +4819,9 @@ impl MaintainerClient {
     // `skill_*`/`prompt_*`/`agentspec_*`/`pipeline_*` methods instead. Read and
     // DELETE endpoints carry identity in the query string; POST/PUT endpoints
     // carry it in an urlencoded form body; ZIP endpoints use a `file` multipart
-    // part plus query parameters. All four wire shapes are now aligned with GA.
+    // part plus query parameters. The protocol-neutral `agents_*` writes above
+    // now use the same GA form wire; the explicit `*_json` aliases are the only
+    // remaining JSON bodies, kept for batata's dual-channel admin handlers.
 
     /// Send an AI resource write that reports success through its result code.
     ///

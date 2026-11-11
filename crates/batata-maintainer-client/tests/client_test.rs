@@ -6,8 +6,8 @@ use batata_client::HttpClientConfig;
 use batata_maintainer_client::MaintainerClient;
 use batata_maintainer_client::MaintainerClientConfig;
 use batata_maintainer_client::model::{
-    AgentCard, AgentCardBasicInfo, ClusterInfo, ConfigCloneInfo, Instance, McpServerBasicInfo,
-    SameConfigPolicy,
+    AgentCard, AgentCardBasicInfo, AgentDraftCreateForm, AgentDraftUpdateForm, AgentUpdateForm,
+    ClusterInfo, ConfigCloneInfo, Instance, McpServerBasicInfo, SameConfigPolicy,
 };
 use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -2625,21 +2625,31 @@ async fn test_agents_list_versions_forwards_status() {
         .and(query_param("status", "online"))
         .and(query_param("pageNo", "1"))
         .and(query_param("pageSize", "20"))
-        .respond_with(api_ok_raw(serde_json::json!([agent_version_json()])))
+        .respond_with(api_ok_raw(page_json(&[agent_version_json()], 1)))
         .mount(&server)
         .await;
 
     let client = make_client(&server).await;
-    let versions = client
+    let page = client
         .agents_list_versions("", "my-agent", "online", 1, 20)
         .await
         .unwrap();
-    assert_eq!(versions.len(), 1);
-    assert_eq!(versions[0].version, "1.0");
+    // Inspect through serde_json::Value so this guard stays compile-safe
+    // against a `Page -> Vec` regression: a Vec-returning implementation
+    // fails to decode the paged payload at runtime (its `unwrap` panics)
+    // instead of tripping a compile error that would mask the real guard.
+    let value = serde_json::to_value(&page).unwrap();
+    assert_eq!(value["totalCount"], 1);
+    assert_eq!(value["pageItems"].as_array().unwrap().len(), 1);
+    assert_eq!(value["pageItems"][0]["version"], "1.0");
 }
 
+/// The `*_json` aliases must keep the legacy batata dual-channel JSON wire
+/// (AgentCard body + identity/overwrite query) so those handlers do not
+/// regress. The primary `agents_create_draft`/`agents_update_draft` methods are
+/// covered separately by the GA form tests.
 #[tokio::test]
-async fn test_agents_create_and_update_draft_use_json_body() {
+async fn test_agents_create_and_update_draft_json_alias_use_json_body() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v3/admin/ai/agents/draft"))
@@ -2666,11 +2676,14 @@ async fn test_agents_create_and_update_draft_use_json_body() {
         ..Default::default()
     };
     let created = client
-        .agents_create_draft("ns-1", &card, true)
+        .agents_create_draft_json("ns-1", &card, true)
         .await
         .unwrap();
     assert_eq!(created.version, "1.0");
-    let updated = client.agents_update_draft("ns-1", &card).await.unwrap();
+    let updated = client
+        .agents_update_draft_json("ns-1", &card)
+        .await
+        .unwrap();
     assert_eq!(updated.status, "online");
 }
 
@@ -2770,8 +2783,11 @@ async fn test_agents_update_labels_and_scope() {
     let client = make_client(&server).await;
     let mut labels = HashMap::new();
     labels.insert("stable".to_string(), "1.0".to_string());
+    // The `_json` alias keeps the legacy batata `{"labels": {...}}` body and
+    // its map return value; the primary method now speaks GA form (tested
+    // separately).
     let updated = client
-        .agents_update_labels("", "my-agent", &labels)
+        .agents_update_labels_json("", "my-agent", &labels)
         .await
         .unwrap();
     assert_eq!(updated.get("stable").map(String::as_str), Some("1.0"));
@@ -4338,4 +4354,369 @@ async fn test_ai_write_failure_code_is_false() {
             .await
             .unwrap()
     );
+}
+
+// ============================================================================
+// F-NAC-MAINT-004/005/008 — GA form wire, `version`, Page and new wrappers
+// ============================================================================
+
+/// Parse a raw urlencoded body/query into an exact key->value map. Every value
+/// is percent-decoded, so JSON-string form values round-trip back to their
+/// original `{"...":...}` text.
+fn parse_urlencoded(raw: &str) -> HashMap<String, String> {
+    serde_urlencoded::from_str(raw).unwrap_or_default()
+}
+
+/// Assert the EXACT urlencoded BODY field table. Missing, extra or renamed
+/// fields all make the parsed map differ from `expected` and fail the match.
+struct ExactForm(Vec<(String, String)>);
+
+impl Match for ExactForm {
+    fn matches(&self, request: &Request) -> bool {
+        let body = String::from_utf8_lossy(&request.body);
+        let parsed = parse_urlencoded(&body);
+        let expected: HashMap<String, String> = self.0.iter().cloned().collect();
+        parsed == expected
+    }
+}
+
+/// Assert the EXACT urlencoded QUERY field table.
+struct ExactQuery(Vec<(String, String)>);
+
+impl Match for ExactQuery {
+    fn matches(&self, request: &Request) -> bool {
+        let query = request.url.query().unwrap_or("");
+        let parsed = parse_urlencoded(query);
+        let expected: HashMap<String, String> = self.0.iter().cloned().collect();
+        parsed == expected
+    }
+}
+
+fn draft_create_form() -> AgentDraftCreateForm {
+    AgentDraftCreateForm {
+        namespace_id: "ns-1".to_string(),
+        agent_name: "my-agent".to_string(),
+        version: "1.0".to_string(),
+        display_name: Some("My Agent".to_string()),
+        description: Some("desc".to_string()),
+        icon_url: Some("http://icon".to_string()),
+        provider: Some("{\"org\":\"acme\"}".to_string()),
+        tags: Some("[\"chat\"]".to_string()),
+        extensions: Some("{\"x\":1}".to_string()),
+        call_interfaces: Some("[]".to_string()),
+        author: Some("alice".to_string()),
+        change_description: Some("initial".to_string()),
+        based_on_version: Some("0.9".to_string()),
+    }
+}
+
+fn agent_summary_json() -> serde_json::Value {
+    serde_json::json!({
+        "namespaceId": "ns-1",
+        "agentName": "my-agent",
+        "displayName": "My Agent",
+        "status": "online",
+        "versionInfo": {"editingVersion": "1.0"},
+        "serverOnlyField": 7
+    })
+}
+
+fn runtime_endpoint_snapshot_json(version: &str) -> serde_json::Value {
+    serde_json::json!({
+        "namespaceId": "ns-1",
+        "agentName": "my-agent",
+        "version": version,
+        "callInterface": {"transport": "JSONRPC"},
+        "batataSpecific": {"a": 1}
+    })
+}
+
+/// GA `getAgentCard` binds AND consumes `version`; the new method must emit it
+/// as a query parameter. A mutant dropping `version` loses this match (404).
+#[tokio::test]
+async fn test_agent_get_with_version_sends_version_query() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/a2a"))
+        .and(query_param("version", "2.0"))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "name": "my-agent", "registrationType": "direct"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let detail = client
+        .agent_get_with_version("my-agent", "ns-1", "direct", Some("2.0"))
+        .await
+        .unwrap();
+    assert_eq!(detail.agent_card.basic_info.name, "my-agent");
+}
+
+/// With `None`, `skip_serializing_if` must drop `version` entirely, leaving
+/// exactly the legacy three-field query (no stray `version=` key).
+#[tokio::test]
+async fn test_agent_get_with_version_omits_none() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/a2a"))
+        .and(ExactQuery(vec![
+            ("agentName".into(), "my-agent".into()),
+            ("namespaceId".into(), "ns-1".into()),
+            ("registrationType".into(), "direct".into()),
+        ]))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "name": "my-agent", "registrationType": "direct"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let detail = client
+        .agent_get_with_version("my-agent", "ns-1", "direct", None)
+        .await
+        .unwrap();
+    assert_eq!(detail.registration_type, "direct");
+}
+
+/// `agents_create_draft` must POST the exact 13-field GA urlencoded form.
+#[tokio::test]
+async fn test_agents_create_draft_uses_ga_form() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ai/agents/draft"))
+        .and(ExactForm(vec![
+            ("namespaceId".into(), "ns-1".into()),
+            ("agentName".into(), "my-agent".into()),
+            ("version".into(), "1.0".into()),
+            ("displayName".into(), "My Agent".into()),
+            ("description".into(), "desc".into()),
+            ("iconUrl".into(), "http://icon".into()),
+            ("provider".into(), "{\"org\":\"acme\"}".into()),
+            ("tags".into(), "[\"chat\"]".into()),
+            ("extensions".into(), "{\"x\":1}".into()),
+            ("callInterfaces".into(), "[]".into()),
+            ("author".into(), "alice".into()),
+            ("changeDescription".into(), "initial".into()),
+            ("basedOnVersion".into(), "0.9".into()),
+        ]))
+        .respond_with(api_ok_raw(agent_version_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let created = client
+        .agents_create_draft(&draft_create_form())
+        .await
+        .unwrap();
+    assert_eq!(created.version, "1.0");
+}
+
+/// `agents_update_draft` must PUT the exact 5-field GA urlencoded form.
+#[tokio::test]
+async fn test_agents_update_draft_uses_ga_form() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/agents/draft"))
+        .and(ExactForm(vec![
+            ("namespaceId".into(), "ns-1".into()),
+            ("agentName".into(), "my-agent".into()),
+            ("version".into(), "1.0".into()),
+            ("callInterfaces".into(), "[]".into()),
+            ("changeDescription".into(), "edit".into()),
+        ]))
+        .respond_with(api_ok_raw(agent_version_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let form = AgentDraftUpdateForm {
+        namespace_id: "ns-1".to_string(),
+        agent_name: "my-agent".to_string(),
+        version: "1.0".to_string(),
+        call_interfaces: Some("[]".to_string()),
+        change_description: Some("edit".to_string()),
+    };
+    let updated = client.agents_update_draft(&form).await.unwrap();
+    assert_eq!(updated.status, "online");
+}
+
+/// `agents_update_labels` must PUT `labels` as ONE JSON-string form value.
+/// A mutant that does not JSON-ify the map (e.g. flattened keys) changes the
+/// body so `ExactForm` no longer matches.
+#[tokio::test]
+async fn test_agents_update_labels_uses_ga_form() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/agents/labels"))
+        .and(ExactForm(vec![
+            ("namespaceId".into(), "ns-1".into()),
+            ("agentName".into(), "my-agent".into()),
+            ("labels".into(), "{\"stable\":\"1.0\"}".into()),
+        ]))
+        .respond_with(api_ok_raw(agent_summary_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let mut labels = HashMap::new();
+    labels.insert("stable".to_string(), "1.0".to_string());
+    let summary = client
+        .agents_update_labels("ns-1", "my-agent", &labels)
+        .await
+        .unwrap();
+    assert_eq!(summary.agent_name, "my-agent");
+    // GA returns AgentSummary; unknown fields stay reachable through `extra`.
+    assert!(summary.extra.contains_key("serverOnlyField"));
+}
+
+/// `agents_update_agent` must PUT the exact 9-field GA form with NO version.
+#[tokio::test]
+async fn test_agents_update_agent_uses_ga_form() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/agents"))
+        .and(ExactForm(vec![
+            ("namespaceId".into(), "ns-1".into()),
+            ("agentName".into(), "my-agent".into()),
+            ("displayName".into(), "My Agent".into()),
+            ("description".into(), "desc".into()),
+            ("iconUrl".into(), "http://icon".into()),
+            ("provider".into(), "{}".into()),
+            ("tags".into(), "[]".into()),
+            ("extensions".into(), "{}".into()),
+            ("status".into(), "online".into()),
+        ]))
+        .respond_with(api_ok_raw(agent_summary_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let form = AgentUpdateForm {
+        namespace_id: "ns-1".to_string(),
+        agent_name: "my-agent".to_string(),
+        display_name: Some("My Agent".to_string()),
+        description: Some("desc".to_string()),
+        icon_url: Some("http://icon".to_string()),
+        provider: Some("{}".to_string()),
+        tags: Some("[]".to_string()),
+        extensions: Some("{}".to_string()),
+        status: Some("online".to_string()),
+    };
+    let summary = client.agents_update_agent(&form).await.unwrap();
+    assert_eq!(summary.status, "online");
+}
+
+/// `agents_delete_agent` must DELETE with ONLY namespaceId/agentName in the
+/// query (no version) and report success through the envelope code.
+#[tokio::test]
+async fn test_agents_delete_agent_uses_query() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/v3/admin/ai/agents"))
+        .and(ExactQuery(vec![
+            ("namespaceId".into(), "ns-1".into()),
+            ("agentName".into(), "my-agent".into()),
+        ]))
+        .respond_with(api_ok_raw(serde_json::json!(null)))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    assert!(
+        client
+            .agents_delete_agent("ns-1", "my-agent")
+            .await
+            .unwrap()
+    );
+}
+
+/// A failing envelope code is still a failed delete (error-code path).
+#[tokio::test]
+async fn test_agents_delete_agent_error_code_is_false() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/v3/admin/ai/agents"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 500, "message": "denied", "data": null
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    assert!(
+        !client
+            .agents_delete_agent("ns-1", "my-agent")
+            .await
+            .unwrap()
+    );
+}
+
+/// `agents_get_runtime_endpoints` must GET the new path and forward all four
+/// query fields; the response is decoded tolerantly into the GA DTO.
+#[tokio::test]
+async fn test_agents_get_runtime_endpoints_forwards_all_query_fields() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agents/runtime-endpoints"))
+        .and(ExactQuery(vec![
+            ("namespaceId".into(), "ns-1".into()),
+            ("agentName".into(), "my-agent".into()),
+            ("protocol".into(), "JSONRPC".into()),
+            ("version".into(), "1.0".into()),
+        ]))
+        .respond_with(api_ok_raw(runtime_endpoint_snapshot_json("1.0")))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let snapshot = client
+        .agents_get_runtime_endpoints("ns-1", "my-agent", Some("JSONRPC"), Some("1.0"))
+        .await
+        .unwrap();
+    assert_eq!(snapshot.version, "1.0");
+    assert_eq!(snapshot.agent_name, "my-agent");
+    assert!(snapshot.extra.contains_key("batataSpecific"));
+}
+
+/// With `version: None` the wrapper must omit the `version` query key entirely.
+#[tokio::test]
+async fn test_agents_get_runtime_endpoints_omits_none_version() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agents/runtime-endpoints"))
+        .and(ExactQuery(vec![
+            ("namespaceId".into(), "ns-1".into()),
+            ("agentName".into(), "my-agent".into()),
+            ("protocol".into(), "JSONRPC".into()),
+        ]))
+        .respond_with(api_ok_raw(runtime_endpoint_snapshot_json("9.9")))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let snapshot = client
+        .agents_get_runtime_endpoints("ns-1", "my-agent", Some("JSONRPC"), None)
+        .await
+        .unwrap();
+    assert_eq!(snapshot.version, "9.9");
+}
+
+/// New write wrapper surfaces a transport error (error-code path).
+#[tokio::test]
+async fn test_agents_update_agent_http_error_is_err() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/agents"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let form = AgentUpdateForm {
+        namespace_id: "ns-1".to_string(),
+        agent_name: "my-agent".to_string(),
+        ..Default::default()
+    };
+    assert!(client.agents_update_agent(&form).await.is_err());
 }

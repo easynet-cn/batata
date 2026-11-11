@@ -1145,6 +1145,10 @@ pub struct LockInstance {
     #[serde(deserialize_with = "deserialize_null_default")]
     /// The `params` field.
     pub params: HashMap<String, String>,
+    /// Owner of the lock (`clientId:threadId` on the wire). Optional so that
+    /// pre-3.3.0 payloads that predate the field still deserialize via the
+    /// struct-level `#[serde(default)]`.
+    pub owner: Option<String>,
 }
 
 /// Request for distributed lock operations (acquire/release)
@@ -2288,12 +2292,51 @@ mod tests {
             expired_time: 30000,
             lock_type: "reentrant".to_string(),
             params: HashMap::new(),
+            owner: None,
         };
         let json = serde_json::to_string(&lock).unwrap();
         assert!(json.contains("test-lock"));
         let parsed: LockInstance = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.key, "test-lock");
         assert_eq!(parsed.expired_time, 30000);
+    }
+
+    #[test]
+    fn test_lock_instance_owner_roundtrip() {
+        // GA 3.3.0 LockInstance carries an `owner` field; it must survive a
+        // JSON round-trip under the camelCase wire format.
+        let lock = LockInstance {
+            key: "test-lock".to_string(),
+            expired_time: 30000,
+            lock_type: "reentrant".to_string(),
+            params: HashMap::new(),
+            owner: Some("client-1:ThreadId(7)".to_string()),
+        };
+        let json = serde_json::to_string(&lock).unwrap();
+        assert!(
+            json.contains("\"owner\":\"client-1:ThreadId(7)\""),
+            "owner must be present on the wire: {json}"
+        );
+        let parsed: LockInstance = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.owner.as_deref(), Some("client-1:ThreadId(7)"));
+        assert_eq!(parsed.key, "test-lock");
+        assert_eq!(parsed.expired_time, 30000);
+    }
+
+    #[test]
+    fn test_lock_instance_owner_absent_defaults_to_none() {
+        // Pre-3.3.0 Java clients omit `owner` entirely: struct-level
+        // #[serde(default)] must yield None, not a deserialize error.
+        let json = r#"{"key":"test-lock","expiredTime":30000,"lockType":"nacosMutexLock"}"#;
+        let parsed: LockInstance = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.owner, None);
+        assert_eq!(parsed.key, "test-lock");
+
+        // An explicit JSON null is also accepted (Option handles null).
+        let json_null = r#"{"key":"test-lock","expiredTime":30000,"lockType":"mutex","params":null,"owner":null}"#;
+        let parsed_null: LockInstance = serde_json::from_str(json_null).unwrap();
+        assert_eq!(parsed_null.owner, None);
+        assert!(parsed_null.params.is_empty());
     }
 
     #[test]

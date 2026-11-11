@@ -5,9 +5,12 @@
 use bytes::Bytes;
 use reqwest::{Client, Response, StatusCode};
 use serde::{Serialize, de::DeserializeOwned};
+use std::sync::Arc;
 use std::{collections::HashMap, sync::RwLock, time::Duration};
 use tracing::{debug, error, warn};
 
+use crate::auth::{ClientAuthService, RequestResource};
+use crate::oidc::OidcAuthProvider;
 use crate::tls::TlsOptions;
 
 /// Wire header mirroring Nacos 3.3.0 GA `HttpHeaderConsts.NACOS_REQUEST_ID`.
@@ -25,6 +28,20 @@ const NACOS_REQUEST_ID: &str = "Nacos-Request-Id";
 /// logical operation.
 fn with_request_id(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     builder.header(NACOS_REQUEST_ID, uuid::Uuid::new_v4().to_string())
+}
+
+/// Apply every identity header resolved by [`BatataHttpClient::ensure_identity_headers`].
+///
+/// GA's `LoginIdentityContext` can carry several parameters at once — the OIDC
+/// provider emits both `Authorization: Bearer …` and `accessToken` — so the
+/// transport must not assume a single auth header.
+fn with_auth_headers(
+    builder: reqwest::RequestBuilder,
+    headers: &[(String, String)],
+) -> reqwest::RequestBuilder {
+    headers
+        .iter()
+        .fold(builder, |builder, (key, value)| builder.header(key, value))
 }
 
 /// Configuration for the HTTP client
@@ -144,6 +161,8 @@ pub struct BatataHttpClient {
     config: HttpClientConfig,
     current_server_index: RwLock<usize>,
     token: RwLock<Option<TokenInfo>>,
+    /// GA OIDC Client Credentials provider, when `ClientConfig::oidc` is set.
+    oidc: Option<Arc<OidcAuthProvider>>,
 }
 
 impl BatataHttpClient {
@@ -171,14 +190,36 @@ impl BatataHttpClient {
 
         let use_identity = http_config.has_server_identity();
 
+        let oidc = if client_config.has_oidc_auth() {
+            let provider = OidcAuthProvider::with_tls(
+                client_config
+                    .oidc
+                    .as_ref()
+                    .expect("has_oidc_auth implies oidc is Some")
+                    .clone(),
+                &client_config.tls_options(),
+            )?;
+            Some(Arc::new(provider))
+        } else {
+            None
+        };
+
         let instance = Self {
             client: reqwest_client,
             config: http_config,
             current_server_index: RwLock::new(0),
             token: RwLock::new(None),
+            oidc,
         };
 
-        if !use_identity
+        if let Some(provider) = &instance.oidc {
+            // GA logs in through the SPI provider rather than the Nacos
+            // username/password endpoint. A failed first login is retried on
+            // demand by `ensure_identity_headers`.
+            if !provider.login(&client_config.server_addrs).await {
+                warn!("Initial OIDC login failed (will retry on demand)");
+            }
+        } else if !use_identity
             && !client_config.username.is_empty()
             && let Err(e) = instance.authenticate().await
         {
@@ -206,6 +247,7 @@ impl BatataHttpClient {
             config,
             current_server_index: RwLock::new(0),
             token: RwLock::new(None),
+            oidc: None,
         };
 
         // Skip JWT login when using server identity authentication
@@ -239,6 +281,7 @@ impl BatataHttpClient {
             config,
             current_server_index: RwLock::new(0),
             token: RwLock::new(None),
+            oidc: None,
         })
     }
 
@@ -343,17 +386,48 @@ impl BatataHttpClient {
         self.config.has_server_identity()
     }
 
-    /// Get the auth header name and value for the current auth mode.
-    /// Returns (header_name, header_value).
-    async fn ensure_auth_header(&self) -> anyhow::Result<(String, String)> {
+    /// Resolve all identity headers for the current auth mode.
+    ///
+    /// GA `ClientAuthPluginManager` merges every `LoginIdentityContext`
+    /// parameter into a request; the OIDC provider contributes two headers
+    /// (`Authorization: Bearer …` and `accessToken`), while JWT/identity auth
+    /// contribute exactly one. Sorted for deterministic request construction.
+    async fn ensure_identity_headers(&self) -> anyhow::Result<Vec<(String, String)>> {
         if self.use_identity_auth() {
-            Ok((
+            return Ok(vec![(
                 self.config.server_identity_key.clone(),
                 self.config.server_identity_value.clone(),
-            ))
+            )]);
+        }
+        if let Some(provider) = &self.oidc {
+            if !provider.login(&[]).await {
+                anyhow::bail!("OIDC login failed");
+            }
+            let mut headers: Vec<(String, String)> = provider
+                .get_identity_context(&RequestResource::default())
+                .headers
+                .into_iter()
+                .collect();
+            headers.sort_by(|a, b| a.0.cmp(&b.0));
+            if headers.is_empty() {
+                anyhow::bail!("OIDC login produced no identity headers");
+            }
+            return Ok(headers);
+        }
+        let token = self.ensure_token().await?;
+        Ok(vec![("accessToken".to_string(), token)])
+    }
+
+    /// Re-authenticate after a 401 using whichever provider is active.
+    async fn reauthenticate(&self) -> anyhow::Result<()> {
+        if let Some(provider) = &self.oidc {
+            if provider.refresh().await {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("OIDC token refresh failed"))
+            }
         } else {
-            let token = self.ensure_token().await?;
-            Ok(("accessToken".to_string(), token))
+            self.authenticate().await
         }
     }
 
@@ -373,10 +447,8 @@ impl BatataHttpClient {
     /// Make a GET request
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .get(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.get(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .send()
                     .await
@@ -393,10 +465,8 @@ impl BatataHttpClient {
         query: &Q,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .get(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.get(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .query(query)
                     .send()
@@ -414,10 +484,8 @@ impl BatataHttpClient {
         form: &F,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .post(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.post(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .form(form)
                     .send()
@@ -435,10 +503,8 @@ impl BatataHttpClient {
         body: &B,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .post(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.post(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .json(body)
                     .send()
@@ -461,13 +527,9 @@ impl BatataHttpClient {
         extra_headers: &HashMap<String, String>,
     ) -> anyhow::Result<T> {
         let url = self.build_url(path);
-        let auth_header = self.ensure_auth_header().await?;
-        let mut builder = with_request_id(
-            self.client
-                .post(&url)
-                .header(&auth_header.0, &auth_header.1)
-                .json(body),
-        );
+        let auth_headers = self.ensure_identity_headers().await?;
+        let mut builder =
+            with_request_id(with_auth_headers(self.client.post(&url), &auth_headers).json(body));
         for (k, v) in extra_headers {
             builder = builder.header(k, v);
         }
@@ -490,10 +552,8 @@ impl BatataHttpClient {
         body: &B,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .post(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.post(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .query(query)
                     .json(body)
@@ -512,10 +572,8 @@ impl BatataHttpClient {
         query: &Q,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .delete(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.delete(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .query(query)
                     .send()
@@ -538,10 +596,8 @@ impl BatataHttpClient {
         query: &Q,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .post(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.post(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .query(query)
@@ -560,10 +616,8 @@ impl BatataHttpClient {
         form: &F,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .put(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.put(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .form(form)
                     .send()
@@ -581,10 +635,8 @@ impl BatataHttpClient {
         body: &B,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .put(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.put(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .json(body)
                     .send()
@@ -611,10 +663,8 @@ impl BatataHttpClient {
         body: &B,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, auth_header, request_id| async move {
-                client
-                    .put(&url)
-                    .header(&auth_header.0, &auth_header.1)
+            |client, url, auth_headers, request_id| async move {
+                with_auth_headers(client.put(&url), &auth_headers)
                     .header(NACOS_REQUEST_ID, request_id)
                     .query(query)
                     .json(body)
@@ -640,13 +690,10 @@ impl BatataHttpClient {
 
         for _ in 0..max_retries {
             let url = self.build_url(path);
-            let (auth_key, auth_val) = self.ensure_auth_header().await?;
+            let auth_headers = self.ensure_identity_headers().await?;
 
             match with_request_id(
-                self.client
-                    .get(&url)
-                    .header(&auth_key, &auth_val)
-                    .query(query),
+                with_auth_headers(self.client.get(&url), &auth_headers).query(query),
             )
             .send()
             .await
@@ -658,7 +705,7 @@ impl BatataHttpClient {
                         && !self.use_identity_auth()
                     {
                         warn!("Token expired, re-authenticating...");
-                        self.authenticate().await?;
+                        self.reauthenticate().await?;
                         continue;
                     } else {
                         let status = response.status();
@@ -688,9 +735,9 @@ impl BatataHttpClient {
 
         for _ in 0..max_retries {
             let url = self.build_url(path);
-            let (auth_key, auth_val) = self.ensure_auth_header().await?;
+            let auth_headers = self.ensure_identity_headers().await?;
 
-            match with_request_id(self.client.get(&url).header(&auth_key, &auth_val))
+            match with_request_id(with_auth_headers(self.client.get(&url), &auth_headers))
                 .send()
                 .await
             {
@@ -701,7 +748,7 @@ impl BatataHttpClient {
                         && !self.use_identity_auth()
                     {
                         warn!("Token expired, re-authenticating...");
-                        self.authenticate().await?;
+                        self.reauthenticate().await?;
                         continue;
                     } else {
                         let status = response.status();
@@ -733,12 +780,10 @@ impl BatataHttpClient {
 
         for _ in 0..max_retries {
             let url = self.build_url(path);
-            let (auth_key, auth_val) = self.ensure_auth_header().await?;
+            let auth_headers = self.ensure_identity_headers().await?;
 
             match with_request_id(
-                self.client
-                    .post(&url)
-                    .header(&auth_key, &auth_val)
+                with_auth_headers(self.client.post(&url), &auth_headers)
                     .header("Content-Type", "application/octet-stream")
                     .body(body.clone()), // Bytes clone is O(1)
             )
@@ -752,7 +797,7 @@ impl BatataHttpClient {
                         && !self.use_identity_auth()
                     {
                         warn!("Token expired, re-authenticating...");
-                        self.authenticate().await?;
+                        self.reauthenticate().await?;
                         continue;
                     } else {
                         let status = response.status();
@@ -783,13 +828,10 @@ impl BatataHttpClient {
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<T> {
         let url = self.build_url(path).clone();
-        let (auth_key, auth_val) = self.ensure_auth_header().await?;
+        let auth_headers = self.ensure_identity_headers().await?;
 
         match with_request_id(
-            self.client
-                .post(url)
-                .header(&auth_key, &auth_val)
-                .multipart(form),
+            with_auth_headers(self.client.post(url), &auth_headers).multipart(form),
         )
         .send()
         .await
@@ -797,7 +839,7 @@ impl BatataHttpClient {
             Ok(response) => {
                 if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth() {
                     warn!("Token expired, re-authenticating...");
-                    self.authenticate().await?;
+                    self.reauthenticate().await?;
                     // Token expired, caller should retry
                     return Err(anyhow::anyhow!("Token expired, please retry"));
                 }
@@ -822,12 +864,10 @@ impl BatataHttpClient {
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<T> {
         let url = self.build_url(path);
-        let (auth_key, auth_val) = self.ensure_auth_header().await?;
+        let auth_headers = self.ensure_identity_headers().await?;
 
         match with_request_id(
-            self.client
-                .post(&url)
-                .header(&auth_key, &auth_val)
+            with_auth_headers(self.client.post(&url), &auth_headers)
                 .query(query)
                 .multipart(form),
         )
@@ -837,7 +877,7 @@ impl BatataHttpClient {
             Ok(response) => {
                 if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth() {
                     warn!("Token expired, re-authenticating...");
-                    self.authenticate().await?;
+                    self.reauthenticate().await?;
                     return Err(anyhow::anyhow!("Token expired, please retry"));
                 }
                 self.handle_response(response).await
@@ -857,13 +897,10 @@ impl BatataHttpClient {
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<Vec<u8>> {
         let url = self.build_url(path);
-        let (auth_key, auth_val) = self.ensure_auth_header().await?;
+        let auth_headers = self.ensure_identity_headers().await?;
 
         match with_request_id(
-            self.client
-                .post(&url)
-                .header(&auth_key, &auth_val)
-                .multipart(form),
+            with_auth_headers(self.client.post(&url), &auth_headers).multipart(form),
         )
         .send()
         .await
@@ -874,7 +911,7 @@ impl BatataHttpClient {
                 } else if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth()
                 {
                     warn!("Token expired, re-authenticating...");
-                    self.authenticate().await?;
+                    self.reauthenticate().await?;
                     Err(anyhow::anyhow!("Token expired, please retry"))
                 } else {
                     let status = response.status();
@@ -897,7 +934,7 @@ impl BatataHttpClient {
     async fn request_with_retry<T, F, Fut>(&self, request_fn: F, path: &str) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
-        F: Fn(Client, String, (String, String), String) -> Fut,
+        F: Fn(Client, String, Vec<(String, String)>, String) -> Fut,
         Fut: std::future::Future<Output = Result<Response, reqwest::Error>>,
     {
         let max_retries = self.config.server_addrs.len();
@@ -905,14 +942,14 @@ impl BatataHttpClient {
 
         for _ in 0..max_retries {
             let url = self.build_url(path);
-            let auth_header = self.ensure_auth_header().await?;
+            let auth_headers = self.ensure_identity_headers().await?;
             let request_id = uuid::Uuid::new_v4().to_string();
 
-            match request_fn(self.client.clone(), url, auth_header, request_id).await {
+            match request_fn(self.client.clone(), url, auth_headers, request_id).await {
                 Ok(response) => {
                     if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth() {
                         warn!("Token expired, re-authenticating...");
-                        self.authenticate().await?;
+                        self.reauthenticate().await?;
                         continue;
                     }
                     return self.handle_response(response).await;

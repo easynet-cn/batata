@@ -272,7 +272,19 @@ impl GrpcClient {
         };
         let tls = grpc_config.tls_options();
 
-        let auth_provider = if client_config.has_jwt_auth() {
+        let auth_provider = if client_config.has_oidc_auth() {
+            // GA registers OIDC as an independent ClientAuthService provider;
+            // when configured it is the token source for both HTTP and gRPC.
+            let oidc = crate::oidc::OidcAuthProvider::with_tls(
+                client_config
+                    .oidc
+                    .as_ref()
+                    .expect("has_oidc_auth implies oidc is Some")
+                    .clone(),
+                &tls,
+            )?;
+            AuthProvider::with_oidc(oidc, &tls)?
+        } else if client_config.has_jwt_auth() {
             let auth_url = client_config.full_auth_url(&client_config.server_addrs[0]);
             // Extract base URL (up to port) for auth provider
             let base_and_path = auth_url.rsplitn(2, "/v3/").last().unwrap_or(&auth_url);
@@ -412,9 +424,19 @@ impl GrpcClient {
             ..Default::default()
         };
 
-        // Inject access token into headers
+        // Inject the identity headers into metadata. GA's OIDC provider
+        // contributes both `Authorization: Bearer …` and `accessToken`; JWT
+        // and identity auth contribute only the latter.
         if let Ok(Some(token)) = self.auth_provider.get_token().await {
-            metadata.headers.insert("accessToken".to_string(), token);
+            metadata
+                .headers
+                .insert("accessToken".to_string(), token.clone());
+            if self.auth_provider.uses_oidc() {
+                metadata.headers.insert(
+                    crate::oidc::OIDC_AUTHORIZATION_HEADER.to_string(),
+                    format!("{}{token}", crate::oidc::OIDC_BEARER_PREFIX),
+                );
+            }
         }
 
         let payload = req.to_payload(Some(metadata));

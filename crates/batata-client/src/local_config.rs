@@ -31,6 +31,24 @@ impl SnapshotSwitch {
         }
     }
 
+    /// Create a switch from the GA `configSnapshotEnabled` client property.
+    ///
+    /// GA `SnapShotSwitch` resolves the property once at class initialization
+    /// and defaults to `true`. Processors constructed without a `ClientConfig`
+    /// use that same resolution: the GA key (or its `BATATA_` environment
+    /// alias) wins when present, otherwise `default` is kept. `BatataClient`
+    /// passes its explicit per-client value through [`Self::new`] instead, so
+    /// an application-level override is never shadowed by a process variable.
+    pub fn from_property(default: bool) -> Self {
+        let ga_property =
+            std::env::var(crate::client_config::CONFIG_SNAPSHOT_ENABLED_PROPERTY).ok();
+        let batata_env =
+            std::env::var(crate::client_config::BATATA_CONFIG_SNAPSHOT_ENABLED_ENV).ok();
+        let enabled =
+            resolve_snapshot_enabled(default, ga_property.as_deref(), batata_env.as_deref());
+        Self::new(enabled)
+    }
+
     /// Return whether snapshot functionality is enabled.
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
@@ -40,6 +58,22 @@ impl SnapshotSwitch {
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
     }
+}
+
+/// Resolve the GA `configSnapshotEnabled` property against an explicit default.
+///
+/// The GA key wins over the Batata environment alias; an unparsable or absent
+/// value keeps `default`. Kept as a pure function so the property precedence
+/// can be tested without mutating process-wide environment variables.
+pub(crate) fn resolve_snapshot_enabled(
+    default: bool,
+    ga_property: Option<&str>,
+    batata_env: Option<&str>,
+) -> bool {
+    ga_property
+        .or(batata_env)
+        .map(|value| crate::client_config::parse_client_property_bool(value, default))
+        .unwrap_or(default)
 }
 
 /// Local config info processor for snapshot and failover
@@ -55,7 +89,7 @@ impl LocalConfigInfoProcessor {
     pub fn new(env_name: String, server_name: String) -> Self {
         let base_path = Self::get_local_snapshot_path();
         Self {
-            snapshot_switch: SnapshotSwitch::new(true),
+            snapshot_switch: SnapshotSwitch::from_property(true),
             base_path,
             env_name,
             server_name,
@@ -867,5 +901,27 @@ mod tests {
                 .unwrap(),
             Some("async-failover".to_string())
         );
+    }
+
+    #[test]
+    fn test_resolve_snapshot_enabled() {
+        // GA key wins, alias is the fallback, and an invalid value keeps the default.
+        assert!(!resolve_snapshot_enabled(true, Some("false"), Some("true")));
+        assert!(!resolve_snapshot_enabled(true, None, Some("0")));
+        assert!(resolve_snapshot_enabled(true, None, None));
+        assert!(!resolve_snapshot_enabled(false, None, None));
+        assert!(resolve_snapshot_enabled(true, Some("typo"), None));
+        assert!(!resolve_snapshot_enabled(false, Some("typo"), None));
+    }
+
+    #[test]
+    fn snapshot_processors_resolve_property_switch() {
+        // "declaration != call site": both processors must actually construct
+        // the switch from the GA property rather than hard-coding `true`.
+        const LOCAL: &str = include_str!("local_config.rs");
+        const ENCRYPTION: &str = include_str!("config/encryption.rs");
+        assert!(LOCAL.contains(concat!("SnapshotSwitch::", "from_property(true)")));
+        assert!(ENCRYPTION.contains(concat!("SnapshotSwitch::", "from_property(true)")));
+        assert!(LOCAL.contains(concat!("resolve_snapshot_enabled", "(")));
     }
 }

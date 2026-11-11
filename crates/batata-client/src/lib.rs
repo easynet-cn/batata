@@ -38,6 +38,7 @@ pub mod lock;
 pub mod metrics;
 pub mod model;
 pub mod naming;
+pub mod oidc;
 pub mod redo;
 pub mod retry;
 pub mod server_list;
@@ -65,7 +66,7 @@ pub use model::*;
 pub use config::BatataConfigService;
 pub use error::ClientError;
 pub use grpc::{GrpcClient, GrpcClientConfig};
-pub use lock::BatataLockService;
+pub use lock::{BatataLockService, LockGuard, LockWatchdog};
 pub use naming::BatataNamingService;
 
 // Shared wire model used by every naming API. Re-exported so applications do
@@ -103,6 +104,7 @@ pub use auth::{
     AccessKeyAuthProvider, ClientAuthService, IdentityContext, JwtAuthProvider, RequestResource,
     SecurityProxy,
 };
+pub use oidc::{OidcAuthProvider, OidcConfig};
 
 // Retry and server list
 pub use retry::{RetryConfig, retry_with_backoff};

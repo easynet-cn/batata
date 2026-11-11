@@ -33,10 +33,10 @@ Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 197      | 184 | 5  | 0 | 4 | 4  | 93%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 197      | 190 | 1  | 0 | 2 | 4  | 96%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 181 | 0  | 0 | 0  | 0  | 100%      | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **577** | **534** | **8** | **0** | **31** | **4** | **93%** | **1040** | |
+| **Total** | **577** | **540** | **4** | **0** | **29** | **4** | **94%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -88,12 +88,14 @@ B.10 (server AI ADMIN), so the checker can detect a status that drifts from real
 |------|------|--------------------|
 | maintainer-client | F-NAC-MAINT-006 | MCP server version lifecycle — closed in batch 1 |
 | maintainer-client | F-NAC-MAINT-007 | GA `/skills/upload` `targetVersion` / `uploadAction` / `autoPublishIfNew` — **closed in batch 11** (`🟢`): the three params are now consumed by `SkillUploadQuery` / `ConsoleSkillUploadQuery` / `SkillService::upload_skill` and the `skill_upload_from_zip` SDK; typed DTOs, the full read/write facade, Skill ADMIN `commitMsg` and Prompt draft fork metadata landed in batches 3/7/8/10. Batch 9/10 audits corrected two over-registered field lists |
-| maintainer-client | F-NAC-MAINT-008 | Legacy A2A facade + GA-only agent methods (query lifecycle landed in batch 2) |
+| maintainer-client | F-NAC-MAINT-004 | `AiMaintainerService` facade — **closed in batch 20** (`🟢`): typed DTOs were already delivered in batch 8 and GA's 7-method `a2a()` delegate was already wrapped; the residual `getAgentCard(version)` is now exposed via `agent_get_with_version()` |
+| maintainer-client | F-NAC-MAINT-005 | `AgentMaintainerService` facade — **closed in batch 20** (`🟢`): the eight "missing" draft methods were mis-attributed to `A2aMaintainerService` (they belong to the protocol-neutral facade implemented in batch 2); only `version` on the legacy A2A GET was real and is now wired |
+| maintainer-client | F-NAC-MAINT-008 | Legacy A2A facade + GA-only agent methods — **closed in batch 20** (`🟢`): GA urlencoded form for draft create/update/labels (with `*_json` aliases), `Page` decode for `listAgentVersions`, and `updateAgent` / `deleteAgent` / `getRuntimeEndpoints` wrappers; server live runtime-endpoint source stays in `F-NAC-AISRV-001` |
 | batata-client | F-NAC-CSDK-001 | `NamingSelector` subscribe overload |
-| batata-client | F-NAC-CSDK-002 | `LockService::renew` / watchdog |
+| batata-client | F-NAC-CSDK-002 | `LockService::renew` / watchdog — **closed in batch 20** (`🟢`): owner-aware `RENEW` wire, server RENEW branch + Raft producer, standalone renew, and a cancellable client watchdog |
 | batata-client | F-NAC-CSDK-003 | `AiService` sub-services + `AgentDiscoveryService` — **closed in batch 14** (`🟢`): the five `Arc<...>` sub-service accessors (`mcp/skill/prompt/agentSpec/agent`) plus the `AgentDiscoveryService` trait (search/discover/subscribe long-poll/register/deregister/publish) over `/v3/client/ai/**`, `AgentDiscoveryCapability::Supported` for the HTTP transport; 16 wire-shape tests + 2 mutants |
 | batata-client | F-NAC-CSDK-004 | config 304 conditional GET (`localMd5`) |
-| batata-client | F-NAC-CSDK-005 | OIDC auth + `configSnapshotEnabled` |
+| batata-client | F-NAC-CSDK-005 | OIDC auth + `configSnapshotEnabled` — **closed in batch 19** (`🟢`): GA Client Credentials provider (Discovery / token endpoint / `Authorization: Bearer` + `accessToken` dual headers) wired into HTTP + gRPC, and the `configSnapshotEnabled` switch flowing from `ClientConfig` into both snapshot processors |
 | batata-client | F-NAC-CSDK-006 | HTTP `requestId` correlation |
 | batata-core, batata-ai | F-NAC-CSDK-007 | GA `SetupAckRequest.ability_table` RAD keys — **closed in batch 13** (`🟢`): the four keys (`agentCardV1` / `mcpDraftRelease` / `radV1` / `radWatchV1`) are advertised in `crates/batata-core/src/handler/rpc.rs`, and the GA RAD v1 gRPC handlers (`AgentPublishRpcRequest` / `AgentSubscribeRpcRequest` / `AgentUnsubscribeRpcRequest`) are implemented in `crates/batata-ai/src/handler/ai_handler.rs` backed by `crates/batata-ai/src/service/agent_rad_watch.rs` |
 | batata-ai | F-NAC-MAINT-010 | AI ADMIN POST/PUT form-vs-query channel — **closed in batch 5** (`🟢`); the ARD model divergence moved to `F-NAC-AISRV-001` |
@@ -118,7 +120,9 @@ version-lifecycle methods + `McpServerVersionInfo` DTO in
 `AgentCard` security fields in `crates/batata-client/src/ai.rs`; the post-GA
 wrapper is still pending). `F-NAC-LOCK-009` was downgraded from `🟢` to `⚪`
 because the claimed server-side `RENEW` branch does not exist. Details and
-mutant evidence are in `docs/compat/review-report.md` §8.5.
+mutant evidence are in `docs/compat/review-report.md` §8.5. Batch 20 later
+implemented both sides and restored `F-NAC-LOCK-009` to `🟢`; it also moved
+`F-NAC-CSDK-008` to `⚪` as baseline-out drift.
 
 **Batch 2 implemented (2026-11-10)**: `F-NAC-MAINT-008` is now `🟡` — the
 protocol-neutral `agents_*` facade on `/v3/admin/ai/agents` covers
@@ -329,6 +333,69 @@ rows + Summary Total + Batch 18 prose, `README.md` global table and F-ID
 narrative updated. See `review-report.md` §25. No `--full` gate, commit, push
 or publish was performed (commit/push handled separately).
 
+**Batch 19 implemented (2026-11-11)**: `F-NAC-CSDK-005` is now `🟢`. GA
+`b64bc9118` source-verified: `OidcClientAuthServiceImpl` is the third
+`AbstractClientAuthService` SPI provider; `OidcClientContext.discover()`
+resolves `token_endpoint` from `/.well-known/openid-configuration`;
+`OidcTokenHolder.fetchToken()` POSTs `grant_type=client_credentials` and caches
+`access_token`/`expires_in` (default 300s, random `[ttl/15, ttl/10)` refresh
+window); `getLoginIdentityContext()` emits **both** `Authorization: Bearer <token>`
+and `accessToken`. `crates/batata-client/src/oidc.rs` ports the whole contract
+and `ClientConfig` gains `oidc` / `with_oidc()` / `with_client_properties()`;
+`BatataHttpClient::from_config` and `GrpcClient::from_config` both consume it,
+so the dual headers reach real HTTP requests and gRPC metadata (401/403
+re-auth uses `refresh()` instead of the Nacos login endpoint). The second half
+of the row — `configSnapshotEnabled` — is now a real switch:
+`ClientConfig::config_snapshot_enabled` (default `true`, GA property key plus
+`BATATA_CONFIG_SNAPSHOT_ENABLED` env alias) flows through
+`SnapshotSwitch::from_property` in both snapshot processors, and
+`BatataClient::config_service()` attaches the processor with the explicit
+value, cleaning persisted snapshots when disabled. The earlier inventory note
+misspelled batata's type as `SnapShotSwitch`; corrected. 8 wiremock integration
+cases, 17 unit/wiring cases, **20/20 compile-safe mutants killed**. Counts:
+B.9 `5🟢/1🟡/2⚪` → `6🟢/1🟡/1⚪` (63%→75%), Nacos `184🟢/5🟡/4⚪/4⛔` →
+`185🟢/5🟡/3⚪/4⛔/197` (93%→94%), global `534🟢/8🟡/31⚪` →
+`535🟢/8🟡/30⚪` (93% unchanged); T-ID counts unchanged (401 / 1040).
+See `review-report.md` §26. No `--full` gate, commit, push or publish was
+performed (commit/push handled separately).
+
+**Batch 20 implemented (2026-11-11)**: all remaining **GA 3.3.0 baseline**
+client gaps are closed. (1) `F-NAC-CSDK-002` + `F-NAC-LOCK-009` ⚪→🟢: GA
+`LockService.renew` / `NacosLockWatchdog` / `LockRequestHandler.RENEW` /
+`AbstractAtomicLock.renew` source-verified at `b64bc9118`; `LockInstance.owner`
+added to `crates/batata-api/src/remote/model.rs` with `#[serde(default)]`;
+`crates/batata-core/src/handler/lock.rs` gained a `RENEW` arm, one shared
+`resolve_owner()` for ACQUIRE/RELEASE/RENEW, and a `raft_renew()` producer for
+the **already-existing** `RaftRequest::LockRenew` (the old note claiming "no
+Raft renew request" was corrected — it was bound-but-unreachable, not absent);
+`crates/batata-core/src/service/lock.rs` `renew()` handles standalone mode
+without touching `lock_count`; `crates/batata-client/src/lock.rs` gained
+`renew*`, a cached stable `clientId:threadId` owner, and a cancellable
+`LockWatchdog` (`max(1000, min(ttl/3, 10000))`, unregister before RELEASE,
+shutdown on drop). 16/16 compile-safe mutants killed. (2)
+`F-NAC-MAINT-004/005/008` 🟡→🟢: a GA source re-read showed two residuals were
+over-registered (24 typed DTOs landed in batch 8; GA's 7-method `a2a()` delegate
+was already wrapped) and one was mis-attributed (draft lifecycle belongs to
+`AgentMaintainerService`, not `A2aMaintainerService`). The real residuals are
+now implemented in `crates/batata-maintainer-client`: `agent_get_with_version()`,
+GA urlencoded form for `createDraft` / `updateDraft` / `updateLabels` (with
+`*_json` aliases preserving the dual channel), `Page` decoding for
+`agents_list_versions` (the server has returned `Page` since batch 12 — the old
+note had the direction reversed), and `agents_update_agent` /
+`agents_delete_agent` / `agents_get_runtime_endpoints` wrappers plus the new
+`AI_AGENTS_RUNTIME_ENDPOINTS` constant. `crates/batata-server/src/api/v3/admin/ai/a2a.rs`
+now forwards the already-declared `q.version` to the service, guarded by
+`crates/batata-server/tests/a2a_admin_version.rs`. 11 wiremock cases assert
+exact form maps/verbs/paths/query/error paths, 7 serde tests, **13/13
+compile-safe mutants killed**. The live runtime-endpoint source / GA
+`RuntimeEndpointSnapshot` shape remains the separate server-side
+`F-NAC-AISRV-001`. (3) Drift: `F-NAC-CSDK-008` 🟡→⚪ and
+`F-NAC-MAINT-009` stay baseline-out; no GA wire was changed. Counts: Nacos
+`185🟢/5🟡/3⚪/4⛔` → `190🟢/1🟡/2⚪/4⛔/197` (94%→96%), global
+`535🟢/8🟡/30⚪` → `540🟢/4🟡/29⚪` (93%→94%); T-ID counts unchanged
+(401 / 1040). See `review-report.md` §27. No `--full` gate, commit, push,
+publish, yank, archive or tag was performed.
+
 Batch 5 then made the four remaining Agent write handlers dual-wire:
 `crates/batata-ai/src/api/agent.rs` (`resolve_agent_write`) decodes either batata's
 nested `AgentCard` JSON or the GA flat `AgentDraftCreateForm` /
@@ -372,6 +439,16 @@ Four client-facing commits are recorded in `review-report.md` §8 and as
 The ARD protocol change (#16014) touched markdown/spec files only — **zero Java
 files** — so `getAgentDiscoveryCapability`, `AgentConverter` and synchronous
 `Watch` are GA features, not new drift.
+
+**Batch 20 ruling (2026-11-11)**: the 3.3.0 GA alignment target is the only
+in-scope contract. `F-NAC-MAINT-009` (additive, but absent from GA) stays `⚪`;
+`F-NAC-CSDK-008` was re-checked from `🟡` to `⚪` because its GA half was
+already delivered in batch 1 and its remaining half is a **breaking wire
+change** (`List<Map<String,List<String>>>` → `List<SecurityRequirement>` plus
+`AgentSkill.securityRequirements`) that would require server DTO changes and
+regress GA 3.3.0 interoperability. Both are baseline-out, not GA gaps; no GA
+wire was modified. Their commit ancestry was re-verified with
+`git merge-base --is-ancestor` against `b64bc9118`.
 
 ### Test-coverage debt
 

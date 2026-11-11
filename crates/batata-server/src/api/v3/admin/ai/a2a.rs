@@ -134,7 +134,10 @@ async fn get_agent(
             .get::<batata_common::IdentityContext>()
             .map(|ctx| ctx.username.clone())
             .unwrap_or_default();
-        match svc.get_agent_card(namespace, name, None, Some(&user)).await {
+        match svc
+            .get_agent_card(namespace, name, q.version.as_deref(), Some(&user))
+            .await
+        {
             Ok(Some(agent)) => HttpResponse::Ok().json(Result::success(agent)),
             Ok(None) => Result::<()>::http_not_found(
                 &batata_common::error::AGENT_NOT_FOUND,

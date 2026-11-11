@@ -278,6 +278,196 @@ pub struct AgentInterface {
     pub transport: String,
 }
 
+// ============== Protocol-neutral Agent write forms (GA 3.3.0) ==============
+//
+// `AgentMaintainerServiceImpl` sends every POST/PUT through
+// `ClientHttpProxy.postForm/putForm`: identity fields live in the urlencoded
+// form body, and nested objects (`provider`, `tags`, `extensions`,
+// `callInterfaces`, `labels`) are collapsed into a SINGLE JSON string form
+// value via `putJsonIfNotNull`. These DTOs model that exact field table.
+//
+// They intentionally do NOT carry a `#[serde(flatten)] extra` map: a request
+// struct is only ever serialized by `serde_urlencoded`, which cannot serialize
+// a flatten map. Every response DTO below does carry the tolerant `extra`.
+
+/// `POST /v3/admin/ai/agents/draft` form (GA `createDraft`).
+///
+/// `namespaceId`, `agentName` and `version` are always sent. The nested
+/// `*`-object fields are JSON strings; the remaining optional fields are
+/// omitted from the form when `None` (`putIfNotNull`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentDraftCreateForm {
+    /// Namespace ID.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Draft version string.
+    pub version: String,
+    /// Human-readable display name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Icon URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// Provider object, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Tags, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    /// Extensions, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<String>,
+    /// Call interfaces, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_interfaces: Option<String>,
+    /// Author.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Change description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_description: Option<String>,
+    /// Version this draft is based on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub based_on_version: Option<String>,
+}
+
+/// `PUT /v3/admin/ai/agents/draft` form (GA `updateDraft`).
+///
+/// GA sends only identity (`namespaceId`, `agentName`, `version`) plus
+/// `callInterfaces` (JSON string) and `changeDescription`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentDraftUpdateForm {
+    /// Namespace ID.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Draft version string.
+    pub version: String,
+    /// Call interfaces, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_interfaces: Option<String>,
+    /// Change description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_description: Option<String>,
+}
+
+/// `PUT /v3/admin/ai/agents/labels` form (GA `updateLabels`).
+///
+/// `labels` is the JSON string of the labels map (`putJsonIfNotNull`), not a
+/// set of repeated `labels.*` form fields.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentLabelsUpdateForm {
+    /// Namespace ID.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Labels map, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<String>,
+}
+
+/// `PUT /v3/admin/ai/agents` form (GA `updateAgent`).
+///
+/// Note there is NO `version` field here: GA mutates the agent's current
+/// metadata, not one version. Nested objects are single JSON string values.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentUpdateForm {
+    /// Namespace ID.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Human-readable display name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Icon URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// Provider object, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Tags, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    /// Extensions, serialized as a single JSON string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<String>,
+    /// Lifecycle status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+// ============== Protocol-neutral Agent response DTOs (tolerant) ==============
+//
+// GA answers `updateAgent`/`updateLabels` with `AgentSummary` and
+// `getRuntimeEndpoints` with `RuntimeEndpointSnapshot`. batata's admin layer
+// may answer with a different shape (tracked as `F-NAC-AISRV-001`), so these
+// DTOs use `default` on every field and preserve all unknown wire fields in
+// `extra` rather than failing to decode.
+
+/// Tolerant `AgentSummary` as returned by GA `updateAgent`/`updateLabels`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSummary {
+    /// Namespace ID.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Human-readable display name.
+    pub display_name: String,
+    /// Description.
+    pub description: String,
+    /// Lifecycle status.
+    pub status: String,
+    /// Owner.
+    pub owner: String,
+    /// Visibility scope.
+    pub scope: String,
+    /// Nested version info, kept raw because its shape varies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_info: Option<serde_json::Value>,
+    /// Metadata version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta_version: Option<i64>,
+    /// Creation time (epoch millis).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create_time: Option<i64>,
+    /// Last update time (epoch millis).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_time: Option<i64>,
+    /// Any additional fields returned by the server.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// Tolerant `RuntimeEndpointSnapshot` as returned by GA `getRuntimeEndpoints`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RuntimeEndpointSnapshot {
+    /// Namespace ID.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Version the snapshot refers to.
+    pub version: String,
+    /// Raw call-interface object, kept as a value because batata's shape differs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_interface: Option<serde_json::Value>,
+    /// Any additional fields returned by the server.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +546,154 @@ mod tests {
 
         let deserialized: McpEndpointSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.r#type, "direct");
+    }
+
+    /// The GA `createDraft` form must emit the exact 13-field camelCase table
+    /// through `serde_urlencoded` — no `snake_case` leaks, no extra keys.
+    #[test]
+    fn test_agent_draft_create_form_urlencoded_field_table() {
+        let form = AgentDraftCreateForm {
+            namespace_id: "ns-1".to_string(),
+            agent_name: "my-agent".to_string(),
+            version: "1.0".to_string(),
+            display_name: Some("My Agent".to_string()),
+            description: Some("desc".to_string()),
+            icon_url: Some("http://icon".to_string()),
+            provider: Some("{\"org\":\"acme\"}".to_string()),
+            tags: Some("[\"chat\"]".to_string()),
+            extensions: Some("{\"x\":1}".to_string()),
+            call_interfaces: Some("[]".to_string()),
+            author: Some("alice".to_string()),
+            change_description: Some("initial".to_string()),
+            based_on_version: Some("0.9".to_string()),
+        };
+        let encoded = serde_urlencoded::to_string(&form).unwrap();
+        let parsed: HashMap<String, String> = serde_urlencoded::from_str(&encoded).unwrap();
+        let mut keys: Vec<&str> = parsed.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "agentName",
+                "author",
+                "basedOnVersion",
+                "callInterfaces",
+                "changeDescription",
+                "description",
+                "displayName",
+                "extensions",
+                "iconUrl",
+                "namespaceId",
+                "provider",
+                "tags",
+                "version",
+            ]
+        );
+        assert_eq!(parsed["namespaceId"], "ns-1");
+        // JSON strings survive the urlencoded round-trip unchanged.
+        assert_eq!(parsed["provider"], "{\"org\":\"acme\"}");
+    }
+
+    /// `skip_serializing_if` must drop every `None`, leaving only identity.
+    #[test]
+    fn test_agent_draft_create_form_omits_none_fields() {
+        let form = AgentDraftCreateForm {
+            namespace_id: "ns-1".to_string(),
+            agent_name: "my-agent".to_string(),
+            version: "1.0".to_string(),
+            ..Default::default()
+        };
+        let encoded = serde_urlencoded::to_string(&form).unwrap();
+        let parsed: HashMap<String, String> = serde_urlencoded::from_str(&encoded).unwrap();
+        assert_eq!(parsed.len(), 3);
+        assert!(parsed.contains_key("namespaceId"));
+        assert!(parsed.contains_key("agentName"));
+        assert!(parsed.contains_key("version"));
+    }
+
+    /// `updateDraft` form has its own exact 5-field table.
+    #[test]
+    fn test_agent_draft_update_form_field_table() {
+        let form = AgentDraftUpdateForm {
+            namespace_id: "ns-1".to_string(),
+            agent_name: "my-agent".to_string(),
+            version: "1.0".to_string(),
+            call_interfaces: Some("[]".to_string()),
+            change_description: Some("edit".to_string()),
+        };
+        let encoded = serde_urlencoded::to_string(&form).unwrap();
+        let parsed: HashMap<String, String> = serde_urlencoded::from_str(&encoded).unwrap();
+        assert_eq!(parsed.len(), 5);
+        assert_eq!(parsed["changeDescription"], "edit");
+        assert_eq!(parsed["callInterfaces"], "[]");
+    }
+
+    /// `updateAgent` form must NOT contain a `version` key.
+    #[test]
+    fn test_agent_update_form_has_no_version() {
+        let form = AgentUpdateForm {
+            namespace_id: "ns-1".to_string(),
+            agent_name: "my-agent".to_string(),
+            display_name: Some("My Agent".to_string()),
+            description: Some("desc".to_string()),
+            icon_url: Some("http://icon".to_string()),
+            provider: Some("{}".to_string()),
+            tags: Some("[]".to_string()),
+            extensions: Some("{}".to_string()),
+            status: Some("online".to_string()),
+        };
+        let encoded = serde_urlencoded::to_string(&form).unwrap();
+        let parsed: HashMap<String, String> = serde_urlencoded::from_str(&encoded).unwrap();
+        assert_eq!(parsed.len(), 9);
+        assert!(!parsed.contains_key("version"));
+        assert_eq!(parsed["status"], "online");
+    }
+
+    /// `labels` is a SINGLE JSON-string form value, not repeated keys.
+    #[test]
+    fn test_agent_labels_update_form_single_json_value() {
+        let form = AgentLabelsUpdateForm {
+            namespace_id: "ns-1".to_string(),
+            agent_name: "my-agent".to_string(),
+            labels: Some("{\"stable\":\"1.0\"}".to_string()),
+        };
+        let encoded = serde_urlencoded::to_string(&form).unwrap();
+        let parsed: HashMap<String, String> = serde_urlencoded::from_str(&encoded).unwrap();
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed["labels"], "{\"stable\":\"1.0\"}");
+    }
+
+    /// Response DTOs decode GA-shaped payloads and keep unknown fields in
+    /// `extra` (the batata runtime-endpoints shape is known to differ).
+    #[test]
+    fn test_agent_summary_tolerant_deserialization() {
+        let json = r#"{
+            "namespaceId": "ns-1",
+            "agentName": "my-agent",
+            "status": "online",
+            "versionInfo": {"editingVersion": "1.0"},
+            "serverOnlyField": 42
+        }"#;
+        let summary: AgentSummary = serde_json::from_str(json).unwrap();
+        assert_eq!(summary.agent_name, "my-agent");
+        assert_eq!(summary.status, "online");
+        assert!(summary.version_info.is_some());
+        assert_eq!(summary.display_name, ""); // defaulted, not required
+        assert!(summary.extra.contains_key("serverOnlyField"));
+    }
+
+    #[test]
+    fn test_runtime_endpoint_snapshot_tolerant_deserialization() {
+        let json = r#"{
+            "namespaceId": "ns-1",
+            "agentName": "my-agent",
+            "version": "1.0",
+            "callInterface": {"transport": "JSONRPC"},
+            "batataSpecific": {"a": 1}
+        }"#;
+        let snapshot: RuntimeEndpointSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snapshot.version, "1.0");
+        assert!(snapshot.call_interface.is_some());
+        assert!(snapshot.extra.contains_key("batataSpecific"));
     }
 }

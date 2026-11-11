@@ -27,6 +27,7 @@ use crate::api::BatataApiClient;
 use crate::config::BatataConfigService;
 use crate::grpc::GrpcClient;
 use crate::http::BatataHttpClient;
+use crate::local_config::{LocalConfigInfoProcessor, SnapshotSwitch};
 use crate::naming::BatataNamingService;
 use crate::server_list::ServerListManager;
 
@@ -84,7 +85,36 @@ impl BatataClient {
                 .as_ref()
                 .expect("grpc_config just initialized"),
         );
-        Ok(BatataConfigService::new(grpc))
+
+        // GA `SnapShotSwitch` is resolved once from `configSnapshotEnabled`
+        // and gates every snapshot read/write. The unified client passes its
+        // explicit per-client value down to the processor; disabling also
+        // cleans previously persisted snapshots (best effort, as in GA).
+        let snapshot_enabled = self.config.config_snapshot_enabled;
+        let env_name = if self.config.namespace.is_empty() {
+            "public".to_string()
+        } else {
+            self.config.namespace.clone()
+        };
+        let server_name = self
+            .config
+            .server_addrs
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let processor = LocalConfigInfoProcessor::with_snapshot_switch(
+            env_name,
+            server_name,
+            SnapshotSwitch::new(snapshot_enabled),
+        );
+        if !snapshot_enabled && let Err(e) = processor.clean_all_snapshots() {
+            tracing::warn!("Failed to clean disabled config snapshots: {}", e);
+        }
+
+        Ok(BatataConfigService::with_local_processor(
+            grpc,
+            Arc::new(processor),
+        ))
     }
 
     /// Get (or create) the Naming gRPC service.
@@ -137,5 +167,18 @@ impl BatataClient {
         self.grpc_config = None;
         self.grpc_naming = None;
         self.http = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn config_service_wires_the_snapshot_switch() {
+        // "declaration != call site": a ClientConfig field alone does nothing
+        // unless config_service() builds the processor with it.
+        const SRC: &str = include_str!("client.rs");
+        assert!(SRC.contains(concat!("SnapshotSwitch::", "new(snapshot_enabled)")));
+        assert!(SRC.contains(concat!("BatataConfigService::", "with_local_processor(")));
+        assert!(SRC.contains(concat!("processor.", "clean_all_snapshots()")));
     }
 }

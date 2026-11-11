@@ -8,6 +8,12 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use tracing::{debug, info};
 
+/// Upper bound for a RENEW-supplied TTL (milliseconds), matching Nacos
+/// `MAX_AUTO_EXPIRE_TIME` (30 minutes). A single renew must not be able to
+/// extend a lock indefinitely. Shared with the RENEW handler so the Raft and
+/// in-memory paths clamp identically.
+pub(crate) const MAX_LOCK_EXPIRE_MS: i64 = 1_800_000;
+
 /// An acquired lock entry with reentrant lock support and fencing tokens
 pub(crate) struct LockEntry {
     owner: String,
@@ -157,6 +163,38 @@ impl LockService {
             return true;
         }
         false
+    }
+
+    /// Renew an existing lock's lease.
+    ///
+    /// `expired_time_ms` is interpreted as a *duration* (not an absolute
+    /// timestamp): when positive it becomes the new TTL (clamped to
+    /// [`MAX_LOCK_EXPIRE_MS`]); when non-positive the existing TTL is kept.
+    /// The lease start (`acquired_at`) is always refreshed.
+    ///
+    /// Returns `false` when the lock does not exist, is owned by someone else,
+    /// or has already expired. The reentrant `lock_count` is deliberately
+    /// **never** modified — a renew is not an acquire. The whole
+    /// check-and-refresh runs under a single `DashMap` write guard so it is
+    /// atomic with respect to the background expiry cleanup task.
+    pub fn renew(&self, key: &str, owner: &str, expired_time_ms: i64) -> bool {
+        let Some(mut held) = self.locks.get_mut(key) else {
+            return false;
+        };
+        if held.owner != owner {
+            return false;
+        }
+        if held.is_expired() {
+            return false;
+        }
+        if expired_time_ms > 0 {
+            // RENEW treats expiredTime as a duration; clamp to GA maxExpireTime.
+            held.ttl = Duration::from_millis(expired_time_ms.min(MAX_LOCK_EXPIRE_MS) as u64);
+        }
+        // Only refresh the lease timestamp. Never touch `lock_count` here:
+        // renewing must not behave like a reentrant acquire().
+        held.acquired_at = Instant::now();
+        true
     }
 
     /// Force-release a lock regardless of the lock count.
@@ -351,5 +389,73 @@ mod tests {
         // Expired locks should not return a fencing token
         assert!(svc.get_fencing_token("key1").is_none());
         assert_eq!(svc.get_lock_count("key1"), 0);
+    }
+
+    #[test]
+    fn test_renew_refreshes_lease_without_changing_lock_count() {
+        let svc = test_lock_service();
+        svc.acquire("k", "owner-1", 1000);
+        svc.acquire("k", "owner-1", 1000); // reentrant -> count = 2
+        assert_eq!(svc.get_lock_count("k"), 2);
+
+        assert!(svc.renew("k", "owner-1", 60000));
+        assert_eq!(
+            svc.get_lock_count("k"),
+            2,
+            "renew must never change lock_count"
+        );
+        assert_eq!(
+            svc.locks.get("k").unwrap().ttl,
+            Duration::from_millis(60000)
+        );
+        // Lease start was refreshed, so the lock is live again.
+        assert!(svc.get_fencing_token("k").is_some());
+    }
+
+    #[test]
+    fn test_renew_negative_expired_time_keeps_ttl() {
+        let svc = test_lock_service();
+        svc.acquire("k", "owner-1", 5000);
+        assert!(svc.renew("k", "owner-1", -1));
+        assert_eq!(svc.locks.get("k").unwrap().ttl, Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn test_renew_clamps_ttl_to_max() {
+        let svc = test_lock_service();
+        svc.acquire("k", "owner-1", 1000);
+        assert!(svc.renew("k", "owner-1", MAX_LOCK_EXPIRE_MS + 1000));
+        assert_eq!(
+            svc.locks.get("k").unwrap().ttl,
+            Duration::from_millis(MAX_LOCK_EXPIRE_MS as u64),
+            "renew must clamp expiredTime to maxExpireTime"
+        );
+    }
+
+    #[test]
+    fn test_renew_missing_lock_returns_false() {
+        let svc = test_lock_service();
+        assert!(!svc.renew("missing", "owner-1", 30000));
+    }
+
+    #[test]
+    fn test_renew_wrong_owner_returns_false() {
+        let svc = test_lock_service();
+        svc.acquire("k", "owner-1", 60000);
+        assert!(!svc.renew("k", "owner-2", 30000));
+        assert_eq!(svc.get_lock_count("k"), 1);
+    }
+
+    #[test]
+    fn test_renew_expired_lock_returns_false() {
+        let svc = test_lock_service();
+        svc.acquire("k", "owner-1", 0); // ttl 0 -> immediately expired
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(
+            !svc.renew("k", "owner-1", 30000),
+            "an already-expired lock cannot be renewed"
+        );
+        // The stale entry can be taken over by another owner.
+        assert!(svc.acquire("k", "owner-2", 60000).is_some());
     }
 }

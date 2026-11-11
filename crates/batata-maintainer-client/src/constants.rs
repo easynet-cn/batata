@@ -215,6 +215,8 @@ pub mod admin_api_path {
     pub const AI_AGENTS_VERSIONS: &str = "/v3/admin/ai/agents/versions";
     /// The `AI_AGENTS_VERSION` constant.
     pub const AI_AGENTS_VERSION: &str = "/v3/admin/ai/agents/version";
+    /// The `AI_AGENTS_RUNTIME_ENDPOINTS` constant.
+    pub const AI_AGENTS_RUNTIME_ENDPOINTS: &str = "/v3/admin/ai/agents/runtime-endpoints";
     /// The `AI_AGENTS_DRAFT` constant.
     pub const AI_AGENTS_DRAFT: &str = "/v3/admin/ai/agents/draft";
     /// The `AI_AGENTS_LABELS` constant.

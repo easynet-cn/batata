@@ -23,7 +23,7 @@ impl LocalEncryptedDataKeyProcessor {
     pub fn new(env_name: String) -> Self {
         let base_path = Self::get_base_path();
         Self {
-            snapshot_switch: SnapshotSwitch::new(true),
+            snapshot_switch: SnapshotSwitch::from_property(true),
             base_path,
             env_name,
         }

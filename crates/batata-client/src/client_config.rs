@@ -19,6 +19,31 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::oidc::OidcConfig;
+
+/// GA `PropertyKeyConst.CONFIG_SNAPSHOT_ENABLED` client property key.
+///
+/// Nacos 3.3.0 GA reads this once when `SnapShotSwitch` is initialized; the
+/// default is `true`. Batata additionally accepts `BATATA_CONFIG_SNAPSHOT_ENABLED`
+/// as an environment-variable alias, and `ClientConfig::config_snapshot_enabled`
+/// as the explicit per-client override.
+pub const CONFIG_SNAPSHOT_ENABLED_PROPERTY: &str = "configSnapshotEnabled";
+
+/// Environment alias for [`CONFIG_SNAPSHOT_ENABLED_PROPERTY`].
+pub const BATATA_CONFIG_SNAPSHOT_ENABLED_ENV: &str = "BATATA_CONFIG_SNAPSHOT_ENABLED";
+
+/// Parse a GA-style boolean property (`true`/`false`, `1`/`0`, case-insensitive).
+///
+/// Unknown values keep `default`, matching `NacosClientProperties.getBoolean`
+/// semantics rather than silently disabling a feature on a typo.
+pub(crate) fn parse_client_property_bool(value: &str, default: bool) -> bool {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => true,
+        "false" | "0" => false,
+        _ => default,
+    }
+}
+
 /// Proxy configuration for HTTP/gRPC connections.
 #[derive(Clone, Debug, Default)]
 pub enum ProxyConfig {
@@ -63,6 +88,11 @@ pub struct ClientConfig {
 
     /// SecretKey for HMAC-based authentication.
     pub secret_key: String,
+
+    /// OIDC Client Credentials configuration (GA `nacos.client.auth.oidc.*`).
+    /// `None` keeps the provider disabled; when configured it takes precedence
+    /// over username/password login on both the HTTP and gRPC transports.
+    pub oidc: Option<OidcConfig>,
 
     // ===== Network =====
     /// Proxy configuration. Default: `NoProxy`.
@@ -111,6 +141,13 @@ pub struct ClientConfig {
     pub redo_delay: Duration,
 
     // ===== Config Service =====
+    /// Whether the client persists remote config snapshots locally.
+    ///
+    /// Mirrors GA `PropertyKeyConst.CONFIG_SNAPSHOT_ENABLED` / `SnapShotSwitch`:
+    /// default `true`; when `false` the client neither reads nor writes
+    /// snapshots and cleans existing snapshot files at startup.
+    pub config_snapshot_enabled: bool,
+
     /// Config long polling timeout. Default: 30s. Minimum: 10s.
     /// Controls how long the client waits for config change notifications.
     pub config_long_poll_timeout: Duration,
@@ -162,6 +199,7 @@ impl ClientConfig {
             password: String::new(),
             access_key: String::new(),
             secret_key: String::new(),
+            oidc: None,
             proxy: ProxyConfig::default(),
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(30),
@@ -175,6 +213,7 @@ impl ClientConfig {
             max_retries: 3,
             retry_initial_delay: Duration::from_millis(500),
             redo_delay: Duration::from_secs(3),
+            config_snapshot_enabled: true,
             config_long_poll_timeout: Duration::from_secs(30),
             config_retry_interval: Duration::from_secs(2),
             naming_load_cache_at_start: false,
@@ -221,6 +260,15 @@ impl ClientConfig {
     pub fn with_access_key(mut self, access_key: &str, secret_key: &str) -> Self {
         self.access_key = access_key.to_string();
         self.secret_key = secret_key.to_string();
+        self
+    }
+
+    /// Enable GA OIDC Client Credentials authentication.
+    ///
+    /// The provider is only active when [`OidcConfig::is_configured`] holds;
+    /// an incomplete config leaves the existing auth paths untouched.
+    pub fn with_oidc(mut self, oidc: OidcConfig) -> Self {
+        self.oidc = Some(oidc);
         self
     }
 
@@ -299,6 +347,32 @@ impl ClientConfig {
     /// Set redo delay for reconnection replay. Default: 3s.
     pub fn redo_delay(mut self, delay: Duration) -> Self {
         self.redo_delay = delay;
+        self
+    }
+
+    /// Enable or disable local config snapshots (GA `configSnapshotEnabled`).
+    ///
+    /// Default: `true`. Disabling keeps the in-memory cache intact but stops
+    /// all snapshot reads/writes and removes previously persisted snapshots
+    /// when the config service is created.
+    pub fn config_snapshot_enabled(mut self, enabled: bool) -> Self {
+        self.config_snapshot_enabled = enabled;
+        self
+    }
+
+    /// Apply GA-style client properties (a `Properties` map) to this config.
+    ///
+    /// Recognizes `configSnapshotEnabled` and the five
+    /// `nacos.client.auth.oidc.*` keys. Explicit builder values are kept for
+    /// keys that are absent from the map.
+    pub fn with_client_properties(mut self, properties: &HashMap<String, String>) -> Self {
+        if let Some(value) = properties.get(CONFIG_SNAPSHOT_ENABLED_PROPERTY) {
+            self.config_snapshot_enabled =
+                parse_client_property_bool(value, self.config_snapshot_enabled);
+        }
+        if let Some(oidc) = OidcConfig::from_properties(properties) {
+            self.oidc = Some(oidc);
+        }
         self
     }
 
@@ -442,6 +516,11 @@ impl ClientConfig {
         !self.access_key.is_empty() && !self.secret_key.is_empty()
     }
 
+    /// Whether a fully configured OIDC provider is present.
+    pub fn has_oidc_auth(&self) -> bool {
+        self.oidc.as_ref().is_some_and(|oidc| oidc.is_configured())
+    }
+
     /// Build a reqwest Client with the configured proxy, timeout and TLS
     /// settings (custom CA / mTLS identity).
     ///
@@ -552,6 +631,106 @@ mod tests {
         let config =
             ClientConfig::with_server_addrs(vec!["10.0.0.1:8848".into(), "10.0.0.2:8848".into()]);
         assert_eq!(config.server_addrs.len(), 2);
+    }
+
+    #[test]
+    fn test_config_snapshot_enabled_defaults_to_true() {
+        let config = ClientConfig::new("localhost:8848");
+        assert!(config.config_snapshot_enabled);
+        assert!(
+            !config
+                .config_snapshot_enabled(false)
+                .config_snapshot_enabled
+        );
+    }
+
+    #[test]
+    fn test_config_snapshot_enabled_property() {
+        let mut props = HashMap::new();
+        props.insert(
+            CONFIG_SNAPSHOT_ENABLED_PROPERTY.to_string(),
+            "false".to_string(),
+        );
+        assert!(
+            !ClientConfig::new("localhost:8848")
+                .with_client_properties(&props)
+                .config_snapshot_enabled
+        );
+
+        props.insert(
+            CONFIG_SNAPSHOT_ENABLED_PROPERTY.to_string(),
+            "TRUE".to_string(),
+        );
+        assert!(
+            ClientConfig::new("localhost:8848")
+                .with_client_properties(&props)
+                .config_snapshot_enabled
+        );
+
+        // A typo must not silently disable snapshots (GA getBoolean default).
+        props.insert(
+            CONFIG_SNAPSHOT_ENABLED_PROPERTY.to_string(),
+            "flase".to_string(),
+        );
+        assert!(
+            ClientConfig::new("localhost:8848")
+                .with_client_properties(&props)
+                .config_snapshot_enabled
+        );
+        assert!(
+            !ClientConfig::new("localhost:8848")
+                .config_snapshot_enabled(false)
+                .with_client_properties(&props)
+                .config_snapshot_enabled
+        );
+    }
+
+    #[test]
+    fn test_oidc_properties_and_builder() {
+        let config = ClientConfig::new("localhost:8848");
+        assert!(!config.has_oidc_auth());
+
+        let config =
+            config.with_oidc(OidcConfig::new("sdk", "secret").with_issuer("https://idp.test"));
+        assert!(config.has_oidc_auth());
+        assert_eq!(config.oidc.as_ref().unwrap().scope, "openid");
+
+        let mut props = HashMap::new();
+        props.insert(
+            crate::oidc::OIDC_CLIENT_ID_PROPERTY.to_string(),
+            "from-props".to_string(),
+        );
+        props.insert(
+            crate::oidc::OIDC_CLIENT_SECRET_PROPERTY.to_string(),
+            "s3cret".to_string(),
+        );
+        props.insert(
+            crate::oidc::OIDC_TOKEN_ENDPOINT_PROPERTY.to_string(),
+            "https://idp.test/token".to_string(),
+        );
+        let config = ClientConfig::new("localhost:8848").with_client_properties(&props);
+        assert!(config.has_oidc_auth());
+        assert_eq!(config.oidc.as_ref().unwrap().client_id, "from-props");
+
+        // A partial property map must not silently enable the provider.
+        let mut partial = HashMap::new();
+        partial.insert(
+            crate::oidc::OIDC_ISSUER_URI_PROPERTY.to_string(),
+            "https://idp.test".to_string(),
+        );
+        assert!(
+            !ClientConfig::new("localhost:8848")
+                .with_client_properties(&partial)
+                .has_oidc_auth()
+        );
+    }
+
+    #[test]
+    fn test_parse_client_property_bool() {
+        assert!(parse_client_property_bool("1", false));
+        assert!(!parse_client_property_bool("0", true));
+        assert!(parse_client_property_bool(" true ", false));
+        assert!(parse_client_property_bool("nonsense", true));
     }
 
     #[test]

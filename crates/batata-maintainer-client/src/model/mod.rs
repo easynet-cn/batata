@@ -14,9 +14,10 @@ pub mod plugin;
 pub mod service;
 
 pub use ai::{
-    AgentCard, AgentCardBasicInfo, AgentCardDetailInfo, AgentCardVersionInfo, AgentInterface,
+    AgentCard, AgentCardBasicInfo, AgentCardDetailInfo, AgentCardVersionInfo, AgentDraftCreateForm,
+    AgentDraftUpdateForm, AgentInterface, AgentLabelsUpdateForm, AgentSummary, AgentUpdateForm,
     AgentVersionDetail, AgentVersionInfo, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
-    McpServerVersionInfo, McpToolSpecification, ServerVersionDetail,
+    McpServerVersionInfo, McpToolSpecification, RuntimeEndpointSnapshot, ServerVersionDetail,
 };
 pub use ai_resource::{
     AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecResource, AgentSpecSummary,

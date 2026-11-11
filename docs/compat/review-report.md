@@ -2110,3 +2110,285 @@ batata-integration-tests --tests`, `cargo test -p batata-plugin-consul --lib`
 `scripts/compat_check.py` and clippy on changed files pass. No `--full`
 matrix, commit, push, publish, yank, archive or tag was performed
 (commit/push handled separately).
+
+## 26. Implementation batch 19 — GA OIDC client auth + `configSnapshotEnabled` (`F-NAC-CSDK-005` → 🟢)
+
+### 26.1 Source verification and the doc-first correction
+
+Before touching code, the inventory note was re-verified against the GA
+release commit `b64bc9118` (the local `develop` snapshot `d1b97bc3e6` is 11
+commits past GA and was not used for the wire contract):
+
+- `client-basic/src/main/resources/META-INF/services/com.alibaba.nacos.plugin.auth.spi.client.AbstractClientAuthService`
+  registers `com.alibaba.nacos.client.auth.oidc.OidcClientAuthServiceImpl` as
+  the **third** client auth provider, alongside the JWT and RAM providers.
+- `OidcClientConstants` defines `nacos.client.auth.oidc.issuer-uri`,
+  `client-id`, `client-secret`, `scope` (default `openid`) and
+  `token-endpoint` (an override that skips Discovery). `OidcClientContext.init`
+  requires client id/secret plus an issuer or token endpoint; `discover()` GETs
+  `{issuer}/.well-known/openid-configuration` and reads `token_endpoint`.
+- `OidcTokenHolder.fetchToken()` POSTs
+  `grant_type=client_credentials&client_id=…&client_secret=…&scope=…`,
+  accepts only HTTP 200, parses `access_token` and `expires_in` (default 300s),
+  and refreshes inside a random `[ttl/15, ttl/10)` window before expiry.
+- `OidcClientAuthServiceImpl.getLoginIdentityContext()` emits **both**
+  `Authorization: Bearer <token>` and `accessToken` (`OidcProtocolConstants`),
+  i.e. a request can carry more than one identity header.
+- `api/.../PropertyKeyConst.java:96` declares `configSnapshotEnabled`;
+  `client/.../config/utils/SnapShotSwitch.java` reads it once (default `true`),
+  cleans all snapshots when disabled, and both `LocalConfigInfoProcessor` and
+  `LocalEncryptedDataKeyProcessor` gate every read/write on the switch.
+
+**Doc correction (done first, per project convention)**: the previous note
+claimed batata had an internal `SnapShotSwitch` boolean. The actual type is
+`crates/batata-client/src/local_config.rs::SnapshotSwitch`; it was hard-coded
+to `new(true)` in both processors and was completely unreachable from
+`ClientConfig`. Also, `BatataClient::config_service()` constructed
+`BatataConfigService::new(grpc)` with `local_processor: None`, so the unified
+client never persisted snapshots at all.
+
+### 26.2 Implementation
+
+`crates/batata-client/src/oidc.rs` (new) ports the GA contract: `OidcConfig`
+(five GA property keys via `from_properties`, `is_configured`, `discovery_url`,
+`token_form`), a pure `refresh_window(ttl)`, and `OidcAuthProvider` implementing
+`ClientAuthService`. Discovery, token fetch, `access_token`/`expires_in`
+parsing, the 300s default, the 5s/10s HTTP timeouts, the refresh window and
+the dual identity headers are all GA-shaped. A `tokio::sync::Mutex` replaces
+GA's `synchronized (refreshLock)` double-check; `parking_lot::RwLock` holds the
+token state. Failures are fail-closed (`login`/`refresh` return false, identity
+stays empty) and an unconfigured provider is a no-op success, as in GA.
+
+Wiring (declaration != call site): `ClientConfig` gains `oidc`, `with_oidc()`,
+`has_oidc_auth()` and `with_client_properties()`; `BatataHttpClient::from_config`
+builds the provider, skips the Nacos password login when OIDC is active, and
+`ensure_identity_headers()` now returns a **vector** of identity headers
+applied by the new `with_auth_headers()` helper at all 17 identity-bearing
+HTTP request sites (the 18th egress method is the JWT login itself, which
+carries no identity headers; the previous closure signature carried only one
+`(name, value)` tuple). 401
+re-auth goes through `reauthenticate()` → `OidcAuthProvider::refresh()`.
+`GrpcClient::from_config` prefers `AuthProvider::with_oidc()`, whose
+`get_token`, `refresh` and `start_token_refresh_task` delegate to the provider;
+`request()` adds `Authorization: Bearer …` to metadata when OIDC is active.
+
+For the second half of the row, `ClientConfig::config_snapshot_enabled`
+(default `true`) is settable by builder or by the GA
+`configSnapshotEnabled` property (plus the `BATATA_CONFIG_SNAPSHOT_ENABLED`
+environment alias) through `parse_client_property_bool`, which keeps the
+current value on an unparsable value. `SnapshotSwitch::from_property` + the
+pure `resolve_snapshot_enabled` helper give both snapshot processors the same
+one-time property resolution, and `BatataClient::config_service()` now creates
+a `LocalConfigInfoProcessor` with the explicit per-client switch, attaches it
+to `BatataConfigService::with_local_processor`, and best-effort cleans existing
+snapshots when disabled (GA `cleanAllSnapshot`). No server code changed.
+
+### 26.3 Tests and mutants
+
+8 wiremock integration cases (`crates/batata-client/tests/oidc_test.rs`)
+cover Discovery → token POST → dual identity headers, the exact urlencoded
+form and content type, cached-token reuse, direct-endpoint-skips-Discovery,
+Discovery failure and missing `access_token` fail-closed, the 300s default,
+zero-TTL refresh, explicit `refresh()` replacement, and a real
+`BatataHttpClient` GET carrying both GA headers. 17 unit/wiring cases cover
+property parsing, `is_configured`, Discovery URL, form shape, refresh-window
+bounds, unconfigured no-op, `resolve_snapshot_enabled` precedence,
+`include_str!` assertions that both processors and `config_service()` consume
+the switch, and that the HTTP/gRPC transports consume `has_oidc_auth()` and
+`uses_oidc()`. The TTL assertion compares against the literal `300` so a
+mutant changing the constant cannot hide.
+
+**20/20 compile-safe mutants killed** by real assertion failures: Bearer
+prefix removed, `accessToken` header removed, wrong `grant_type`, scope
+dropped, wrong well-known path, wrong default TTL, `is_configured` endpoint
+requirement dropped, `from_properties` key guard dropped, refresh window
+ignored, unconfigured no-op removed, `with_auth_headers` emptied, HTTP
+`has_oidc_auth` ignored, gRPC `get_token` ignoring OIDC, gRPC Bearer header
+removed, snapshot default flipped, property parsing ignored, OIDC properties
+ignored, `config_service` switch hard-coded, GA property precedence dropped,
+and `LocalConfigInfoProcessor` switch hard-coded. Every mutant was restored
+before the next run; the final tree is clean of mutations.
+
+### 26.4 Status and promotion
+
+`F-NAC-CSDK-005` → 🟢 with a crate anchor. B.9 `5🟢/1🟡/2⚪/0⛔` (63%) →
+`6🟢/1🟡/1⚪/0⛔` (75%); Nacos Total `184🟢/5🟡/4⚪/4⛔/197` (93%) →
+`185🟢/5🟡/3⚪/4⛔/197` (**94%**); global `534🟢/8🟡/31⚪/577` (93%) →
+`535🟢/8🟡/30⚪/577` (93% unchanged). T-ID counts unchanged (401 Nacos /
+251 Consul / 388 Apollo = 1040). `features.md` B.9 + Summary Total + Batch 19
+prose, `README.md` global table, F-ID row and narrative updated. Nacos
+`185/185 anchored`.
+
+### 26.5 Validation and no-ops
+
+`cargo fmt --all`, `cargo check --workspace --exclude
+batata-integration-tests --tests`, `cargo test -p batata-client` (406 lib +
+2 ai + 14 ignored + 8 oidc + 3 request_id + 11 tls + 25 unit + 2 doctests,
+all green), `scripts/compat_check.py` (OK: 577 F-ID rows, 1040 T-ID rows,
+Nacos 3.3.0 GA baseline still aligned) and `git diff --check` pass. Clippy on
+all changed files is clean; a crate-wide `clippy -D warnings` is still blocked
+by 13 **pre-existing** warnings in `src/ai.rs` (12 undocumented struct fields
++ an unused `watch_once`), unrelated to this batch. No `--full` matrix,
+commit, push, publish, yank, archive or tag was performed (commit/push handled
+separately).
+
+## 27. Implementation batch 20 — all remaining GA-baseline client gaps
+
+### 27.1 Scope and source verification
+
+The user asked to close **all remaining client-side gaps**. Before touching
+code, a full read-only audit re-checked every non-🟢 client row against GA
+`b64bc9118` (`git show b64bc9118:<path>`), never the local `develop` snapshot.
+Conclusion: the GA-baseline work is `F-NAC-CSDK-002` / `F-NAC-LOCK-009` and
+`F-NAC-MAINT-004/005/008`; `F-NAC-CSDK-008` and `F-NAC-MAINT-009` are
+post-GA develop drift. The user chose "GA baseline full closure", i.e. drift
+is documented as baseline-out and no GA wire is changed.
+
+Two audit corrections mattered:
+
+* **`RaftRequest::LockRenew` was bound-but-unreachable, not absent.**
+  `crates/batata-consistency/src/raft/request.rs:472` defines it,
+  `state_machine/mod.rs:1297` dispatches it and `apply_lock.rs:244-301`
+  implements owner/expiry checks + `expires_at = now + ttl` without touching
+  `lock_count` — but there was **zero producer**. `features.md` `A.5` had
+  marked `F-NAC-LOCK-004` 🟢 on that anchor while `A.5`/`B.9` notes claimed
+  "no Raft renew request". Doc corrected first; implementation only adds the
+  producer.
+* **Three maintainer residuals were mis-registered.** GA
+  `A2aMaintainerService` has exactly seven methods, all already wrapped by
+  `agent_*`; the eight draft-lifecycle methods belong to
+  `AgentMaintainerService` (batch 2's `agents_*`); the 24 typed AI resource
+  DTOs already landed in batch 8. Also the `F-NAC-MAINT-008` note had the
+  `Page` direction **reversed**: the batata server has returned
+  `Page<AgentVersionSummary>` since batch 12, while the client still decoded
+  `Vec`, i.e. the client could not decode its own server.
+
+GA sources read: `api/lock/LockService.java:77-85`,
+`api/lock/remote/LockOperationEnum.java:42`,
+`client/lock/remote/grpc/LockGrpcClient.java:260-287`,
+`client/lock/NacosLockWatchdog.java:39-144`, `client/lock/NacosLock.java:108-110,154-156,304-307`,
+`lock/remote/rpc/handler/LockRequestHandler.java:70-108`,
+`lock/service/impl/LockOperationServiceImpl.java:479-510`,
+`lock/core/reentrant/AbstractAtomicLock.java:346-361`;
+`maintainer-client/.../ai/A2aMaintainerService.java` + `A2aMaintainerServiceImpl.java`,
+`AiMaintainerService.java:67,254-301`, `AgentMaintainerService.java:73,96,119,147,183,213,241`,
+`AgentMaintainerServiceImpl.java:65-283`, `remote/ClientHttpProxy.java:236-251`,
+`constants/Constants.java`, and `A2aAdminController.java:96-101` (where
+`getVersion()` is bound **and** consumed, so the bound-but-ignored exemption
+does not apply).
+
+### 27.2 `F-NAC-CSDK-002` / `F-NAC-LOCK-009` → 🟢
+
+* `crates/batata-api/src/remote/model.rs`: `LockInstance.owner: Option<String>`
+  under the existing `#[serde(default)]`; GA payloads with `owner` decode,
+  older payloads decode to `None`. `lockOperationEnum` alias is unchanged.
+* `crates/batata-core/src/handler/lock.rs`: `LOCK_OP_RENEW` + renew metric,
+  `resolve_owner()` (payload owner → connectionId fallback) shared by all three
+  ops, `lock_renew_ttl_ms()` (positive clamped to `MAX_LOCK_EXPIRE_MS`,
+  non-positive keeps the stored TTL), pure `lock_renew_request()` builder,
+  `raft_renew()` writing the **existing** `RaftRequest::LockRenew` with the
+  leader `now_ms`, and the `RENEW` arm. `expiredTime == 0` is rejected
+  fail-closed as GA does; Raft write errors return `false`, never a heartbeat
+  success.
+* `crates/batata-core/src/service/lock.rs`: standalone `renew()` under one
+  `get_mut` guard — missing / wrong owner / expired → `false`; otherwise
+  refresh `acquired_at` + TTL, **never** `lock_count` and never call
+  `acquire()`.
+* `crates/batata-client/src/lock.rs`: `renew()` / `renew_default()` /
+  `renew_with_params()`, one `build_lock_request()` shared by lock/unlock/renew
+  with a cached stable `clientId:threadId` owner (tokio work-stealing makes
+  per-call thread ids unsafe), and `LockWatchdog` — idempotent register,
+  `max(1000, min(ttl/3, 10000))` fixed delay, `false`/error self-unregister,
+  generation-guarded `remove_if`, explicit cancel on `unregister`,
+  `shutdown()` on `Drop`, and unregister **before** RELEASE so a late RENEW
+  cannot resurrect a released lock.
+* No new Raft variant, no new ability key (`rpc.rs:843` already advertises
+  `"lock"`), and the parallel `batata-consistency/src/lock/` `MemoryLockService`
+  (with its GA-less `max_renewals`) was deliberately not wired in.
+* Known limitation, unchanged: a reentrant `lock()` increments the server
+  `lock_count`, but the thin client has no local reentrancy counter, so one
+  `unlock()` unregisters the watchdog while the server still holds a count.
+  This is a pre-existing thin-client behaviour, not a regression.
+
+### 27.3 `F-NAC-MAINT-004/005/008` → 🟢
+
+Pure client work; **no server GA wire change** (`F-NAC-MAINT-010`'s
+`AdminParams` / `resolve_agent_write` already accept both channels).
+
+* `agent_get_with_version()` forwards GA's `version` query; `agent_get()`
+  keeps its old signature and delegates with `None`.
+* `agents_create_draft` / `agents_update_draft` / `agents_update_labels` now
+  use `post_form` / `put_form` with GA's exact form field sets; `labels` is one
+  JSON string form value (`putJsonIfNotNull`). `*_json` aliases preserve the
+  legacy JSON-body channel and its wiremock coverage.
+* `agents_list_versions` returns `Page<AgentVersionInfo>` (was `Vec`), with
+  the wiremock fixture switched to `page_json(...)`.
+* New `agents_update_agent` (`PUT /v3/admin/ai/agents`, GA form, no `version`),
+  `agents_delete_agent` (`DELETE`, query) and
+  `agents_get_runtime_endpoints` (`GET` new `AI_AGENTS_RUNTIME_ENDPOINTS`,
+  `protocol`/`version` optional), backed by tolerant camelCase DTOs
+  (`AgentSummary`, `RuntimeEndpointSnapshot` with `#[serde(flatten)] extra`).
+* `crates/batata-server/src/api/v3/admin/ai/a2a.rs`: the already-declared
+  `AgentDetailQuery.version` is now passed as `q.version.as_deref()` instead
+  of hard-coded `None` — a one-line "declaration ≠ call site" fix, guarded by
+  `crates/batata-server/tests/a2a_admin_version.rs`.
+* Remaining (not a facade gap): `GET /runtime-endpoints` still requires
+  `version`, returns batata's `ConsoleRuntimeEndpointView` rather than GA's
+  `RuntimeEndpointSnapshot`, and has no live Naming publication backend. That
+  is the existing server-side `F-NAC-AISRV-001` (🟡). The legacy A2A registry
+  fallback branch also ignores `version`; it lives outside the config-backed
+  path and is recorded here rather than silently claimed as fixed.
+
+### 27.4 Drift ruling: `F-NAC-CSDK-008` 🟡→⚪, `F-NAC-MAINT-009` stays ⚪
+
+`git merge-base --is-ancestor` confirms `4a11bd06b` (#15914),
+`ff1bcc2e9` (#15976), `7c546cfda` (#15982) and `a55137012` (#15984) are **not**
+ancestors of `b64bc9118`. `F-NAC-MAINT-009` is additive but absent from GA
+(`publishConfig` has 9 parameters at GA; the 10th `changeMessage` overload is
+develop-only). `F-NAC-CSDK-008`'s GA half was delivered in batch 1
+(`Vec<HashMap<String, Vec<String>>>` in `crates/batata-client/src/ai.rs`); its
+develop half changes the JSON shape to `List<SecurityRequirement>` with a
+`schemes`/`list` wrapper and adds `AgentSkill.securityRequirements`, which is a
+**breaking wire change** on both client and server. Porting it would regress
+3.3.0 GA interoperability, so both rows are explicitly baseline-out; `⚪`
+here means "not tracked against this baseline", not a GA gap.
+
+### 27.5 Tests and mutants
+
+* Lock: serde owner round-trip / absence, standalone renew (success,
+  `lock_count` unchanged, wrong owner, expired, TTL clamp, negative TTL),
+  handler RENEW (success, owner fallback, shared owner flow, `expiredTime==0`
+  fail-closed, wrong owner, unknown op, Raft request builder, clamp), client
+  RENEW wire, interval calculation, watchdog register/dedupe/unregister/
+  false-unregister/error-unregister/shutdown and unlock-unregisters-first.
+  `/tmp/batata_csdk002_mutants.py`: **16/16 compile-safe mutants killed**,
+  0 survived, 0 invalid (each restored byte-for-byte).
+* Maintainer: 11 new wiremock cases asserting exact urlencoded form maps,
+  verbs, paths, query, `Page` decode, `version` query, three wrappers and
+  non-zero error codes; 7 serde DTO tests; 1 server route test.
+  `/tmp/batata_maint_mutants.py`: **13/13 compile-safe mutants killed**
+  (wrong verb ×5, wrong path ×2, dropped `version` ×2, `Page`→`Vec`,
+  labels not JSON-ified, missing `author`, camelCase→snake_case), plus a
+  separately verified server-side `None` revert mutant (200 vs 404).
+* Combined: `cargo fmt --all --check`, `cargo check --workspace --exclude
+  batata-integration-tests --tests` and
+  `cargo test --workspace --exclude batata-integration-tests` =
+  **4023 passed / 0 failed / 34 ignored**; `git diff --check` clean;
+  `scripts/compat_check.py` OK. Clippy on changed files has no new warnings;
+  crate-wide `-D warnings` is still blocked by the 13 historical `src/ai.rs`
+  warnings.
+
+### 27.6 Status, counts and no-ops
+
+`F-NAC-LOCK-009` + `F-NAC-CSDK-002` ⚪→🟢, `F-NAC-MAINT-004/005/008` 🟡→🟢,
+`F-NAC-CSDK-008` 🟡→⚪ (documentation-only). A.5 `10🟢/1⚪` (91%) → `11🟢`
+(100%); B.8 `6🟢/3🟡/1⚪` (60%) → `9🟢/1⚪` (90%); B.9 `6🟢/1🟡/1⚪` (75%)
+→ `7🟢/1⚪` (88%); Nacos Total `185🟢/5🟡/3⚪/4⛔/197` (94%) →
+`190🟢/1🟡/2⚪/4⛔/197` (**96%**); global `535🟢/8🟡/30⚪/577` (93%) →
+`540🟢/4🟡/29⚪/577` (**94%**). T-ID counts unchanged (401 / 251 / 388 =
+1040). The only Nacos 🟡 left is the server-side `F-NAC-AISRV-001`; the two
+⚪ rows are both baseline-out develop drift. Docs updated: `features.md`
+(seven F-ID rows, Summary, Batch 20 prose), `README.md` (global table, backlog
+rows, Batch 20 narrative, drift ruling), and this section.
+
+No `--full` matrix, commit, push, publish, yank, archive or tag was performed.

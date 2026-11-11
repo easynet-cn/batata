@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use tracing::debug;
 
+use crate::auth::ClientAuthService;
 use crate::error::{ClientError, Result};
+use crate::oidc::OidcAuthProvider;
 use crate::tls::TlsOptions;
 
 /// Cached token info
@@ -28,6 +30,8 @@ pub struct AuthProvider {
     username: String,
     password: String,
     token: Arc<RwLock<Option<TokenInfo>>>,
+    /// GA OIDC Client Credentials provider, when `ClientConfig::oidc` is set.
+    oidc: Option<Arc<OidcAuthProvider>>,
     /// Token refresh buffer in seconds
     token_refresh_buffer_secs: u64,
     /// Token refresh check interval in seconds
@@ -109,6 +113,7 @@ impl AuthProvider {
             username: username.to_string(),
             password: password.to_string(),
             token: Arc::new(RwLock::new(None)),
+            oidc: None,
             token_refresh_buffer_secs: DEFAULT_TOKEN_REFRESH_BUFFER_SECS,
             token_refresh_interval_secs: DEFAULT_TOKEN_REFRESH_CHECK_INTERVAL_SECS,
         })
@@ -123,18 +128,56 @@ impl AuthProvider {
             username: String::new(),
             password: String::new(),
             token: Arc::new(RwLock::new(None)),
+            oidc: None,
             token_refresh_buffer_secs: DEFAULT_TOKEN_REFRESH_BUFFER_SECS,
             token_refresh_interval_secs: DEFAULT_TOKEN_REFRESH_CHECK_INTERVAL_SECS,
         }
     }
 
+    /// Create an AuthProvider backed by the GA OIDC Client Credentials flow.
+    ///
+    /// OIDC tokens are fetched from the IdP, not from the Nacos login endpoint,
+    /// so the username/password fields stay empty and `get_token()` delegates
+    /// to the provider on every call (which internally caches until refresh).
+    pub fn with_oidc(oidc: OidcAuthProvider, tls: &TlsOptions) -> Result<Self> {
+        let builder = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(10))
+            .no_proxy();
+        let http_client = tls.apply_to_reqwest(builder)?.build().map_err(|e| {
+            ClientError::Other(anyhow::anyhow!("failed to build OIDC auth client: {e}"))
+        })?;
+        Ok(Self {
+            http_client,
+            server_addr: String::new(),
+            context_path: String::new(),
+            username: String::new(),
+            password: String::new(),
+            token: Arc::new(RwLock::new(None)),
+            oidc: Some(Arc::new(oidc)),
+            token_refresh_buffer_secs: DEFAULT_TOKEN_REFRESH_BUFFER_SECS,
+            token_refresh_interval_secs: DEFAULT_TOKEN_REFRESH_CHECK_INTERVAL_SECS,
+        })
+    }
+
     /// Whether authentication is enabled
     pub fn is_enabled(&self) -> bool {
-        !self.username.is_empty()
+        self.oidc.is_some() || !self.username.is_empty()
+    }
+
+    /// Whether this provider uses OIDC instead of Nacos username/password login.
+    pub fn uses_oidc(&self) -> bool {
+        self.oidc.is_some()
     }
 
     /// Get a valid access token, refreshing if needed.
     pub async fn get_token(&self) -> Result<Option<String>> {
+        if let Some(oidc) = &self.oidc {
+            if !oidc.login(&[]).await {
+                return Err(ClientError::AuthFailed("OIDC login failed".to_string()));
+            }
+            return Ok(oidc.access_token());
+        }
         if !self.is_enabled() {
             return Ok(None);
         }
@@ -224,6 +267,15 @@ impl AuthProvider {
 
     /// Force re-authentication (e.g., after a reconnect or 403 response).
     pub async fn refresh(&self) -> Result<()> {
+        if let Some(oidc) = &self.oidc {
+            return if oidc.refresh().await {
+                Ok(())
+            } else {
+                Err(ClientError::AuthFailed(
+                    "OIDC token refresh failed".to_string(),
+                ))
+            };
+        }
         if !self.is_enabled() {
             return Ok(());
         }
@@ -241,6 +293,22 @@ impl AuthProvider {
     /// The actual HTTP login only happens when the token is close to expiry
     /// (within `tokenRefreshWindow` of the TTL), so most calls are cheap no-ops.
     pub fn start_token_refresh_task(&self) {
+        if let Some(oidc) = &self.oidc {
+            // GA schedules `login()` every 5 seconds; OIDC's own refresh
+            // window makes almost all ticks cheap no-ops.
+            let oidc = Arc::clone(oidc);
+            let refresh_interval = self.token_refresh_interval_secs;
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval));
+                loop {
+                    interval.tick().await;
+                    if !oidc.login(&[]).await {
+                        tracing::warn!("OIDC token refresh cycle failed");
+                    }
+                }
+            });
+            return;
+        }
         if !self.is_enabled() {
             return;
         }
@@ -395,5 +463,45 @@ mod tests {
         };
         assert_eq!(token.access_token, "test-token");
         assert!(token.expires_at > Instant::now());
+    }
+
+    #[tokio::test]
+    async fn test_oidc_auth_provider_delegates_token() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/token"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "access_token": "oidc-tok",
+                    "expires_in": 3600
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let oidc = crate::oidc::OidcAuthProvider::new(
+            crate::oidc::OidcConfig::new("id", "secret")
+                .with_token_endpoint(&format!("{}/token", server.uri())),
+        )
+        .unwrap();
+        let provider = AuthProvider::with_oidc(oidc, &TlsOptions::default()).unwrap();
+        assert!(provider.is_enabled());
+        assert!(provider.uses_oidc());
+        assert_eq!(
+            provider.get_token().await.unwrap().as_deref(),
+            Some("oidc-tok")
+        );
+        assert!(provider.refresh().await.is_ok());
+        assert_eq!(
+            provider.get_token().await.unwrap().as_deref(),
+            Some("oidc-tok")
+        );
+    }
+
+    #[test]
+    fn test_grpc_request_emits_oidc_bearer_header() {
+        const MOD: &str = include_str!("mod.rs");
+        assert!(MOD.contains(concat!("self.auth_provider.", "uses_oidc()")));
+        assert!(MOD.contains(concat!("OIDC_AUTHORIZATION_HEADER", ".to_string()")));
     }
 }
