@@ -1496,6 +1496,80 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         })
     }
 
+    /// GA admin `GET /runtime-endpoints`: flat `RuntimeEndpointSnapshot` built
+    /// from the live Naming publications. The console keeps the legacy
+    /// `ConsoleRuntimeEndpointView` via `get_runtime_endpoints`.
+    async fn get_runtime_endpoint_snapshot(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        protocol: &str,
+        version: Option<&str>,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::GaRuntimeEndpointSnapshot> {
+        use batata_common::model::ai::a2a as ga;
+
+        let Some(endpoint_service) = self.endpoint_service.as_ref() else {
+            // GA's ServiceStorage returns an empty ServiceInfo for an unknown
+            // service: a missing backend is a 200 empty snapshot, not a 400.
+            return Ok(ga::GaRuntimeEndpointSnapshot::empty(
+                namespace, agent_name, protocol, version,
+            ));
+        };
+
+        let endpoints: Vec<ga::Endpoint> = endpoint_service
+            .get_agent_endpoints_for_snapshot(namespace, agent_name, version)
+            .iter()
+            .map(|info| {
+                let uri = if info.address.contains("://") {
+                    info.address.clone()
+                } else {
+                    format!("http://{}:{}", info.address, info.port)
+                };
+                let transport = info
+                    .metadata
+                    .get("transport")
+                    .cloned()
+                    .unwrap_or_else(|| protocol.to_string());
+                let runtime_version = info
+                    .metadata
+                    .get("version")
+                    .cloned()
+                    .unwrap_or_else(|| version.unwrap_or_default().to_string());
+                let version_range = info
+                    .metadata
+                    .get(crate::service::constants::METADATA_AGENT_VERSION_RANGE)
+                    .cloned()
+                    .unwrap_or_default();
+                // GA strips its reserved `__nacos.agent.endpoint.*` keys before
+                // returning public metadata.
+                let metadata: std::collections::HashMap<String, String> = info
+                    .metadata
+                    .iter()
+                    .filter(|(key, _)| !key.starts_with("__nacos."))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
+
+                ga::Endpoint {
+                    uri,
+                    transport,
+                    priority: 0,
+                    weight: info.weight,
+                    metadata: Some(metadata),
+                    healthy: Some(info.healthy),
+                    enabled: Some(info.enabled),
+                    bindings: Some(vec![ga::RuntimeVersionBinding {
+                        runtime_version,
+                        version_range,
+                    }]),
+                }
+            })
+            .collect();
+
+        Ok(ga::GaRuntimeEndpointSnapshot::with_endpoints(
+            namespace, agent_name, protocol, version, endpoints,
+        ))
+    }
+
     async fn get_runtime_endpoints(
         &self,
         namespace: &str,

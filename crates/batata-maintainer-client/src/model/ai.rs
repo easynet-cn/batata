@@ -451,6 +451,10 @@ pub struct AgentSummary {
 }
 
 /// Tolerant `RuntimeEndpointSnapshot` as returned by GA `getRuntimeEndpoints`.
+///
+/// Nacos 3.3.0 GA answers the **flat** snapshot under `Result.data`; older
+/// batata builds answered with a `ConsoleRuntimeEndpointView` wrapper. Every
+/// field defaults and unknown keys are retained, so both shapes decode.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RuntimeEndpointSnapshot {
@@ -458,14 +462,79 @@ pub struct RuntimeEndpointSnapshot {
     pub namespace_id: String,
     /// Agent name.
     pub agent_name: String,
-    /// Version the snapshot refers to.
+    /// Version the snapshot refers to (absent when no version filter was sent).
     pub version: String,
-    /// Raw call-interface object, kept as a value because batata's shape differs.
+    /// One protocol's call interface with a single RUNTIME endpoint set.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub call_interface: Option<serde_json::Value>,
+    pub call_interface: Option<RuntimeCallInterface>,
     /// Any additional fields returned by the server.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// GA runtime `callInterface` (`AgentCallInterface` with only the runtime
+/// fields populated).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RuntimeCallInterface {
+    /// Protocol token, echoed from the request.
+    pub protocol: String,
+    /// Exactly one `RUNTIME` set on the admin endpoint.
+    pub endpoint_sets: Vec<RuntimeEndpointSet>,
+    /// Unknown fields (including batata's legacy flat `endpoints`).
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// One source's endpoint set.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RuntimeEndpointSet {
+    /// `RUNTIME` or `DECLARED`.
+    pub source: String,
+    /// Optional source revision marker.
+    pub source_revision: Option<String>,
+    /// Nacos observation time (epoch millis).
+    pub last_updated_time: Option<i64>,
+    /// Live endpoints.
+    pub endpoints: Vec<RuntimeEndpoint>,
+}
+
+/// One reachable endpoint (GA `Endpoint`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RuntimeEndpoint {
+    /// Endpoint URI.
+    pub uri: String,
+    /// Transport, e.g. `HTTP+JSON`.
+    pub transport: String,
+    /// Priority; lower values win.
+    pub priority: i32,
+    /// Weight among same-priority endpoints (GA default 1.0).
+    #[serde(default = "default_runtime_endpoint_weight")]
+    pub weight: f64,
+    /// Public endpoint metadata.
+    pub metadata: HashMap<String, String>,
+    /// Registration health.
+    pub healthy: Option<bool>,
+    /// Registration enablement.
+    pub enabled: Option<bool>,
+    /// Runtime version bindings.
+    pub bindings: Vec<RuntimeVersionBinding>,
+}
+
+fn default_runtime_endpoint_weight() -> f64 {
+    1.0
+}
+
+/// One runtime implementation version and the range it serves.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RuntimeVersionBinding {
+    /// Runtime implementation version.
+    pub runtime_version: String,
+    /// Agent version range the binding can serve.
+    pub version_range: String,
 }
 
 #[cfg(test)]
@@ -695,5 +764,53 @@ mod tests {
         assert_eq!(snapshot.version, "1.0");
         assert!(snapshot.call_interface.is_some());
         assert!(snapshot.extra.contains_key("batataSpecific"));
+    }
+
+    #[test]
+    fn test_runtime_endpoint_snapshot_decodes_ga_endpoint_sets() {
+        let json = r#"{
+            "namespaceId": "public",
+            "agentName": "demo",
+            "version": "1.0.0",
+            "callInterface": {
+                "protocol": "a2a",
+                "endpointSets": [{
+                    "source": "RUNTIME",
+                    "lastUpdatedTime": 1763000000000,
+                    "endpoints": [{
+                        "uri": "http://127.0.0.1:8080/a2a",
+                        "transport": "HTTP+JSON",
+                        "weight": 1.0,
+                        "healthy": true,
+                        "enabled": true,
+                        "bindings": [{
+                            "runtimeVersion": "1.0.6",
+                            "versionRange": "[1.0.0,2.0.0)"
+                        }]
+                    }]
+                }]
+            }
+        }"#;
+        let snapshot: RuntimeEndpointSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snapshot.namespace_id, "public");
+        assert!(
+            snapshot.extra.is_empty(),
+            "flat GA data has no wrapper keys"
+        );
+        let call = snapshot.call_interface.unwrap();
+        assert_eq!(call.protocol, "a2a");
+        assert_eq!(call.endpoint_sets.len(), 1);
+        let set = &call.endpoint_sets[0];
+        assert_eq!(set.source, "RUNTIME");
+        assert_eq!(set.last_updated_time, Some(1763000000000));
+        assert_eq!(set.endpoints.len(), 1);
+        let endpoint = &set.endpoints[0];
+        assert_eq!(endpoint.uri, "http://127.0.0.1:8080/a2a");
+        assert_eq!(endpoint.transport, "HTTP+JSON");
+        assert_eq!(endpoint.weight, 1.0);
+        assert_eq!(endpoint.healthy, Some(true));
+        assert_eq!(endpoint.enabled, Some(true));
+        assert_eq!(endpoint.bindings[0].runtime_version, "1.0.6");
+        assert_eq!(endpoint.bindings[0].version_range, "[1.0.0,2.0.0)");
     }
 }

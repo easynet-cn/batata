@@ -297,6 +297,8 @@ impl AiEndpointService {
                 address: inst.ip.clone(),
                 port: inst.port as u16,
                 healthy: inst.healthy,
+                enabled: inst.enabled,
+                weight: inst.weight,
                 metadata: inst.metadata.clone(),
             })
             .collect()
@@ -371,9 +373,52 @@ impl AiEndpointService {
                 address: inst.ip.clone(),
                 port: inst.port as u16,
                 healthy: inst.healthy,
+                enabled: inst.enabled,
+                weight: inst.weight,
                 metadata: inst.metadata.clone(),
             })
             .collect()
+    }
+
+    /// Live endpoints for the GA runtime-endpoint snapshot.
+    ///
+    /// GA's `version` query is optional: present, it selects the endpoints
+    /// published for that version plus any batch whose advertised range covers
+    /// it; absent, every runtime version of the agent is returned unfiltered.
+    /// Batata keys Naming services as `<agent>::<version>`, so the unfiltered
+    /// case enumerates that prefix through `list_services`.
+    pub fn get_agent_endpoints_for_snapshot(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: Option<&str>,
+    ) -> Vec<EndpointInfo> {
+        match version.filter(|v| !v.is_empty()) {
+            Some(version) => self.get_agent_endpoints_for_version(namespace, name, version),
+            None => self.get_agent_endpoints_all_versions(namespace, name),
+        }
+    }
+
+    fn get_agent_endpoints_all_versions(&self, namespace: &str, name: &str) -> Vec<EndpointInfo> {
+        let prefix = a2a_service_name(name, "");
+        let (_, services) =
+            self.naming_service
+                .list_services(namespace, AGENT_ENDPOINT_GROUP, 1, i32::MAX);
+        let mut endpoints: Vec<EndpointInfo> = Vec::new();
+        for service in services {
+            let Some(version) = service.strip_prefix(&prefix) else {
+                continue;
+            };
+            for ep in self.get_agent_endpoints(namespace, name, version) {
+                if !endpoints
+                    .iter()
+                    .any(|e| e.address == ep.address && e.port == ep.port)
+                {
+                    endpoints.push(ep);
+                }
+            }
+        }
+        endpoints
     }
 
     /// Deregister an A2A agent endpoint from NamingService
@@ -419,6 +464,72 @@ pub struct EndpointInfo {
     pub port: u16,
     /// Whether the endpoint is currently healthy.
     pub healthy: bool,
+    /// Whether the instance is enabled (GA `Endpoint.enabled`).
+    pub enabled: bool,
+    /// Instance weight (GA `Endpoint.weight`).
+    pub weight: f64,
     /// Arbitrary metadata attached to the endpoint.
     pub metadata: std::collections::HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    fn service() -> AiEndpointService {
+        let naming: Arc<dyn NamingServiceProvider> = Arc::new(batata_naming::NamingService::new());
+        AiEndpointService::new(naming)
+    }
+
+    #[test]
+    fn optional_version_returns_every_runtime_version_and_preserves_instance_fields() {
+        let svc = service();
+        svc.register_agent_endpoint_batch(
+            "client-1",
+            "public",
+            "demo",
+            "1.0.0",
+            None,
+            &[("10.0.0.1".to_string(), 8080)],
+        )
+        .expect("register 1.0.0 batch");
+        svc.register_agent_endpoint_batch(
+            "client-1",
+            "public",
+            "demo",
+            "2.0.0",
+            Some("1.x"),
+            &[("10.0.0.2".to_string(), 9090)],
+        )
+        .expect("register 2.0.0 batch");
+        svc.register_agent_endpoint_batch(
+            "client-1",
+            "public",
+            "demo",
+            "3.0.0",
+            None,
+            &[("10.0.0.3".to_string(), 7070)],
+        )
+        .expect("register 3.0.0 batch");
+
+        let all = svc.get_agent_endpoints_for_snapshot("public", "demo", None);
+        assert_eq!(all.len(), 3, "an absent version must not filter anything");
+        assert!(
+            all.iter()
+                .all(|e| e.healthy && e.enabled && e.weight == 1.0),
+            "GA endpoint fields must survive the Naming mapping"
+        );
+
+        let filtered = svc.get_agent_endpoints_for_snapshot("public", "demo", Some("1.0.0"));
+        assert_eq!(
+            filtered.len(),
+            2,
+            "only the exact version plus range-covered batches are returned"
+        );
+        assert!(
+            svc.get_agent_endpoints_for_snapshot("public", "unknown", None)
+                .is_empty(),
+            "a missing agent is an empty snapshot, not an error"
+        );
+    }
 }

@@ -7,7 +7,7 @@ use crate::model::Page;
 use crate::model::ai::a2a::{
     AgentCallInterface, AgentCard, AgentRegistryStats, AgentSummary, AgentVersionDetail,
     AgentVersionSummary, BatchAgentRegistrationRequest, BatchRegistrationResponse,
-    ConsoleRuntimeEndpointView, RegisteredAgent,
+    ConsoleRuntimeEndpointView, GaRuntimeEndpointSnapshot, RegisteredAgent,
 };
 use crate::model::ai::agentspec::{AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecSummary};
 use crate::model::ai::mcp::McpRegistryStats;
@@ -934,6 +934,24 @@ pub trait A2aAgentService: Send + Sync {
         protocol: &str,
         version: &str,
     ) -> anyhow::Result<ConsoleRuntimeEndpointView>;
+
+    /// GA admin `GET /runtime-endpoints` snapshot (flat `Result.data`).
+    ///
+    /// Implementations without a Naming-backed runtime registry answer with a
+    /// successful **empty** snapshot: GA's `ServiceStorage.getPushData`
+    /// returns an empty `ServiceInfo` for an unknown service, never a 404/400.
+    /// The production service overrides this with the live instance list.
+    async fn get_runtime_endpoint_snapshot(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        protocol: &str,
+        version: Option<&str>,
+    ) -> anyhow::Result<GaRuntimeEndpointSnapshot> {
+        Ok(GaRuntimeEndpointSnapshot::empty(
+            namespace, agent_name, protocol, version,
+        ))
+    }
 
     /// Client code-first publication: create-or-replace a draft and, for the
     /// first version or when `auto_submit` is set, submit it through the review

@@ -578,28 +578,40 @@ impl AgentPublishRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentVersionDetail {
+    /// Namespace the agent version belongs to.
     #[serde(default)]
     pub namespace_id: String,
+    /// Agent name the version belongs to.
     #[serde(default)]
     pub name: String,
+    /// Version string of this agent snapshot.
     #[serde(default)]
     pub version: String,
+    /// Lifecycle status (`draft` / `reviewing` / `online`, etc.).
     #[serde(default)]
     pub status: String,
+    /// Optional human-readable description of the version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional tag labels attached to the version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
+    /// Optional protocols the agent exposes (e.g. `JSONRPC`, `A2A`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocols: Option<Vec<String>>,
+    /// Optional author of the version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// Optional change note describing this version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change_description: Option<String>,
+    /// Optional content digest for change detection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_digest: Option<String>,
+    /// Optional creation timestamp (epoch millis).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create_time: Option<i64>,
+    /// Optional last-update timestamp (epoch millis).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_time: Option<i64>,
 }
@@ -1167,28 +1179,6 @@ impl AgentAiService {
     /// Cached Agent Card count.
     pub fn cache_size(&self) -> usize {
         self.agent_cache.len()
-    }
-
-    /// Internal: one long-poll watch round-trip.
-    async fn watch_once(
-        &self,
-        client_id: &str,
-        generation: i64,
-        timeout_millis: i64,
-        item: &AgentWatchRequestItem,
-    ) -> anyhow::Result<AgentWatchBatchResponse> {
-        let body = AgentWatchRequest {
-            generation,
-            timeout_millis,
-            watches: serde_json::to_string(&[item])?,
-        };
-        let mut headers = HashMap::new();
-        headers.insert("clientId".to_string(), client_id.to_string());
-        let resp: ApiResponse<AgentWatchBatchResponse> = self
-            .http_client
-            .post_json_with_headers("/v3/client/ai/agents/watch", &body, &headers)
-            .await?;
-        decode(resp, "watch_agents")
     }
 }
 

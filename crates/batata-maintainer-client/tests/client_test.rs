@@ -4431,6 +4431,31 @@ fn runtime_endpoint_snapshot_json(version: &str) -> serde_json::Value {
     })
 }
 
+fn ga_runtime_endpoint_snapshot_json() -> serde_json::Value {
+    serde_json::json!({
+        "namespaceId": "public",
+        "agentName": "demo",
+        "version": "1.0.0",
+        "callInterface": {
+            "protocol": "a2a",
+            "endpointSets": [{
+                "source": "RUNTIME",
+                "lastUpdatedTime": 1763000000000i64,
+                "endpoints": [{
+                    "uri": "http://127.0.0.1:8080/a2a",
+                    "transport": "HTTP+JSON",
+                    "healthy": true,
+                    "enabled": true,
+                    "bindings": [{
+                        "runtimeVersion": "1.0.6",
+                        "versionRange": "[1.0.0,2.0.0)"
+                    }]
+                }]
+            }]
+        }
+    })
+}
+
 /// GA `getAgentCard` binds AND consumes `version`; the new method must emit it
 /// as a query parameter. A mutant dropping `version` loses this match (404).
 #[tokio::test]
@@ -4700,6 +4725,44 @@ async fn test_agents_get_runtime_endpoints_omits_none_version() {
         .await
         .unwrap();
     assert_eq!(snapshot.version, "9.9");
+}
+
+/// The admin endpoint now returns GA's flat `RuntimeEndpointSnapshot`; the
+/// wrapper must decode the `endpointSets` tree rather than leaving it raw.
+#[tokio::test]
+async fn test_agents_get_runtime_endpoints_decodes_ga_snapshot() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agents/runtime-endpoints"))
+        .respond_with(api_ok_raw(ga_runtime_endpoint_snapshot_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let snapshot = client
+        .agents_get_runtime_endpoints("public", "demo", Some("a2a"), Some("1.0.0"))
+        .await
+        .unwrap();
+    assert_eq!(snapshot.namespace_id, "public");
+    assert_eq!(snapshot.agent_name, "demo");
+    assert_eq!(snapshot.version, "1.0.0");
+    assert!(
+        snapshot.extra.is_empty(),
+        "GA data is flat, not a console view"
+    );
+    let call = snapshot.call_interface.expect("callInterface must decode");
+    assert_eq!(call.protocol, "a2a");
+    assert_eq!(call.endpoint_sets.len(), 1);
+    assert_eq!(call.endpoint_sets[0].source, "RUNTIME");
+    assert_eq!(
+        call.endpoint_sets[0].last_updated_time,
+        Some(1763000000000i64)
+    );
+    let endpoint = &call.endpoint_sets[0].endpoints[0];
+    assert_eq!(endpoint.uri, "http://127.0.0.1:8080/a2a");
+    assert_eq!(endpoint.healthy, Some(true));
+    assert_eq!(endpoint.enabled, Some(true));
+    assert_eq!(endpoint.bindings[0].runtime_version, "1.0.6");
 }
 
 /// New write wrapper surfaces a transport error (error-code path).

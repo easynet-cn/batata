@@ -17,7 +17,8 @@ pub use ai::{
     AgentCard, AgentCardBasicInfo, AgentCardDetailInfo, AgentCardVersionInfo, AgentDraftCreateForm,
     AgentDraftUpdateForm, AgentInterface, AgentLabelsUpdateForm, AgentSummary, AgentUpdateForm,
     AgentVersionDetail, AgentVersionInfo, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
-    McpServerVersionInfo, McpToolSpecification, RuntimeEndpointSnapshot, ServerVersionDetail,
+    McpServerVersionInfo, McpToolSpecification, RuntimeCallInterface, RuntimeEndpoint,
+    RuntimeEndpointSet, RuntimeEndpointSnapshot, RuntimeVersionBinding, ServerVersionDetail,
 };
 pub use ai_resource::{
     AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecResource, AgentSpecSummary,

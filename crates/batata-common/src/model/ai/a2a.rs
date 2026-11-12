@@ -414,6 +414,77 @@ pub struct AgentCallInterface {
     pub endpoint_sets: Option<Vec<EndpointSet>>,
 }
 
+/// GA `GET /v3/admin/ai/agents/runtime-endpoints` response `data`.
+///
+/// Nacos 3.3.0 GA (`b64bc9118`, `AgentAdminController.java:181-193` /
+/// `RuntimeEndpointSnapshot.java:26-69`) returns the snapshot **flat** under
+/// `Result.data`; the `ConsoleRuntimeEndpointView` wrapper belongs to the
+/// console endpoint, not to admin. GA answers exactly one `RUNTIME`
+/// `EndpointSet` with a node-local observation time, and an agent with no
+/// registered instances is a successful snapshot with an empty endpoint list.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GaRuntimeEndpointSnapshot {
+    /// Namespace the snapshot was read from.
+    #[serde(default)]
+    pub namespace_id: String,
+    /// Agent name, echoed from the request.
+    #[serde(default)]
+    pub agent_name: String,
+    /// Requested version; absent when the caller did not filter by version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// One protocol's call interface containing a single RUNTIME endpoint set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_interface: Option<AgentCallInterface>,
+}
+
+impl GaRuntimeEndpointSnapshot {
+    /// Build a GA-shaped snapshot from live runtime endpoints.
+    pub fn with_endpoints(
+        namespace_id: &str,
+        agent_name: &str,
+        protocol: &str,
+        version: Option<&str>,
+        endpoints: Vec<Endpoint>,
+    ) -> Self {
+        Self {
+            namespace_id: namespace_id.to_string(),
+            agent_name: agent_name.to_string(),
+            version: version.map(str::to_string),
+            call_interface: Some(AgentCallInterface {
+                protocol: protocol.to_string(),
+                endpoint_sets: Some(vec![EndpointSet {
+                    source: EndpointSource::Runtime,
+                    last_updated_time: Some(current_epoch_millis()),
+                    endpoints,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// Empty snapshot used when an agent has no live endpoints (or no live
+    /// backend is wired). GA never answers 404/400 for a missing definition.
+    pub fn empty(
+        namespace_id: &str,
+        agent_name: &str,
+        protocol: &str,
+        version: Option<&str>,
+    ) -> Self {
+        Self::with_endpoints(namespace_id, agent_name, protocol, version, Vec::new())
+    }
+}
+
+/// Node-local observation time, matching GA `ServiceInfo.lastRefTime`.
+fn current_epoch_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// One agent version as returned by `GET /versions` (GA `AgentVersionSummary`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -877,4 +948,79 @@ pub struct AgentRegistryStats {
     pub by_namespace: HashMap<String, u32>,
     /// The `by_skill` field.
     pub by_skill: HashMap<String, u32>,
+}
+
+#[cfg(test)]
+mod runtime_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn empty_snapshot_is_flat_and_carries_a_runtime_set() {
+        let snapshot = GaRuntimeEndpointSnapshot::empty("public", "demo", "a2a", None);
+        let json = serde_json::to_value(&snapshot).unwrap();
+
+        assert_eq!(json["namespaceId"], "public");
+        assert_eq!(json["agentName"], "demo");
+        assert!(json.get("version").is_none(), "absent version is omitted");
+        assert!(
+            json.get("runtimeEndpointSnapshot").is_none(),
+            "admin data must not be the console wrapper"
+        );
+        assert!(json.get("namingServiceRef").is_none());
+        assert_eq!(json["callInterface"]["protocol"], "a2a");
+        let sets = json["callInterface"]["endpointSets"]
+            .as_array()
+            .expect("one endpoint set");
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0]["source"], "RUNTIME");
+        assert!(sets[0]["lastUpdatedTime"].as_i64().unwrap() > 0);
+        assert_eq!(sets[0]["endpoints"].as_array().unwrap().len(), 0);
+        assert!(sets[0].get("sourceRevision").is_none());
+    }
+
+    #[test]
+    fn snapshot_keeps_requested_version_and_ga_endpoint_fields() {
+        let endpoint = Endpoint {
+            uri: "http://127.0.0.1:8080/a2a".to_string(),
+            transport: "HTTP+JSON".to_string(),
+            weight: 1.0,
+            healthy: Some(true),
+            enabled: Some(true),
+            bindings: Some(vec![RuntimeVersionBinding {
+                runtime_version: "1.0.0".to_string(),
+                version_range: "[1.0.0,2.0.0)".to_string(),
+            }]),
+            ..Default::default()
+        };
+        let snapshot = GaRuntimeEndpointSnapshot::with_endpoints(
+            "ns-1",
+            "demo",
+            "a2a",
+            Some("1.0.0"),
+            vec![endpoint],
+        );
+        let json = serde_json::to_value(&snapshot).unwrap();
+
+        assert_eq!(json["version"], "1.0.0");
+        let ep = &json["callInterface"]["endpointSets"][0]["endpoints"][0];
+        assert_eq!(ep["uri"], "http://127.0.0.1:8080/a2a");
+        assert_eq!(ep["transport"], "HTTP+JSON");
+        assert_eq!(ep["weight"], 1.0);
+        assert_eq!(ep["priority"], 0);
+        assert_eq!(ep["healthy"], true);
+        assert_eq!(ep["enabled"], true);
+        assert_eq!(ep["bindings"][0]["runtimeVersion"], "1.0.0");
+        assert!(
+            ep.get("state").is_none(),
+            "GA dropped the draft 'state' field"
+        );
+    }
+
+    #[test]
+    fn ga_snapshot_round_trips_through_serde() {
+        let snapshot = GaRuntimeEndpointSnapshot::empty("public", "demo", "a2a", Some("2.0.0"));
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let decoded: GaRuntimeEndpointSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, snapshot);
+    }
 }

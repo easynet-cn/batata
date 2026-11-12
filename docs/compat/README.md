@@ -26,17 +26,17 @@ There is **no** `bugs.md`, `_index.md` or shell-based checker; the B-ID
 scheme below is reserved for future use, and ID validation is done by
 `scripts/compat_check.py`.
 
-## Global summary (2026-11-11)
+## Global summary (2026-11-12)
 
 Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 `scripts/compat_check.py`.
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 197      | 190 | 1  | 0 | 2 | 4  | 96%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 197      | 191 | 0  | 0 | 2 | 4  | 97%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 181 | 0  | 0 | 0  | 0  | 100%      | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **577** | **540** | **4** | **0** | **29** | **4** | **94%** | **1040** | |
+| **Total** | **577** | **541** | **3** | **0** | **29** | **4** | **94%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -99,7 +99,7 @@ B.10 (server AI ADMIN), so the checker can detect a status that drifts from real
 | batata-client | F-NAC-CSDK-006 | HTTP `requestId` correlation |
 | batata-core, batata-ai | F-NAC-CSDK-007 | GA `SetupAckRequest.ability_table` RAD keys — **closed in batch 13** (`🟢`): the four keys (`agentCardV1` / `mcpDraftRelease` / `radV1` / `radWatchV1`) are advertised in `crates/batata-core/src/handler/rpc.rs`, and the GA RAD v1 gRPC handlers (`AgentPublishRpcRequest` / `AgentSubscribeRpcRequest` / `AgentUnsubscribeRpcRequest`) are implemented in `crates/batata-ai/src/handler/ai_handler.rs` backed by `crates/batata-ai/src/service/agent_rad_watch.rs` |
 | batata-ai | F-NAC-MAINT-010 | AI ADMIN POST/PUT form-vs-query channel — **closed in batch 5** (`🟢`); the ARD model divergence moved to `F-NAC-AISRV-001` |
-| batata-ai (server) | F-NAC-AISRV-001 | GA ARD Agent model — **Phase A partial (🟡, 2026-11-11)**: typed `AgentVersionDetail` / `AgentCallInterface` / `AgentProviderInfo` DTOs, `callInterfaces` stored in version detail + accepted on first draft (no longer fail-closed), GA-shaped `Page<AgentSummary>` / `Page<AgentVersionSummary>` list/version responses, `online_versions` / `status` reconciliation. RAD `GET /runtime-endpoints` live source still deferred (needs Naming publication backend) |
+| batata-ai (server) | F-NAC-AISRV-001 | GA ARD Agent model — **closed in batch 21** (`🟢`, 2026-11-12): Phase A's typed ARD DTOs / `callInterfaces` storage / `Page` responses, plus the GA admin `GET /runtime-endpoints` contract — flat `RuntimeEndpointSnapshot` with one `RUNTIME` `endpointSets` entry and `lastUpdatedTime`, live Naming instances mapped to GA `Endpoint` values, optional `version`, required `protocol`, and a 200 empty snapshot for unknown agents. Source re-verification corrected the old "no Naming backend" note; the console keeps its own wrapper |
 | batata-ai (server) | F-NAC-AISRV-002 | `/v3/admin/ai/import` controller — **false gap, closed in batch 6** (`🟢`, already in `batata-console`, also `F-NAC-ADM-AI-008`) |
 | batata-ai (server) | F-NAC-AISRV-003 | `/v3/admin/ai/pipelines` deprecated reads — **⛔ won't support** (GA returns 410 unless an opt-in compatibility flag is set) |
 
@@ -111,8 +111,11 @@ cover `AgentPublishRpcRequest`, `AgentSubscribeRpcRequest` and
 `AgentUnsubscribeRpcRequest` in addition to `AgentSearchRpcRequest`,
 `AgentDiscoveryRpcRequest` and the two endpoint requests, so the four GA keys
 are advertised and GA 3.4.0 clients negotiate RAD safely. The only remaining
-RAD sub-gap is the `GET /runtime-endpoints` live source, which needs the Naming
-publication backend and is tracked separately (outside `F-NAC-CSDK-007`).
+RAD sub-gap is the GA response shape of `GET /runtime-endpoints` (flat
+`RuntimeEndpointSnapshot` with `endpointSets`, optional `version`, required
+`protocol`, 200 empty snapshot). The Naming publication backend itself already
+exists and is injected in production; the earlier "no backend" note was a
+documentation error, corrected on 2026-11-12 in `F-NAC-AISRV-001`.
 
 **Batch 1 implemented (2026-11-10)**: `F-NAC-MAINT-006` is now `🟢` (eight MCP
 version-lifecycle methods + `McpServerVersionInfo` DTO in
@@ -395,6 +398,26 @@ compile-safe mutants killed**. The live runtime-endpoint source / GA
 `535🟢/8🟡/30⚪` → `540🟢/4🟡/29⚪` (93%→94%); T-ID counts unchanged
 (401 / 1040). See `review-report.md` §27. No `--full` gate, commit, push,
 publish, yank, archive or tag was performed.
+
+**Batch 21 implemented (2026-11-12)**: `F-NAC-AISRV-001` 🟡→🟢, the last
+server-side Nacos gap. A GA source re-read (`b64bc9118`) established the admin
+`GET /runtime-endpoints` contract: flat `Result<RuntimeEndpointSnapshot>`,
+`namespaceId` optional (default `public`), `agentName` + `protocol` required,
+`version` optional, exactly one `RUNTIME` `endpointSets` entry carrying
+`lastUpdatedTime` and GA `Endpoint` values, and a **200 empty snapshot** for a
+missing agent/service. It also corrected a long-standing documentation error:
+batata already has a live Naming-backed reader (`AiEndpointService`), wired in
+production by `AIServices::with_persistence`; the old "no backend / deferred to
+`F-NAC-CSDK-007`" claim was wrong. Implementation adds
+`GaRuntimeEndpointSnapshot` plus a default empty-snapshot trait method in
+`batata-common`, a range-aware optional-version reader and GA `Endpoint` mapping
+in `batata-ai`, GA parameter handling in the admin handler (console wrapper
+unchanged), and a typed `endpointSets` DTO in `batata-maintainer-client`. Route
+tests cover the empty snapshot, live endpoints, missing protocol and the
+maintainer-client decode. Nacos `190🟢/1🟡/2⚪/4⛔` →
+`191🟢/0🟡/2⚪/4⛔/197` (96%→97%), global `540🟢/4🟡/29⚪` →
+`541🟢/3🟡/29⚪` (94% unchanged); T-ID counts unchanged (401 / 1040). See
+`review-report.md` §28. No `--full` gate, commit, push or publish was performed.
 
 Batch 5 then made the four remaining Agent write handlers dual-wire:
 `crates/batata-ai/src/api/agent.rs` (`resolve_agent_write`) decodes either batata's

@@ -7,8 +7,9 @@
 //! `AgentCallInterface` model differs from the A2A `AgentCard` batata stores:
 //! the four write endpoints accept both GA's flat admin form and batata's
 //! nested JSON card, and reject `callInterfaces` instead of dropping it.
-//! `GET /runtime-endpoints` still needs the runtime endpoint registry (Naming
-//! publications + the publication capacity gate), which Batata does not have.
+//! `GET /runtime-endpoints` reads live Naming publications through
+//! `AiEndpointService` and answers GA's flat `RuntimeEndpointSnapshot`; the
+//! console endpoint keeps batata's `ConsoleRuntimeEndpointView` wrapper.
 
 use std::sync::Arc;
 
@@ -62,9 +63,10 @@ pub struct AgentRuntimeEndpointForm {
     pub namespace_id: Option<String>,
     /// Agent name.
     pub agent_name: Option<String>,
-    /// Target version.
+    /// Optional version filter (GA `AgentRuntimeEndpointForm.version`).
     pub version: Option<String>,
     /// Protocol the caller wants the snapshot for, e.g. `JSONRPC`.
+    /// GA validates this as required.
     #[serde(default)]
     pub protocol: Option<String>,
 }
@@ -544,7 +546,11 @@ async fn get_version(
     }
 }
 
-/// GET /v3/admin/ai/agents/runtime-endpoints — one version's live endpoint snapshot
+/// GET /v3/admin/ai/agents/runtime-endpoints — GA runtime endpoint snapshot.
+///
+/// GA binds `namespaceId` (default `public`), requires `agentName` and
+/// `protocol`, and treats `version` as optional. An unknown agent or an
+/// unwired Naming backend yields a successful empty snapshot.
 #[get("/runtime-endpoints")]
 async fn get_runtime_endpoints(
     req: HttpRequest,
@@ -565,27 +571,29 @@ async fn get_runtime_endpoints(
         Some(n) => n,
         None => {
             return Result::<()>::http_bad_request(
-                &batata_common::error::PARAMETER_MISSING,
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
                 "agentName is required",
             );
         }
     };
-    let version = match query.version.as_deref().filter(|v| !v.is_empty()) {
-        Some(v) => v,
+    let protocol = match query.protocol.as_deref().filter(|p| !p.is_empty()) {
+        Some(p) => p,
         None => {
             return Result::<()>::http_bad_request(
-                &batata_common::error::PARAMETER_MISSING,
-                "version is required",
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                "protocol is required",
             );
         }
     };
-    let protocol = query.protocol.as_deref().unwrap_or_default();
+    // GA's `AgentRuntimeEndpointForm.validate()` only checks version when it
+    // is present; absent means "all runtime versions".
+    let version = query.version.as_deref().filter(|v| !v.is_empty());
 
     match service
-        .get_runtime_endpoints(ns, name, protocol, version)
+        .get_runtime_endpoint_snapshot(ns, name, protocol, version)
         .await
     {
-        Ok(view) => HttpResponse::Ok().json(Result::success(view)),
+        Ok(snapshot) => HttpResponse::Ok().json(Result::success(snapshot)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
             e.to_string(),

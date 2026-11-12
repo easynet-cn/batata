@@ -1530,9 +1530,10 @@ non-null `callInterfaces`).
 
 ### 19.4 Status and promotion
 
-`F-NAC-AISRV-001` → 🟡 (partial). The `GET /runtime-endpoints` live-support
-sub-capability is still deferred (it needs the Naming publication backend; the
-RAD gRPC handlers it also needed landed in `F-NAC-CSDK-007`, now 🟢 per §20), so
+`F-NAC-AISRV-001` → 🟡 (partial). The `GET /runtime-endpoints` GA response
+shape was still outstanding (**corrected 2026-11-12, §28**: the Naming
+publication backend already existed; the RAD gRPC handlers landed in
+`F-NAC-CSDK-007`, now 🟢 per §20), so
 the row is partial, not 🟢. Counts: B.10 `1🟢/1🟡/0⚪/1⛔` (rate
 33%→67%); Nacos Total `179🟢/4🟡/10⚪/4⛔/197` → `179🟢/5🟡/9⚪/4⛔/197` (rate 91%
 unchanged). `features.md` B.10 and Summary Total, `README.md` global table and
@@ -1625,8 +1626,9 @@ to support the doubles.
 `F-NAC-CSDK-007` → 🟢. Counts: B.9 `1🟢/1🟡/6⚪/0⛔` (rate 0%→13%); Nacos Total
 `179🟢/5🟡/9⚪/4⛔/197` → `180🟢/5🟡/8⚪/4⛔/197` (rate 91% unchanged). `features.md`
 B.9 row + Summary Total, `README.md` global table and F-ID narrative updated.
-The `GET /runtime-endpoints` live-support sub-capability stays deferred (needs
-the Naming publication backend) and is tracked outside this row.
+The `GET /runtime-endpoints` GA response shape stayed outstanding (**corrected
+2026-11-12, §28**: the Naming publication backend already existed) and is
+tracked outside this row.
 
 ### 20.5 Validation and no-ops
 
@@ -2334,8 +2336,12 @@ Pure client work; **no server GA wire change** (`F-NAC-MAINT-010`'s
   `crates/batata-server/tests/a2a_admin_version.rs`.
 * Remaining (not a facade gap): `GET /runtime-endpoints` still requires
   `version`, returns batata's `ConsoleRuntimeEndpointView` rather than GA's
-  `RuntimeEndpointSnapshot`, and has no live Naming publication backend. That
-  is the existing server-side `F-NAC-AISRV-001` (🟡). The legacy A2A registry
+  `RuntimeEndpointSnapshot`, and answers 400 when no backend is wired. That
+  is the existing server-side `F-NAC-AISRV-001` (🟡). **Correction 2026-11-12**:
+  the "no live Naming publication backend" phrasing used in §§13/19/20/27 was
+  wrong — `AiEndpointService` already reads Naming instances and is injected by
+  `AIServices::with_persistence`; see §28 for the source-verified chain. The
+  legacy A2A registry
   fallback branch also ignores `version`; it lives outside the config-backed
   path and is recorded here rather than silently claimed as fixed.
 
@@ -2392,3 +2398,121 @@ here means "not tracked against this baseline", not a GA gap.
 rows, Batch 20 narrative, drift ruling), and this section.
 
 No `--full` matrix, commit, push, publish, yank, archive or tag was performed.
+
+## 28. Implementation batch 21 — GA admin runtime-endpoint snapshot (`F-NAC-AISRV-001` → 🟢)
+
+### 28.1 GA contract re-verified at `b64bc9118`
+
+All claims below come from `git -C ~/work/github/easynet-cn/nacos show b64bc9118:<path>`,
+not from develop or from the GA repo's own `doc/` / `Codex/design/` design drafts
+(those describe a discarded `items[]` / `state` shape that GA code, JSON Schema
+and tests explicitly reject).
+
+* `ai/.../controller/AgentAdminController.java:181-193` — `GET /runtime-endpoints`,
+  `@Since 3.3.0`, `@Secured(READ, AI, ADMIN_API)`, no `@Deprecated`, no
+  `CompatibilityHelper.check` (so no 410/40000). Returns `Result<RuntimeEndpointSnapshot>`
+  with `code/message/data`.
+* `ai/.../form/agent/admin/AgentRuntimeEndpointForm.java:27-42` +
+  `AgentAdminForm.java:36-45` — `namespaceId` optional (blank → `public`),
+  `agentName` required, `protocol` required, `version` optional and only
+  validated when present. Parameter errors → HTTP 400 / `code 20002`.
+* `api/.../model/agent/RuntimeEndpointSnapshot.java:26-69` — **four** fields:
+  `namespaceId`, `agentName`, `version` (nullable), `callInterface`; no `items`,
+  no `state`. `AgentCallInterface.endpointSets` has exactly one `EndpointSet`
+  (`source=RUNTIME`, `lastUpdatedTime` epoch millis, `endpoints`); `Endpoint`
+  is `{uri, transport, priority, weight, metadata, healthy, bindings, enabled}`.
+  `AgentContractModelTest.java:274-280` asserts `items`, `endpoint` and
+  `lastUpdatedTime` are absent from the endpoint object.
+* `ai/.../service/agent/runtime/AgentRuntimeRegistryService.java:154-174` +
+  `naming/.../ServiceStorage.java:78-106` — the live source is Naming
+  `ServiceStorage` (group `agent-endpoints`, service `rad-<encoded>-<protocol>`).
+  `lastUpdatedTime` is the node-local `ServiceInfo.lastRefTime`. An unknown
+  service returns an **empty ServiceInfo**, hence a successful 200 empty
+  snapshot (`AgentRuntimeEndpointAdminApiOpenApiITCase#testMissingDefinitionReturnsDefaultNamespaceEmptySnapshot`).
+* `maintainer-client/.../AgentMaintainerService.java:230-257` — 4-arg
+  `getRuntimeEndpoints(ns, agentName, protocol, version)` is abstract; the
+  3-arg default uses `public`. The GA client reuses the `api` module DTO.
+
+`git merge-base --is-ancestor` confirms all 11 post-GA commits are outside the
+GA baseline, and the 14 contract files listed in the audit are byte-identical
+between `b64bc9118` and develop `d1b97bc3e` — no runtime-endpoint drift.
+
+### 28.2 Documentation correction before implementation
+
+The inventory, README and §§13/19/20/27 repeatedly claimed "no live Naming
+publication backend" and "live support deferred to `F-NAC-CSDK-007`". That is
+**false**: `crates/batata-ai/src/service/endpoint_service.rs:351-377` already
+reads Naming instances, `get_agent_endpoints_for_version` (:195-230) already
+does range-aware aggregation, and
+`crates/batata-server/src/startup/http.rs:365-388` injects the backend in the
+real production path. The true residual was the **GA response/admission shape**:
+`crates/batata-ai/src/api/agent.rs:547-594` returned
+`ConsoleRuntimeEndpointView`, required `version`, left `protocol` optional, and
+answered 400 when no backend was wired. Those statements were corrected in
+`features.md`, `README.md` and §27 before any code changed, then the gap was
+registered with its GA shape.
+
+### 28.3 Implementation
+
+* `crates/batata-common/src/model/ai/a2a.rs` — new `GaRuntimeEndpointSnapshot`
+  (flat GA `data`, optional `version`) with `with_endpoints()` / `empty()`
+  builders. Both emit exactly one `EndpointSet` with `source=RUNTIME` and a
+  node-local `lastUpdatedTime`; the reserved `sourceRevision` stays absent.
+* `crates/batata-common/src/traits/ai.rs` — new
+  `get_runtime_endpoint_snapshot(ns, agentName, protocol, version: Option<&str>)`
+  with a **default empty snapshot**. Keeping it as a separate method means the
+  console endpoint keeps its `ConsoleRuntimeEndpointView` contract and the
+  three existing trait implementations/mocks need no changes.
+* `crates/batata-ai/src/service/endpoint_service.rs` — `EndpointInfo` now
+  carries `enabled` / `weight`; new `get_agent_endpoints_for_snapshot()` uses
+  the existing range-aware reader when a version is given and enumerates the
+  `<agent>::` Naming service prefix when it is absent (GA's unfiltered case).
+* `crates/batata-ai/src/service/a2a_service.rs` — overrides the new trait
+  method: no backend → 200 empty snapshot; otherwise maps each live instance
+  to a GA `Endpoint` (`uri`, `transport`, `weight`, public metadata with
+  `__nacos.` keys stripped, `healthy`, `enabled`, one `RuntimeVersionBinding`).
+* `crates/batata-ai/src/api/agent.rs` — `version` optional, `protocol` required
+  (400 / `PARAMETER_VALIDATE_ERROR` naming the field), `agentName` errors now
+  use the same GA error code, and the response is the flat GA snapshot.
+* `crates/batata-maintainer-client/src/model/ai.rs` + `model/mod.rs` —
+  `RuntimeEndpointSnapshot.callInterface` is now a typed `RuntimeCallInterface`
+  with `RuntimeEndpointSet` / `RuntimeEndpoint` / `RuntimeVersionBinding`,
+  still tolerant (`default` + `flatten extra`) so legacy batata payloads decode.
+
+### 28.4 Tests, mutants and residual caveats
+
+* `batata-common`: 3 serde/shape tests (flat `data`, RUNTIME set, epoch-millis
+  timestamp, version omission, no `state`).
+* `batata-ai`: `endpoint_service::snapshot_tests` proves optional version
+  returns all three registered runtime versions, a concrete version returns the
+  exact batch plus range-covered batches, and `healthy`/`enabled`/`weight`
+  survive the Naming mapping.
+* `batata-server/tests/agent_admin_routes.rs`: the old "fail loudly without a
+  backend" case is replaced by a GA-shaped **200 empty snapshot** case
+  (default namespace, version omitted, one RUNTIME set); new cases cover live
+  endpoints and the missing-protocol 400. `agent_console_routes.rs` and
+  `agent_client_routes.rs` (29 cases) still pass unchanged.
+* `batata-maintainer-client`: 2 serde tests + 3 wiremock cases including a full
+  GA `endpointSets` decode.
+* Mutants: see the final validation summary below; every guard above is
+  compile-safe mutant-checked (`/tmp/batata_aisrv001_mutants.py`), with all
+  files byte-restored afterwards.
+
+Known, deliberately out-of-scope residuals: (1) batata's advertised
+`versionRange` grammar is `1.x` / `^1.2.3`, not GA's Maven-style
+`[1.0.0,2.0.0)` — a pre-existing RAD discovery property, not a wire break
+(the value is just a string in `bindings`); (2) the console endpoint keeps its
+own wrapper and fail-loud behaviour because the console UI contract depends on
+it; (3) `T-NAC-ADM-AI-003-06` stays `⬜` because that inventory tracks
+**literal ports of upstream IT cases**, and the equivalent behaviour is covered
+by a batata route test, not by a copied Java ITCase.
+
+### 28.5 Counts and no-ops
+
+`F-NAC-AISRV-001` 🟡→🟢. B.10 `1🟢/1🟡/1⛔` → `2🟢/1⛔` (67%); Nacos Total
+`190🟢/1🟡/2⚪/4⛔/197` (96%) → `191🟢/0🟡/2⚪/4⛔/197` (**97%**); global
+`540🟢/4🟡/29⚪/4⛔/577` (94%) → `541🟢/3🟡/29⚪/4⛔/577` (94% unchanged).
+Nacos now has **no 🟡 rows**; the two `⚪` rows are baseline-out develop drift
+and `⛔` rows are GA-deprecated endpoints. T-ID counts unchanged (401 / 1040).
+No GA wire was changed, no new ability key was declared, and no commit, push,
+`--full` gate, publish, yank, archive or tag was performed.
