@@ -1978,8 +1978,16 @@ mod tests {
     fn agent_change_broadcast_round_trips() {
         let mut rx = subscribe_agent_changes().expect("subscribe");
         publish_agent_change("public", "some-agent");
-        let (ns, name) = rx.try_recv().expect("event delivered");
-        assert_eq!(ns, "public");
-        assert_eq!(name, "some-agent");
+        // The channel is process-global: other tests publish to it while this
+        // one runs, so the first event is not necessarily ours. Drain until our
+        // own marker arrives rather than asserting on an arbitrary event.
+        for _ in 0..1024 {
+            match rx.try_recv() {
+                Ok((ns, name)) if ns == "public" && name == "some-agent" => return,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        panic!("our own agent-change event was never delivered");
     }
 }

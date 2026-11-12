@@ -123,7 +123,11 @@ async fn build_app(
             .app_data(web::Data::new(agents))
             // Mounted exactly as the server does: console routes live under
             // `/v3/console`, and the module adds its own `/ai/...` prefix.
-            .service(web::scope("/v3/console").service(batata_console::v3::ai_agent::routes())),
+            .service(
+                web::scope("/v3/console")
+                    .service(batata_console::v3::ai_agent::routes())
+                    .service(batata_console::v3::ai_a2a::routes()),
+            ),
     )
     .await
 }
@@ -402,6 +406,42 @@ async fn runtime_endpoints_fail_loudly_without_an_endpoint_backend() {
         "must explain why: {body}"
     );
     println!("ok: runtime-endpoints refuses without an endpoint backend");
+
+    store.clean(NAME).await;
+}
+
+/// GA's `ConsoleA2aController.listAgentVersions` also answers with
+/// `Result<List<a2a.AgentVersionDetail>>`. The legacy console A2A route shares
+/// the paged ARD service, so it needs the same array projection as the admin
+/// route; this guards that endpoint's wire shape at the route level.
+#[actix_web::test]
+async fn console_a2a_version_list_returns_a_ga_array() {
+    let (store, svc) = setup().await;
+    store.clean(NAME).await;
+    register(&svc).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let req = test::TestRequest::get()
+        .uri(&format!(
+            "/v3/console/ai/a2a/version/list?agentName={NAME}&namespaceId=public"
+        ))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["code"], 0, "unexpected envelope: {body}");
+    assert!(
+        body["data"].is_array(),
+        "GA expects Result.data to be an array: {body}"
+    );
+    assert!(
+        body["data"].get("pageItems").is_none(),
+        "an ARD Page leaked into the legacy console A2A endpoint: {body}"
+    );
+    let items = body["data"].as_array().expect("data is an array");
+    assert!(!items.is_empty(), "the registered version must be listed");
+    assert_eq!(items[0]["version"], "1.0.0");
+    assert!(items[0].get("isLatest").is_some());
 
     store.clean(NAME).await;
 }

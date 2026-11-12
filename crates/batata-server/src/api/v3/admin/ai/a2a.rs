@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
+use batata_common::model::ai::a2a::A2aAgentVersionDetail;
 use serde::Deserialize;
 
 use crate::{
@@ -321,13 +322,24 @@ async fn list_versions(
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
     let name = q.agent_name.as_deref().unwrap_or("");
 
+    // GA's A2aAdminController.listAgentVersions answers with
+    // `Result<List<a2a.AgentVersionDetail>>`; the shared service returns the
+    // ARD `Page<AgentVersionSummary>` used by `/agents/versions`, so this
+    // legacy endpoint has to project it back to an array.
     if let Some(svc) = a2a_service {
         match svc.list_versions(namespace, name).await {
-            Ok(versions) => HttpResponse::Ok().json(Result::success(versions)),
+            Ok(page) => {
+                let versions = A2aAgentVersionDetail::from_page(&page);
+                HttpResponse::Ok().json(Result::success(versions))
+            }
             Err(e) => Result::<()>::http_internal_error(e),
         }
     } else {
-        let versions = registry.list_versions(namespace, name);
+        let versions: Vec<A2aAgentVersionDetail> = registry
+            .list_versions(namespace, name)
+            .iter()
+            .map(A2aAgentVersionDetail::from_registered_agent)
+            .collect();
         HttpResponse::Ok().json(Result::success(versions))
     }
 }

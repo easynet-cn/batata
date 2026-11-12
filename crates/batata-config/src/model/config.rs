@@ -8,7 +8,6 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 
 use batata_persistence::entity;
 
@@ -262,11 +261,9 @@ impl ConfigListenerInfo {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde_as]
 #[serde(rename_all = "camelCase")]
 /// `ConfigHistoryInfo` data model.
 pub struct ConfigHistoryInfo {
-    #[serde_as(as = "DisplayFromStr")]
     /// The `id` value.
     pub id: i64,
     /// The `last_id` value.
@@ -352,11 +349,9 @@ impl From<&entity::his_config_info::Model> for ConfigHistoryInfo {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde_as]
 #[serde(rename_all = "camelCase")]
 /// `ConfigInfoWrapper` data model.
 pub struct ConfigInfoWrapper {
-    #[serde_as(as = "DisplayFromStr")]
     /// The `id` value.
     pub id: Option<u64>,
     /// The `namespace_id` value.
@@ -833,5 +828,68 @@ mod tests {
         assert_eq!(form.data_id, "test.properties");
         assert_eq!(form.group_name, "DEFAULT_GROUP");
         assert_eq!(form.r#type, "properties");
+    }
+
+    /// Characterization test: `id` is a plain JSON number on the wire. The
+    /// `serde_as` / `DisplayFromStr` attributes that used to decorate these
+    /// fields never took effect (the derive ran before the attribute macro),
+    /// so removing `serde_with` must not change a single byte of output.
+    #[test]
+    fn config_history_id_is_a_json_number() {
+        let info = ConfigHistoryInfo {
+            id: -3,
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&info).expect("serialize history");
+        assert_eq!(value["id"], serde_json::json!(-3));
+        assert!(value["id"].is_number(), "id must stay numeric");
+
+        let round_trip: ConfigHistoryInfo =
+            serde_json::from_value(value).expect("deserialize numeric id");
+        assert_eq!(round_trip.id, -3);
+
+        let mut string_id = serde_json::to_value(&info).unwrap();
+        string_id["id"] = serde_json::json!("-3");
+        assert!(
+            serde_json::from_value::<ConfigHistoryInfo>(string_id).is_err(),
+            "a string id must not decode into i64"
+        );
+    }
+
+    /// Same characterization for the optional id: `Some` is a number and
+    /// `None` is null, and a string is rejected rather than coerced.
+    #[test]
+    fn config_wrapper_id_is_a_json_number_or_null() {
+        let some = ConfigInfoWrapper {
+            id: Some(7),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&some).expect("serialize wrapper");
+        assert_eq!(value["id"], serde_json::json!(7));
+        assert!(value["id"].is_number(), "Some(id) must stay numeric");
+
+        let none = ConfigInfoWrapper {
+            id: None,
+            ..Default::default()
+        };
+        let none_value = serde_json::to_value(&none).expect("serialize wrapper");
+        assert!(none_value["id"].is_null(), "None serializes to null");
+
+        let decoded: ConfigInfoWrapper =
+            serde_json::from_value(none_value).expect("deserialize null id");
+        assert_eq!(decoded.id, None);
+
+        let mut missing = serde_json::to_value(&some).unwrap();
+        missing.as_object_mut().unwrap().remove("id");
+        let decoded: ConfigInfoWrapper =
+            serde_json::from_value(missing).expect("deserialize missing id");
+        assert_eq!(decoded.id, None);
+
+        let mut string_id = serde_json::to_value(&some).unwrap();
+        string_id["id"] = serde_json::json!("7");
+        assert!(
+            serde_json::from_value::<ConfigInfoWrapper>(string_id).is_err(),
+            "a string id must not decode into u64"
+        );
     }
 }

@@ -332,8 +332,17 @@ export BASE_DIR=$(cd "$(dirname "$0")/.."; pwd)
 
 BATATA_BIN=""
 
+# Honour an explicit `BINARY` override before the automatic lookup. `test.sh`
+# passes debug for `sdk --quick` and release for `RELEASE=1`/matrix; this branch
+# used to ignore it and always prefer an existing release executable, so the
+# integration suites could silently run against a stale build.
+if [ -n "${BINARY:-}" ]; then
+    if [ ! -x "${BINARY}" ]; then
+        error_exit "BINARY override is not executable: ${BINARY}"
+    fi
+    BATATA_BIN="$(cd "$(dirname "${BINARY}")" && pwd)/$(basename "${BINARY}")"
 # Check multiple locations
-if [ -x "${BASE_DIR}/target/release/${SERVER}" ]; then
+elif [ -x "${BASE_DIR}/target/release/${SERVER}" ]; then
     BATATA_BIN="${BASE_DIR}/target/release/${SERVER}"
 elif [ -x "${BASE_DIR}/target/debug/${SERVER}" ]; then
     BATATA_BIN="${BASE_DIR}/target/debug/${SERVER}"

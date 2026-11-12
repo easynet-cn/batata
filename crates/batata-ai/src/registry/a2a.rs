@@ -1265,4 +1265,54 @@ mod tests {
 
         assert_eq!(result.total, 1);
     }
+
+    /// The trait default is the GA "no Naming backend" path: it must still echo
+    /// the requested namespace / agent / protocol / version into a flat,
+    /// RUNTIME-only empty snapshot. `AgentRegistry` deliberately does not
+    /// override `get_runtime_endpoint_snapshot`, so this exercises the default
+    /// rather than the live-endpoint override in `a2a_service.rs`.
+    #[tokio::test]
+    async fn default_runtime_endpoint_snapshot_echoes_request_fields() {
+        use batata_common::A2aAgentService;
+
+        let registry = AgentRegistry::new();
+        let snapshot = registry
+            .get_runtime_endpoint_snapshot("ns-42", "demo", "a2a", Some("1.2.3"))
+            .await
+            .expect("the trait default never fails");
+
+        assert_eq!(snapshot.namespace_id, "ns-42");
+        assert_eq!(snapshot.agent_name, "demo");
+        assert_eq!(snapshot.version.as_deref(), Some("1.2.3"));
+
+        let json = serde_json::to_value(&snapshot).expect("serialize GA snapshot");
+        assert_eq!(json["namespaceId"], "ns-42");
+        assert_eq!(json["agentName"], "demo");
+        assert_eq!(json["version"], "1.2.3");
+        assert_eq!(json["callInterface"]["protocol"], "a2a");
+        let sets = json["callInterface"]["endpointSets"]
+            .as_array()
+            .expect("one endpoint set");
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0]["source"], "RUNTIME");
+        assert!(sets[0]["endpoints"].as_array().unwrap().is_empty());
+        assert!(
+            json.get("runtimeEndpointSnapshot").is_none(),
+            "admin data must stay flat"
+        );
+
+        let unversioned = registry
+            .get_runtime_endpoint_snapshot("ns-42", "demo", "a2a", None)
+            .await
+            .expect("the trait default never fails");
+        assert_eq!(unversioned.namespace_id, "ns-42");
+        assert!(unversioned.version.is_none());
+        assert!(
+            serde_json::to_value(&unversioned)
+                .unwrap()
+                .get("version")
+                .is_none(),
+            "an absent version stays omitted"
+        );
+    }
 }

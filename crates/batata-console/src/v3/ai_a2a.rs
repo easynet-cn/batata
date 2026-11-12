@@ -9,12 +9,12 @@ use actix_web::{HttpRequest, Responder, Scope, delete, get, post, put, web};
 
 use super::ai_trace::{self, get_username, trace_write};
 
+use batata_common::A2aAgentService;
 use batata_common::model::ai::a2a::{
-    AgentDeleteQuery, AgentDetailQuery, AgentListQuery, AgentListResponse,
+    A2aAgentVersionDetail, AgentDeleteQuery, AgentDetailQuery, AgentListQuery, AgentListResponse,
     AgentRegistrationRequest, AgentRegistryStats, AgentVersionListQuery,
     BatchAgentRegistrationRequest, BatchRegistrationResponse, RegisteredAgent,
 };
-use batata_common::{A2aAgentService, model::ai::VersionDetail};
 use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;
@@ -292,8 +292,15 @@ async fn list_versions(
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
     let name = q.agent_name.as_deref().unwrap_or("");
 
+    // GA's ConsoleA2aController.listAgentVersions answers with
+    // `Result<List<a2a.AgentVersionDetail>>`; the shared service returns the
+    // ARD `Page<AgentVersionSummary>` used by `/agents/versions`, so this
+    // legacy endpoint has to project it back to an array.
     match svc.list_versions(namespace, name).await {
-        Ok(versions) => common_response::Result::<Vec<VersionDetail>>::http_success(versions),
+        Ok(page) => {
+            let versions = A2aAgentVersionDetail::from_page(&page);
+            common_response::Result::<Vec<A2aAgentVersionDetail>>::http_success(versions)
+        }
         Err(e) => common_response::Result::<String>::http_response(
             500,
             error::SERVER_ERROR.code,

@@ -521,6 +521,72 @@ pub struct AgentVersionSummary {
     pub update_time: Option<i64>,
 }
 
+/// GA `com.alibaba.nacos.api.ai.model.a2a.AgentVersionDetail` wire shape.
+///
+/// The legacy A2A endpoints `/v3/{admin,console}/ai/a2a/version/list` answer
+/// with `Result<List<AgentVersionDetail>>` — a JSON **array**. The 3.3.0 ARD
+/// endpoints `/v3/{admin,console}/ai/agents/versions` instead answer with
+/// `Result<Page<AgentVersionSummary>>`; those must keep the paged shape.
+/// Batch 12 made both families share `A2aAgentService::list_versions` (Page),
+/// which broke the Java `listAllVersionOfAgent` decoder.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct A2aAgentVersionDetail {
+    /// Version string.
+    #[serde(default)]
+    pub version: String,
+    /// Creation timestamp, in the GA String shape.
+    #[serde(default)]
+    pub created_at: String,
+    /// Last update timestamp, in the GA String shape.
+    #[serde(default)]
+    pub updated_at: String,
+    /// `isLatest` spelling consumed by the Rust maintainer client.
+    #[serde(default)]
+    pub is_latest: bool,
+    /// `latest` spelling produced by GA's Jackson `isLatest()` getter.
+    #[serde(default)]
+    pub latest: bool,
+}
+
+impl A2aAgentVersionDetail {
+    /// Project the paged ARD summaries onto the legacy GA array shape.
+    ///
+    /// `list_versions` is already sorted newest-first, so the first `online`
+    /// row is the latest published version (GA `latestVersion(agent)`).
+    pub fn from_page(page: &crate::model::Page<AgentVersionSummary>) -> Vec<Self> {
+        let latest = page
+            .page_items
+            .iter()
+            .find(|item| item.status.eq_ignore_ascii_case("online"))
+            .map(|item| item.version.as_str());
+        page.page_items
+            .iter()
+            .map(|item| {
+                let is_latest = latest == Some(item.version.as_str());
+                Self {
+                    version: item.version.clone(),
+                    created_at: item.create_time.map(|v| v.to_string()).unwrap_or_default(),
+                    updated_at: item.update_time.map(|v| v.to_string()).unwrap_or_default(),
+                    is_latest,
+                    latest: is_latest,
+                }
+            })
+            .collect()
+    }
+
+    /// Project a registry entry when the config-backed service is absent.
+    pub fn from_registered_agent(agent: &RegisteredAgent) -> Self {
+        Self {
+            version: agent.card.version.clone(),
+            created_at: agent.registered_at.to_string(),
+            updated_at: agent.updated_at.to_string(),
+            is_latest: false,
+            latest: false,
+        }
+    }
+}
+
 /// Version lifecycle, label mapping and online summaries for an agent
 /// (GA `AgentVersionInfo`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1022,5 +1088,114 @@ mod runtime_snapshot_tests {
         let json = serde_json::to_string(&snapshot).unwrap();
         let decoded: GaRuntimeEndpointSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, snapshot);
+    }
+}
+
+#[cfg(test)]
+mod a2a_version_detail_tests {
+    use super::{A2aAgentVersionDetail, AgentCard, AgentVersionSummary, RegisteredAgent};
+    use crate::model::Page;
+    use crate::model::ai::HealthStatus;
+
+    fn summary(version: &str, status: &str) -> AgentVersionSummary {
+        AgentVersionSummary {
+            version: version.to_string(),
+            status: status.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_page_projects_a_ga_array_with_the_latest_online_version() {
+        let page = Page::new(
+            3,
+            1,
+            3,
+            vec![
+                summary("2.0.0", "draft"),
+                summary("1.5.0", "online"),
+                summary("1.0.0", "online"),
+            ],
+        );
+        let details = A2aAgentVersionDetail::from_page(&page);
+        assert_eq!(details.len(), 3, "one array entry per version");
+        assert_eq!(details[0].version, "2.0.0");
+        assert!(
+            !details[0].is_latest,
+            "a draft is never the published latest"
+        );
+        assert!(details[1].is_latest, "newest online row is latest");
+        assert!(details[1].latest, "GA Jackson spelling must agree");
+        assert!(!details[2].is_latest, "only one row is latest");
+        assert!(!details[2].latest);
+    }
+
+    #[test]
+    fn from_page_uses_ga_camel_case_fields_and_no_page_wrapper() {
+        let mut row = summary("1.0.0", "online");
+        row.create_time = Some(123);
+        row.update_time = Some(456);
+        let page = Page::new(1, 1, 1, vec![row]);
+        let details = A2aAgentVersionDetail::from_page(&page);
+        let json = serde_json::to_value(&details).unwrap();
+        assert!(json.is_array(), "GA expects Result.data to be an array");
+        let entry = &json[0];
+        assert_eq!(entry["version"], "1.0.0");
+        assert_eq!(entry["createdAt"], "123");
+        assert_eq!(entry["updatedAt"], "456");
+        for key in ["createdAt", "updatedAt", "isLatest", "latest"] {
+            assert!(entry.get(key).is_some(), "missing GA field {key}: {entry}");
+        }
+        for key in ["totalCount", "pageItems", "pagesAvailable", "releaseDate"] {
+            assert!(
+                entry.get(key).is_none(),
+                "unexpected paged/legacy field {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_page_with_no_online_version_marks_nothing_latest() {
+        let page = Page::new(
+            2,
+            1,
+            2,
+            vec![summary("2.0.0", "draft"), summary("1.0.0", "offline")],
+        );
+        let details = A2aAgentVersionDetail::from_page(&page);
+        assert_eq!(details.len(), 2);
+        assert!(details.iter().all(|item| !item.is_latest && !item.latest));
+    }
+
+    #[test]
+    fn from_page_of_empty_page_returns_an_empty_array() {
+        let details = A2aAgentVersionDetail::from_page(&Page::<AgentVersionSummary>::empty());
+        assert!(details.is_empty());
+        assert!(serde_json::to_value(&details).unwrap().is_array());
+    }
+
+    #[test]
+    fn from_registered_agent_projects_the_ga_array_entry() {
+        let agent = RegisteredAgent {
+            id: "id-1".to_string(),
+            card: AgentCard {
+                version: "3.2.0".to_string(),
+                ..Default::default()
+            },
+            namespace: "public".to_string(),
+            health_status: HealthStatus::Healthy,
+            registered_at: 100,
+            last_health_check: None,
+            updated_at: 200,
+        };
+        let detail = A2aAgentVersionDetail::from_registered_agent(&agent);
+        assert_eq!(detail.version, "3.2.0");
+        assert_eq!(detail.created_at, "100");
+        assert_eq!(detail.updated_at, "200");
+        assert!(!detail.is_latest && !detail.latest);
+        let json = serde_json::to_value(&detail).unwrap();
+        assert_eq!(json["version"], "3.2.0");
+        assert!(json.get("isLatest").is_some() && json.get("latest").is_some());
+        assert!(json.get("card").is_none(), "no registry wrapper may leak");
     }
 }

@@ -79,12 +79,15 @@ impl ClusterManager for StubClusterManager {
 /// the config-backed `A2aAgentService` wired in so version lookups are real.
 async fn build_app(
     store: Arc<dyn PersistenceService>,
-    svc: Arc<A2aServerOperationService>,
-) -> impl actix_web::dev::Service<
-    actix_http::Request,
-    Response = actix_web::dev::ServiceResponse,
-    Error = actix_web::Error,
-> {
+    svc: Option<Arc<A2aServerOperationService>>,
+) -> (
+    impl actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    >,
+    Arc<AgentRegistry>,
+) {
     let mut configuration = Configuration::default();
     configuration.typed.core.auth.console.enabled = false;
     configuration.typed.core.auth.admin.enabled = false;
@@ -122,20 +125,23 @@ async fn build_app(
         connection_manager: Arc::new(std::sync::OnceLock::new()),
     });
 
-    let agents: Arc<dyn batata_common::A2aAgentService> = svc;
+    let agents: Option<Arc<dyn batata_common::A2aAgentService>> =
+        svc.map(|service| service as Arc<dyn batata_common::A2aAgentService>);
     let registry: Arc<AgentRegistry> = Arc::new(AgentRegistry::new());
 
-    test::init_service(
-        App::new()
-            .app_data(web::Data::from(app_state))
-            .app_data(web::Data::new(agents))
-            .app_data(web::Data::new(registry))
-            .service(
-                web::scope("/v3/admin/ai")
-                    .service(batata_server::api::v3::admin::ai::a2a::routes()),
-            ),
-    )
-    .await
+    let app = App::new()
+        .app_data(web::Data::from(app_state))
+        .app_data(web::Data::new(registry.clone()));
+    let app = match agents {
+        Some(agents) => app.app_data(web::Data::new(agents)),
+        None => app,
+    };
+
+    let service = test::init_service(app.service(
+        web::scope("/v3/admin/ai").service(batata_server::api::v3::admin::ai::a2a::routes()),
+    ))
+    .await;
+    (service, registry)
 }
 
 async fn setup() -> (TestStore, Arc<A2aServerOperationService>) {
@@ -182,7 +188,7 @@ async fn admin_a2a_get_consumes_version_query() {
     let (store, svc) = setup().await;
     store.clean(NAME).await;
     register(&svc).await;
-    let app = build_app(store.store(), svc.clone()).await;
+    let app = build_app(store.store(), Some(svc.clone())).await.0;
 
     let ok_req = test::TestRequest::get()
         .uri(&format!(
@@ -206,6 +212,97 @@ async fn admin_a2a_get_consumes_version_query() {
         missing_resp.status(),
         StatusCode::NOT_FOUND,
         "an unknown version must be looked up and reported as 404"
+    );
+
+    store.clean(NAME).await;
+}
+
+/// GA's `A2aMaintainerServiceImpl.listAllVersionOfAgent` decodes
+/// `Result<List<a2a.AgentVersionDetail>>`. Batch 12 made this handler share
+/// `A2aAgentService::list_versions` (an ARD `Page`), so `Result.data` became a
+/// JSON object and the Java SDK threw `NacosDeserializationException`. This is
+/// the route-level guard for the array projection; the same projection is used
+/// by the console `/v3/console/ai/a2a/version/list` endpoint.
+#[actix_web::test]
+async fn admin_a2a_version_list_returns_a_ga_array() {
+    let (store, svc) = setup().await;
+    store.clean(NAME).await;
+    register(&svc).await;
+    let app = build_app(store.store(), Some(svc.clone())).await.0;
+
+    let req = test::TestRequest::get()
+        .uri(&format!(
+            "/v3/admin/ai/a2a/version/list?agentName={NAME}&namespaceId=public"
+        ))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["code"], 0, "unexpected envelope: {body}");
+
+    let data = &body["data"];
+    assert!(
+        data.is_array(),
+        "GA expects Result.data to be an array: {body}"
+    );
+    assert!(
+        data.get("pageItems").is_none() && data.get("totalCount").is_none(),
+        "an ARD Page leaked into the legacy A2A endpoint: {body}"
+    );
+    let items = data.as_array().expect("data is an array");
+    assert!(!items.is_empty(), "the registered version must be listed");
+    assert_eq!(items[0]["version"], VERSION);
+    assert!(
+        items[0].get("isLatest").is_some() && items[0].get("latest").is_some(),
+        "both GA Jackson and Rust client spellings must be present: {items:?}"
+    );
+
+    store.clean(NAME).await;
+}
+
+/// Without the config-backed service the handler falls back to the in-memory
+/// registry. That branch must also answer with the GA array envelope, not an
+/// ARD Page and not a raw `RegisteredAgent` list.
+#[actix_web::test]
+async fn admin_a2a_version_list_without_service_stays_a_ga_array() {
+    let (store, svc) = setup().await;
+    store.clean(NAME).await;
+    register(&svc).await;
+    let (app, registry) = build_app(store.store(), None).await;
+    registry
+        .register(batata_common::model::ai::a2a::AgentRegistrationRequest {
+            card: batata_common::model::ai::a2a::AgentCard {
+                name: NAME.to_string(),
+                version: VERSION.to_string(),
+                ..Default::default()
+            },
+            namespace: "public".to_string(),
+        })
+        .expect("register into the fallback registry");
+
+    let req = test::TestRequest::get()
+        .uri(&format!(
+            "/v3/admin/ai/a2a/version/list?agentName={NAME}&namespaceId=public"
+        ))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["code"], 0, "unexpected envelope: {body}");
+    assert!(
+        body["data"].is_array(),
+        "the fallback must not return a paged object: {body}"
+    );
+    assert!(
+        body["data"].get("pageItems").is_none(),
+        "an ARD Page leaked into the fallback: {body}"
+    );
+    let items = body["data"].as_array().expect("data is an array");
+    assert_eq!(items.len(), 1, "the fallback registry entry must be listed");
+    assert_eq!(items[0]["version"], VERSION);
+    assert!(
+        items[0].get("isLatest").is_some() && items[0].get("latest").is_some(),
+        "fallback must emit GA fields, not a raw RegisteredAgent: {items:?}"
     );
 
     store.clean(NAME).await;

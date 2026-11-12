@@ -426,10 +426,13 @@ divergence stays registered as a separate `⚪` row.
 | TG-03 **CLOSED** | all 10 `BatataAiService` public methods covered by direct wiremock tests (constructor, 4 reads, 2 cache getters, `clear_cache`, 2 size accessors), success paths and non-zero-code error paths | `crates/batata-client/tests/ai_service_test.rs` |
 | tests | 7 wiremock cases for the agent facade; `client_test.rs` 115 → **122** | `crates/batata-maintainer-client/tests/client_test.rs` |
 
-`F-NAC-MAINT-008` stays `🟡`, not `🟢`: `createDraft`/`updateDraft`/
-`updateLabels` use batata's JSON wire, `listAgentVersions` returns a plain
-array on batata instead of GA's `Page`, and the GA facade's
-`updateAgent`/`deleteAgent`/`getRuntimeEndpoints` are not wrapped.
+`F-NAC-MAINT-008` stayed `🟡`, not `🟢`, at that point: `createDraft`/
+`updateDraft`/`updateLabels` used batata's JSON wire, `listAgentVersions`
+(the 3.3.0 `/agents/versions` endpoint) returned a plain array on batata
+instead of GA's `Page`, and the GA facade's `updateAgent`/`deleteAgent`/
+`getRuntimeEndpoints` were not wrapped. Batch 12 later changed that endpoint
+to the GA `Page` shape; §29 records the two distinct version-list contracts
+that the change initially collapsed into one.
 
 Also corrected a stale claim in §8.3: `F-NAC-CSDK-002` said the server
 `RENEW` contract was implemented, contradicting §8.2's verified false-green
@@ -2486,7 +2489,12 @@ registered with its GA shape.
 * `batata-ai`: `endpoint_service::snapshot_tests` proves optional version
   returns all three registered runtime versions, a concrete version returns the
   exact batch plus range-covered batches, and `healthy`/`enabled`/`weight`
-  survive the Naming mapping.
+  survive the Naming mapping. The new `registry/a2a.rs` test
+  `default_runtime_endpoint_snapshot_echoes_request_fields` exercises the trait
+  **default** through `AgentRegistry` (a real implementor that deliberately
+  does not override it) and asserts the namespace / agent / version echo, the
+  flat GA JSON with one empty `RUNTIME` set, the absence of the console
+  wrapper, and version omission when the request has no version.
 * `batata-server/tests/agent_admin_routes.rs`: the old "fail loudly without a
   backend" case is replaced by a GA-shaped **200 empty snapshot** case
   (default namespace, version omitted, one RUNTIME set); new cases cover live
@@ -2494,9 +2502,45 @@ registered with its GA shape.
   `agent_client_routes.rs` (29 cases) still pass unchanged.
 * `batata-maintainer-client`: 2 serde tests + 3 wiremock cases including a full
   GA `endpointSets` decode.
-* Mutants: see the final validation summary below; every guard above is
-  compile-safe mutant-checked (`/tmp/batata_aisrv001_mutants.py`), with all
-  files byte-restored afterwards.
+* Mutants: `/tmp/batata_aisrv001_mutants.py` — **21/21 compile-safe mutants
+  killed**, 0 survived, 0 invalid targets; each source file was restored
+  byte-for-byte before the next run. Coverage: GA snapshot shape (`RUNTIME`
+  source, `lastUpdatedTime`, requested version, `callInterface`), the trait
+  default's four echoes and its RUNTIME set, live endpoint mapping (URI port,
+  `healthy`, `enabled`, `weight`, version binding), optional-version routing
+  (advertised ranges, all-versions service prefix), admin admission
+  (missing-protocol 400, version not required), and the maintainer-client DTO
+  (`endpointSets` decode, camelCase).
+
+**Validation-debt correction (2026-11-12, after the batch-21 commit).** The
+first harness run at commit time was **15/17**, not 21/21. The original mutant
+bullet claimed that every guard was compile-safe mutant-checked and pointed
+readers to a validation-summary section that does not exist in this report —
+an over-claim with a dangling reference. The two unresolved cases were:
+
+1. `SURVIVED: trait default loses the namespace echo` — no test called the
+   trait default at all. Route tests use the `A2aServerOperationService`
+   override and the model tests call `GaRuntimeEndpointSnapshot::empty`
+   directly, so replacing the `namespace` echo with `""` stayed green.
+2. `INVALID TARGET (2 matches): all-versions scan loses its service prefix` —
+   `let prefix = a2a_service_name(name, "")` appears in both the
+   version-filtered and all-versions readers, and the harness requires a unique
+   match, so that guard was never actually mutated.
+
+Both were closed by adding the `registry/a2a.rs` test above, disambiguating
+the prefix target with its enclosing function signature, and adding four
+mutants for the new assertions (17 → 21). A pre-existing flaky test also had
+to be stabilised before the rerun: `agent_change_broadcast_round_trips` in
+`agent_watch.rs` read the first event from the process-global
+`AGENT_CHANGE_TX` broadcast, which `change_via_global_broadcast_is_fanned_out`
+in `agent_rad_watch.rs` also publishes to, so it intermittently received
+`"agent-z"` instead of its own `"some-agent"`. It now drains until its own
+marker arrives and panics if it never does. A flaky baseline would make every
+mutant appear killed, so the 21/21 result is only meaningful after that fix.
+Final gates: `cargo fmt --all --check`, `cargo clippy --workspace
+--all-targets -- -D warnings` (0 warnings), `scripts/compat_check.py`, the five
+targeted suites, and `cargo test --workspace --exclude
+batata-integration-tests` = **4032 passed / 0 failed / 34 ignored**.
 
 Known, deliberately out-of-scope residuals: (1) batata's advertised
 `versionRange` grammar is `1.x` / `^1.2.3`, not GA's Maven-style
@@ -2516,3 +2560,118 @@ Nacos now has **no 🟡 rows**; the two `⚪` rows are baseline-out develop drif
 and `⛔` rows are GA-deprecated endpoints. T-ID counts unchanged (401 / 1040).
 No GA wire was changed, no new ability key was declared, and no commit, push,
 `--full` gate, publish, yank, archive or tag was performed.
+
+## 29. Full-gate regression fix — the two distinct Agent version-list contracts
+
+### 29.1 Trigger
+
+`./scripts/regression.sh --full` (`reports/regression/20261112-195251`)
+finished **GATE FAILED, blockers=7, known=0**: `integration|nacos` plus all six
+matrix combinations. All seven shared one cause:
+`NacosAiA2aTest.testAgentVersionManagement` threw
+`NacosDeserializationException` because GA 3.3.0's
+`A2aMaintainerServiceImpl.listAllVersionOfAgent` decodes
+`Result<List<a2a.AgentVersionDetail>>`, while batata answered with
+`Result.data` = `START_OBJECT` (an ARD `Page`). The nacos suite reported
+531 tests / 0 failures / **1 error**; the previous full gate
+(`20261110-072516`) had 0 errors. Everything else in that gate passed
+(fmt, check, unit 3330/0, rust and consul integration, matrix coverage).
+
+### 29.2 GA 3.3.0 evidence (baseline `b64bc9118`)
+
+| Endpoint | GA controller | `Result.data` shape |
+|----------|---------------|---------------------|
+| `/v3/admin/ai/a2a/version/list` | `A2aAdminController.listAgentVersions` (`@GetMapping("/version/list")`) | `List<a2a.AgentVersionDetail>` |
+| `/v3/console/ai/a2a/version/list` | `ConsoleA2aController.listAgentVersions` (`@GetMapping("/version/list")`) | `List<a2a.AgentVersionDetail>` |
+| `/v3/admin/ai/agents/versions` | `AgentAdminController.listVersions` (`@GetMapping("/versions")`) | `Page<agent.AgentVersionSummary>` |
+| `/v3/console/ai/agents/versions` | `ConsoleAgentController.listVersions` (`@GetMapping("/versions")`) | `Page<agent.AgentVersionSummary>` |
+
+The two families coexist in GA and are not aliases. Client-side evidence:
+`A2aMaintainerServiceImpl.listAllVersionOfAgent` decodes
+`Result<List<AgentVersionDetail>>` from the a2a path, while
+`AgentMaintainerServiceImpl.listAgentVersions` decodes
+`Result<Page<AgentVersionSummary>>` from the agents path. The array element
+`a2a.AgentVersionDetail` carries `version`, `createdAt`, `updatedAt` and a
+boolean `isLatest()` getter (Jackson spells it `latest`); the Rust
+`batata-maintainer-client` DTO spells the same flag `isLatest`. Both spellings
+are emitted: GA's `Jackson2JsonAdapterDelegate.createObjectMapper()` disables
+`FAIL_ON_UNKNOWN_PROPERTIES` (and `Jackson3JsonAdapterDelegate` does the same),
+so Java ignores the extra field while the Rust client consumes it. The failing
+case also predates the regression — `testAgentVersionManagement` entered the
+suite in `0f527a4c` (2026-03-30), and the 2026-11-10 full gate ran it with
+0 errors while batata still answered with an array.
+
+### 29.3 Root cause
+
+`02e7cc4b` (batch 12, 2026-11-11) changed
+`A2aAgentService::list_versions` from `Vec<VersionDetail>` to
+`Page<AgentVersionSummary>` to align the new ARD `/agents/versions`
+endpoints. The legacy A2A handlers
+(`batata-server/src/api/v3/admin/ai/a2a.rs::list_versions`,
+`batata-console/src/v3/ai_a2a.rs::list_versions`) call the same trait method;
+their bodies were not changed and are byte-identical to the pre-batch-12
+versions, so they started serialising the Page too. The older green gate
+predates that commit. The `serde_with` removal in the same working tree is
+unrelated (it only touches `batata-config`'s config model).
+
+### 29.4 Fix
+
+* `batata-common/src/model/ai/a2a.rs`: new `A2aAgentVersionDetail` DTO — GA
+  camelCase `version`/`createdAt`/`updatedAt` plus both `isLatest` (Rust
+  client) and `latest` (GA Jackson) spellings of the flag — with
+  `from_page(Page<AgentVersionSummary>)` and `from_registered_agent()`.
+  `from_page` preserves the service's newest-first order and marks the first
+  `online` row as latest, matching GA's `latestVersion(agent)`.
+* `/v3/admin/ai/a2a/version/list` and `/v3/console/ai/a2a/version/list`
+  project `list_versions`' Page back into `Result<List<...>>`. The admin
+  in-memory-registry fallback is projected too, so both branches answer with
+  the same GA array envelope.
+* `/v3/{admin,console}/ai/agents/versions`, the Rust
+  `agents_list_versions` Page decoder and every internal `.page_items` caller
+  are **unchanged**: that Page shape is the correct GA contract.
+* §9.2's historical claim that batata returned a plain array where GA wanted
+  a `Page` is re-worded with its batch-12 follow-up instead of being left as
+  a present-tense statement.
+
+### 29.5 Validation
+
+* Mutants (`/tmp/batata_a2a_version_mutants.py`): **12/12 killed**, all
+  compile-safe, every replacement target unique, all three source files
+  byte-restored. The mutants cover both handlers leaking the Page, the
+  fallback leaking raw `RegisteredAgent` entries, empty arrays,
+  latest-version selection, both flag spellings, camelCase field names, and
+  timestamp / version projection.
+* Targeted suites: 5 DTO unit tests, 3 admin route tests (including the
+  no-service fallback), 6 console agent route tests (including the new
+  console A2A case).
+* Gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+  -- -D warnings` (0 warnings), `scripts/compat_check.py` (577 F / 1040
+  T-ID, nacos 191/191 anchored), `git diff --check`, and
+  `cargo test --workspace --exclude batata-integration-tests` = **4042 passed
+  / 0 failed / 34 ignored** (+10 cases, no case-count regression).
+
+### 29.6 Harness false red and the final full gate
+
+A second `--full` (`20261112-231036`) still reported
+`integration|nacos: suite failed (rc=1)` with the same `START_OBJECT` error,
+although the A2A projection was already in the tree. `logs/startup.log` showed
+`CMD: .../target/release/batata-server`: the standalone branch of
+`scripts/startup.sh` ignored the `BINARY` override that `scripts/test.sh`
+passes for `sdk --quick` (debug) and preferred any existing release binary.
+`regression.sh::ensure_server_binary()` relinks only the debug executable, so
+the integration suites ran a pre-fix release build. The cluster branch of
+`startup.sh` already honoured `BINARY`. The matrix stage rebuilt release itself
+and all six combinations passed, which independently confirmed the wire fix.
+
+Fix: the standalone lookup now takes an explicit `BINARY` first, resolves it to
+an absolute path, and fails with `error_exit` when the override is not
+executable instead of silently falling back. `bash -n` and a selection probe
+both pass; this also makes `RELEASE=1` behave as documented.
+
+Final `--full` (`reports/regression/20261113-005222`): **GATE PASSED,
+blockers=0, known=0**. fmt clean; check 0 errors / 0 warnings; unit
+3333 passed / 0 failed; integration rust, nacos and consul all rc=0, with the
+Nacos Java suite at 531 tests / 0 failures / 0 errors / 8 skipped; matrix 6
+combinations with every coverage anchor at its full case count. The archived
+`startup.log` now records the debug binary. Generated `sdk-tests/*/TEST_REPORT.md`
+and `conf/cluster.conf` were restored after the run.
