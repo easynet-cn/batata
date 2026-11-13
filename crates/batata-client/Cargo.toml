@@ -10,7 +10,6 @@ readme = "README.md"
 keywords = ["nacos", "batata", "service-discovery", "configuration", "microservices"]
 categories = ["network-programming", "config"]
 documentation = "https://docs.rs/batata-client"
-homepage = "https://github.com/easynet-cn/batata"
 rust-version = "1.88"
 
 [dependencies]
@@ -43,7 +42,6 @@ parking_lot = { workspace = true }
 
 # Streaming
 tokio-stream = { workspace = true }
-futures = { workspace = true }
 
 # Utilities
 uuid = { workspace = true }
@@ -73,6 +71,8 @@ chrono = { workspace = true }
 prometheus = { workspace = true }
 
 [dev-dependencies]
+# `tests/unit_test.rs` uses `futures::future::join_all`.
+futures = { workspace = true }
 criterion = { workspace = true }
 rcgen = { workspace = true }
 wiremock = { workspace = true }

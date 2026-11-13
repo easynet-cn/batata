@@ -14,7 +14,6 @@ batata-common = { workspace = true }
 batata-persistence = { workspace = true }
 batata-auth = { workspace = true }
 batata-server-common = { workspace = true }
-batata-ai = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }

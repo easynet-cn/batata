@@ -3,7 +3,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // We use native Rust types instead of generated proto types.
     // Proto files are kept for reference and future gRPC service implementation.
     //
-    // To enable proto compilation, uncomment the following:
+    // To enable proto compilation, re-add `tonic-prost-build` to
+    // [build-dependencies] in Cargo.toml and uncomment the following:
     // tonic_prost_build::configure()
     //     .build_server(true)
     //     .build_client(true)

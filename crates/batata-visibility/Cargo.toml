@@ -18,9 +18,6 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Concurrency
-dashmap = { workspace = true }
-
 # Logging
 tracing = { workspace = true }
 

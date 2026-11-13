@@ -10,7 +10,6 @@ readme = "README.md"
 keywords = ["nacos", "batata", "grpc", "api", "microservices"]
 categories = ["network-programming", "config"]
 documentation = "https://docs.rs/batata-api"
-homepage = "https://github.com/easynet-cn/batata"
 rust-version = "1.88"
 
 [dependencies]

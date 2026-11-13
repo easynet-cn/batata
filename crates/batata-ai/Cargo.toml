@@ -15,7 +15,6 @@ batata-api = { workspace = true }
 batata-auth = { workspace = true }
 batata-core = { workspace = true }
 batata-persistence = { workspace = true }
-batata-naming = { workspace = true }
 batata-server-common = { workspace = true }
 batata-visibility = { workspace = true }
 
@@ -65,6 +64,8 @@ const-hex = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+# `snapshot_tests` builds a real `NamingService` for AI endpoint tests.
+batata-naming = { workspace = true }
 # Embedded (RocksDB) persistence, exercised by the standalone-mode tests.
 batata-consistency = { workspace = true }
 rocksdb = { workspace = true }

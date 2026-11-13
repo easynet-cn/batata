@@ -9,13 +9,9 @@ repository.workspace = true
 description = "Service Mesh support for Batata (xDS protocol, Istio integration)"
 
 [dependencies]
-batata-common = { workspace = true }
-batata-naming = { workspace = true }
-
 # gRPC and protobuf
 tonic = { workspace = true, features = ["transport", "codegen"] }
 prost = { workspace = true }
-prost-types = { workspace = true }
 tower = { workspace = true }
 http = { workspace = true }
 http-body = { workspace = true }
@@ -38,7 +34,6 @@ tracing = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 
 # Concurrency
 dashmap = { workspace = true }
@@ -49,6 +44,3 @@ chrono = { workspace = true }
 
 # UUID
 uuid = { workspace = true }
-
-[build-dependencies]
-tonic-prost-build = { workspace = true }

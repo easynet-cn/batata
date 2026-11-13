@@ -56,10 +56,8 @@ batata-maintainer-client = { path = "crates/batata-maintainer-client" }
 batata-mesh = { path = "crates/batata-mesh" }
 batata-ai = { path = "crates/batata-ai" }
 batata-copilot = { path = "crates/batata-copilot" }
-batata-consul-client = { path = "crates/batata-consul-client" }
 batata-migration = { path = "crates/batata-migration" }
 batata-visibility = { path = "crates/batata-visibility" }
-batata-server = { path = "crates/batata-server" }
 batata-server-api = { path = "crates/batata-server-api" }
 
 # Async runtime

@@ -179,6 +179,3 @@ harness = false
 [[bench]]
 name = "circuit_breaker_bench"
 harness = false
-
-[build-dependencies]
-tonic-prost-build = { workspace = true }
