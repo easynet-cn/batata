@@ -372,10 +372,11 @@ than a version bump only. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
-Rust 1.88 or newer (edition 2024), with a Tokio runtime. The 1.88 floor is
-required because the SDK uses let chains, stabilized in Rust 1.88 for the 2024
-edition. Both gRPC and HTTP TLS use the rustls backend; no system OpenSSL
-development package is required.
+Rust 1.89 or newer (edition 2024), with a Tokio runtime. The 1.89 floor comes
+from the `uuid` 1.29 runtime dependency, which requires Rust 1.89; the let chains
+used by the SDK stabilized earlier, in Rust 1.88 for the 2024 edition. Both gRPC
+and HTTP TLS use the rustls backend; no system OpenSSL development package is
+required.
 
 ## Known Limitations
 

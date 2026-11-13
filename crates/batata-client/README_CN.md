@@ -361,9 +361,9 @@ cargo run -p batata-client --example naming_example
 
 ## 环境要求
 
-Rust 1.88 及以上（edition 2024），需要 Tokio runtime。下限为 1.88 是因为 SDK 使用了
-let chains，该语法在 Rust 1.88 才于 2024 edition 稳定。gRPC 与 HTTP 的 TLS 均使用
-rustls 后端，无需系统 OpenSSL 开发包。
+Rust 1.89 及以上（edition 2024），需要 Tokio runtime。下限为 1.89 是因为运行时依赖
+`uuid` 1.29 要求 Rust 1.89；SDK 使用的 let chains 则在 Rust 1.88 才于 2024 edition
+稳定。gRPC 与 HTTP 的 TLS 均使用 rustls 后端，无需系统 OpenSSL 开发包。
 
 ## 已知限制
 

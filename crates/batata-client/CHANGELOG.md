@@ -43,7 +43,8 @@ not API compatible with it.
   crate. Generated gRPC code is checked in, so neither `protoc` nor a `build.rs`
   is needed to compile the client.
 - The whole workspace (including this crate) moved to version `1.0.0` and
-  edition 2024 / minimum supported Rust 1.88 (let chains).
+  edition 2024 / minimum supported Rust 1.89 (let chains plus the `uuid` 1.29
+  runtime dependency, which requires Rust 1.89).
 
 ### Removed
 

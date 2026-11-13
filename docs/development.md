@@ -105,10 +105,14 @@ resolve from crates.io. Each published crate ships its own `README.md`,
 `LICENSE` and `CHANGELOG.md`; `batata-client` also ships `README_CN.md` and two
 compilable examples.
 
-All three crates declare `rust-version = "1.88"`. The workspace is edition 2024
+All three crates declare `rust-version = "1.89"`. The workspace is edition 2024
 and uses let chains, which stabilized in Rust 1.88 and are only available in the
-2024 edition, so the edition-2024 floor of 1.85 is not sufficient. Keep this in
-sync with the badge in the root READMEs and the SDK `Requirements` sections.
+2024 edition, so the edition-2024 floor of 1.85 is not sufficient. The actual
+floor is 1.89 because `batata-client` depends on `uuid` 1.29 at runtime, whose
+MSRV is 1.89 (`uuid` >= 1.27 all require 1.89). Verify before publishing with
+`cargo +1.89 check -p batata-api -p batata-client -p batata-maintainer-client`.
+Keep this in sync with the badge in the root READMEs and the SDK `Requirements`
+sections.
 
 **Hard rule:** a published crate must not depend on a `publish = false`
 workspace crate through a path-only dependency. `cargo package` strips `path`
@@ -170,7 +174,9 @@ with `batata.remote.server.grpc.sdk.tls.enabled` plus
 ### Release order
 
 1. `cargo login` with a token from `crates.io/settings/tokens` is a manual local
-   step; credentials are never committed. CI uses `CARGO_REGISTRY_TOKEN`.
+   step; credentials are never committed. No CI job publishes crates: `ci.yml`
+   only runs checks and `release.yml` only builds tagged binaries, so publishing
+   is always performed locally.
 2. Publish in dependency order, waiting for the crates.io index after each
    step: `batata-api` -> `batata-client` -> `batata-maintainer-client`.
 3. Push the `v1.0.0` tag; `.github/workflows/release.yml` builds the binary

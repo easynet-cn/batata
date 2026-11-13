@@ -49,7 +49,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Requirements
 
-Rust 1.88 or newer (edition 2024; let chains are used across the workspace).
+Rust 1.89 or newer (edition 2024). The SDK line shares one floor: let chains need Rust 1.88, and the client's `uuid` 1.29 runtime dependency needs Rust 1.89.
 
 ## License
 

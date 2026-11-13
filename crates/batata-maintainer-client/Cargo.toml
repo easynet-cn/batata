@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["nacos", "batata", "admin", "configuration", "microservices"]
 categories = ["network-programming", "config"]
 documentation = "https://docs.rs/batata-maintainer-client"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [dependencies]
 batata-client = { workspace = true }
