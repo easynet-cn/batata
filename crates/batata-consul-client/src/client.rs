@@ -329,14 +329,20 @@ impl ConsulClient {
         std::time::Duration::from_millis(actual)
     }
 
-    /// GET request returning optional result (None on 404)
+    /// GET request returning optional result.
+    ///
+    /// Consul answers `200` with a JSON `null` body for several catalog
+    /// lookups when the entity is absent (for example
+    /// `/v1/catalog/node/:node`), so absence is not limited to `404`.
+    /// Deserializing into `Option<T>` lets serde map `null` to `None` while
+    /// keeping the retry, metrics and query-metadata handling in `get()`.
     pub async fn get_optional<T: DeserializeOwned>(
         &self,
         path: &str,
         opts: &QueryOptions,
     ) -> Result<(Option<T>, QueryMeta)> {
-        match self.get::<T>(path, opts).await {
-            Ok((body, meta)) => Ok((Some(body), meta)),
+        match self.get::<Option<T>>(path, opts).await {
+            Ok((body, meta)) => Ok((body, meta)),
             Err(ConsulError::NotFound) => Ok((None, QueryMeta::default())),
             Err(e) => Err(e),
         }

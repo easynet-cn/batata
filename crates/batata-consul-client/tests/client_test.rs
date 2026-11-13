@@ -1098,6 +1098,25 @@ async fn test_not_found() {
     assert!(node.is_none());
 }
 
+#[tokio::test]
+async fn test_catalog_node_null_body_returns_none() {
+    let server = MockServer::start().await;
+    let client = make_client(&server).await;
+
+    // Consul returns 200 + `null` (not 404) when a catalog node is absent.
+    Mock::given(method("GET"))
+        .and(path("/v1/catalog/node/gone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::Value::Null))
+        .mount(&server)
+        .await;
+
+    let (node, _) = client
+        .catalog_node("gone", &QueryOptions::default())
+        .await
+        .unwrap();
+    assert!(node.is_none(), "200 + null must map to None");
+}
+
 // ==================== Model Tests ====================
 
 #[test]

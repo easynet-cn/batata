@@ -122,12 +122,26 @@ async fn test_catalog_node() {
         "Node address should not be empty"
     );
 
-    // Query catalog for this specific node
-    let (catalog_node, _meta) = client.catalog_node(node_name, &common::q()).await.unwrap();
+    // Other catalog tests register and deregister nodes concurrently, so a
+    // name from /catalog/nodes can disappear before the follow-up lookup.
+    // Consul answers 200 + null for a missing node; probe the listed nodes
+    // until one resolves instead of assuming nodes[0] is still alive.
+    let mut resolved = None;
+    for candidate in &nodes {
+        let (catalog_node, _meta) = client
+            .catalog_node(&candidate.node, &common::q())
+            .await
+            .unwrap();
+        if let Some(catalog_node) = catalog_node {
+            resolved = Some((candidate.node.clone(), catalog_node));
+            break;
+        }
+    }
 
-    let catalog_node = catalog_node.expect("Catalog node should exist");
+    let (node_name, catalog_node) =
+        resolved.expect("At least one catalog node should be queryable");
     let node = catalog_node.node.expect("Node info should be present");
-    assert_eq!(node.node, *node_name, "Node name should match");
+    assert_eq!(node.node, node_name, "Node name should match");
     assert!(!node.address.is_empty(), "Node address should not be empty");
 }
 
