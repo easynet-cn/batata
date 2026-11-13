@@ -11,7 +11,6 @@ publish = false
 [dependencies]
 # Test utilities exposed as library for other crates
 batata-client = { workspace = true }
-batata-common = { workspace = true }
 batata-api = { workspace = true }
 batata-migration = { workspace = true }
 reqwest = { workspace = true }

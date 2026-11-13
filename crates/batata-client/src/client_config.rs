@@ -52,7 +52,7 @@ pub enum ProxyConfig {
     NoProxy,
     /// Use system proxy settings (reads HTTP_PROXY, HTTPS_PROXY, macOS settings, etc.)
     SystemProxy,
-    /// Custom proxy URL (e.g., "http://proxy.corp:8080" or "socks5://proxy:1080")
+    /// Custom proxy URL (e.g., <http://proxy.corp:8080> or <socks5://proxy:1080>)
     Custom(String),
 }
 

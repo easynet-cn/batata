@@ -10,7 +10,6 @@ description = "Server-only API definitions for Batata (raft, distro, validation)
 
 [dependencies]
 batata-api = { workspace = true }
-batata-common = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 prost = { workspace = true }

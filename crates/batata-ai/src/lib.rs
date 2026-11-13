@@ -20,6 +20,8 @@ pub mod api;
 /// gRPC handlers for MCP and A2A management.
 pub mod handler;
 pub mod model;
+/// Server-side MCP / A2A (RAD) gRPC request and response models.
+pub mod rad_model;
 pub mod registry;
 /// AI resource repository facade and shared value vocabularies.
 pub mod repository;

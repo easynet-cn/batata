@@ -8,10 +8,13 @@ Shared protocol contract for [Batata](https://github.com/easynet-cn/batata) SDK
 clients and the server: gRPC service definitions plus the HTTP request/response
 models used by the Nacos-compatible V2/V3 APIs.
 
-This crate deliberately has **no server-side dependencies** (no database, Raft or
-RocksDB). It is published so that `batata-client` and `batata-maintainer-client`
-can be resolved from crates.io; application code normally depends on those crates
-instead of importing this one directly.
+This crate deliberately has **no workspace-internal dependencies** (no
+`batata-common`, database, Raft or RocksDB). It is published so that
+`batata-client` and `batata-maintainer-client` can be resolved from crates.io;
+application code normally depends on those crates instead of importing this one
+directly. The server-only MCP/A2A (RAD) gRPC models live in the unpublished
+`batata-ai` crate; `remote::model` here only carries the request/response
+contract shared with SDK clients.
 
 ## Install
 

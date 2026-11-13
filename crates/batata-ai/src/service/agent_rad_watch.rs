@@ -14,10 +14,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::rad_model::AgentDiscoveryRequest as ModelDiscoveryRequest;
+use crate::rad_model::AgentSubscribeRpcResponse;
 use async_trait::async_trait;
 use batata_api::grpc::Payload;
-use batata_api::remote::model::AgentDiscoveryRequest as ModelDiscoveryRequest;
-use batata_api::remote::model::{AgentSubscribeRpcResponse, ResponseTrait};
+use batata_api::remote::model::ResponseTrait;
 use batata_common::DEFAULT_NAMESPACE_ID;
 use tracing::debug;
 
@@ -625,7 +626,7 @@ mod tests {
     fn model_req(agent_name: &str) -> ModelDiscoveryRequest {
         ModelDiscoveryRequest {
             namespace_id: "public".to_string(),
-            reference: batata_api::remote::model::AgentReference {
+            reference: crate::rad_model::AgentReference {
                 agent_name: agent_name.to_string(),
                 version: String::new(),
                 label: String::new(),

@@ -110,6 +110,16 @@ and uses let chains, which stabilized in Rust 1.88 and are only available in the
 2024 edition, so the edition-2024 floor of 1.85 is not sufficient. Keep this in
 sync with the badge in the root READMEs and the SDK `Requirements` sections.
 
+**Hard rule:** a published crate must not depend on a `publish = false`
+workspace crate through a path-only dependency. `cargo package` strips `path`
+and requires a version requirement, so such a dependency either fails packaging
+outright or resolves to a crate that does not exist on crates.io. `batata-api`
+in particular has **no workspace-internal dependencies**; the server-only
+MCP/A2A (RAD) gRPC models live in `batata-ai::rad_model`, not in the published
+contract crate. `cargo package -p batata-api --allow-dirty` is the pre-publish
+guard for this rule: run it before any release step, since the downstream
+crates cannot be published until `batata-api` can be packaged.
+
 ### Local validation without publishing
 
 `cargo package` resolves registry dependencies even with `--no-verify`, so
@@ -213,7 +223,7 @@ but it is not part of this SDK release and is not yanked.
 
 - **~50,000+ lines** of Rust code
 - **25 internal crates** in workspace
-- **3757 unit tests** (`cargo test --workspace --exclude batata-integration-tests`, 2026-11-09)
+- **4045 unit tests** (`cargo test --workspace --exclude batata-integration-tests`, 2026-11-13)
 - **3 benchmark suites** for performance testing; absolute RPS is not a gate —
   use `scripts/bench_ab.py` or the same-binary A/B guards in the code (see
   ADR-0002 in [Architecture](architecture.md))

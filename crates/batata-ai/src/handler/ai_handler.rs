@@ -11,19 +11,19 @@ use batata_core::{GrpcResource, PermissionAction, ResourceType, model::Connectio
 
 use batata_api::{
     grpc::Payload,
-    remote::model::{
-        AgentCatalogEntry, AgentCatalogVersion, AgentDiscoveryCallInterface,
-        AgentDiscoveryResponse, AgentDiscoveryResult, AgentDiscoveryRpcRequest,
-        AgentEndpointDeregisterRpcRequest, AgentEndpointInfo, AgentEndpointOperationResponse,
-        AgentEndpointRegisterRpcRequest, AgentEndpointRequest, AgentEndpointResponse,
-        AgentPublishRpcRequest, AgentPublishRpcResponse, AgentSearchPage, AgentSearchResponse,
-        AgentSearchRpcRequest, AgentSubscribeRpcRequest, AgentSubscribeRpcResponse,
-        AgentUnsubscribeRpcRequest, AgentUnsubscribeRpcResponse, EndpointSet,
-        McpServerEndpointRequest, McpServerEndpointResponse, QueryAgentCardRequest,
-        QueryAgentCardResponse, QueryMcpServerRequest, QueryMcpServerResponse,
-        ReleaseAgentCardRequest, ReleaseAgentCardResponse, ReleaseMcpServerRequest,
-        ReleaseMcpServerResponse, RequestTrait, ResponseTrait,
-    },
+    remote::model::{RequestTrait, ResponseTrait},
+};
+
+use crate::rad_model::{
+    AgentCatalogEntry, AgentCatalogVersion, AgentDiscoveryCallInterface, AgentDiscoveryResponse,
+    AgentDiscoveryResult, AgentDiscoveryRpcRequest, AgentEndpointDeregisterRpcRequest,
+    AgentEndpointInfo, AgentEndpointOperationResponse, AgentEndpointRegisterRpcRequest,
+    AgentEndpointRequest, AgentEndpointResponse, AgentPublishRpcRequest, AgentPublishRpcResponse,
+    AgentSearchPage, AgentSearchResponse, AgentSearchRpcRequest, AgentSubscribeRpcRequest,
+    AgentSubscribeRpcResponse, AgentUnsubscribeRpcRequest, AgentUnsubscribeRpcResponse,
+    EndpointSet, McpServerEndpointRequest, McpServerEndpointResponse, QueryAgentCardRequest,
+    QueryAgentCardResponse, QueryMcpServerRequest, QueryMcpServerResponse, ReleaseAgentCardRequest,
+    ReleaseAgentCardResponse, ReleaseMcpServerRequest, ReleaseMcpServerResponse,
 };
 
 use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
@@ -1716,9 +1716,8 @@ pub struct QueryPromptHandler {
 #[tonic::async_trait]
 impl PayloadHandler for QueryPromptHandler {
     async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
-        use batata_api::remote::model::{
-            QueryPromptRequest, QueryPromptResponse, RequestTrait, ResponseTrait,
-        };
+        use crate::rad_model::{QueryPromptRequest, QueryPromptResponse};
+        use batata_api::remote::model::{RequestTrait, ResponseTrait};
 
         let request = QueryPromptRequest::from(payload);
         let request_id = request.request_id();
@@ -1926,10 +1925,9 @@ mod tests {
 
     // --- AI-RAD: Agent Publish / Subscribe / Unsubscribe (GA `radV1` / `radWatchV1`) ---
 
+    use crate::rad_model::{AgentDiscoveryRequest, AgentPublishRequest, AgentReference};
     use crate::service::agent_rad_watch::{AgentRadWatchService, WatchPusher};
-    use batata_api::remote::model::{
-        AgentDiscoveryRequest, AgentPublishRequest, AgentReference, Request,
-    };
+    use batata_api::remote::model::Request;
     use batata_core::model::{AtomicLastActive, ConnectionMeta};
     use std::collections::HashMap;
 

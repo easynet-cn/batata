@@ -1,5 +1,9 @@
 /// Macro to generate RequestTrait impl for derived types that override request_type().
 /// All methods delegate to the specified inner field.
+///
+/// Exported so server-side crates can implement the shared `batata_api`
+/// request/response traits for their own gRPC models.
+#[macro_export]
 macro_rules! impl_request_trait {
     ($type:ty, $inner:ident) => {
         impl $crate::remote::model::RequestTrait for $type {
@@ -39,6 +43,10 @@ macro_rules! impl_request_trait {
 }
 
 /// Macro to generate ResponseTrait impl for types with a `response: Response` field.
+///
+/// Exported so server-side crates can implement the shared `batata_api`
+/// response trait for their own gRPC models.
+#[macro_export]
 macro_rules! impl_response_trait {
     ($type:ty) => {
         impl $crate::remote::model::ResponseTrait for $type {

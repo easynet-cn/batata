@@ -24,6 +24,7 @@ actix-multipart = { workspace = true }
 
 # gRPC
 tonic = { workspace = true }
+prost-types = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
