@@ -24,7 +24,7 @@ batata/
 │   ├── batata-console/           # Console backend service
 │   ├── batata-client/            # Client SDK
 │   ├── batata-maintainer-client/ # Maintainer client utilities
-│   ├── batata-consul-client/     # Consul client utilities
+│   ├── batata-consul-client/     # Consul HTTP client SDK (published to crates.io)
 │   ├── batata-ai/                # AI integration (MCP/A2A)
 │   ├── batata-mesh/              # Service mesh (xDS, Istio MCP)
 │   ├── batata-copilot/           # AI copilot / operations assistant

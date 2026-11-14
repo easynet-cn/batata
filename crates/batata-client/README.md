@@ -344,8 +344,8 @@ The full SDK compatibility suites live in
 
 `1.0.0` is a **complete rewrite**, not a drop-in upgrade. The `0.0.1` and
 `0.0.2` releases came from the standalone `easynet-cn/batata-client`
-repository; they are **yanked** and that repository is **archived**. Starting
-with `1.0.0` the crate is built and published from the
+repository and are superseded by `1.0.0`. Starting with `1.0.0` the crate is
+built and published from the
 [`easynet-cn/batata`](https://github.com/easynet-cn/batata) workspace.
 
 Key differences:
@@ -366,9 +366,9 @@ Key differences:
 - The generated gRPC code is checked into `batata-api`, so compiling the client
   no longer needs `protoc` or a `build.rs`.
 
-Yanked versions can no longer be selected for new resolutions, but existing
-`Cargo.lock` files still resolve them. Plan for a real API migration rather
-than a version bump only. See [CHANGELOG.md](CHANGELOG.md).
+The old versions still resolve from existing `Cargo.lock` files, so plan for a
+real API migration rather than a version bump only. See
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 

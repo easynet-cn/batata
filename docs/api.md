@@ -110,6 +110,23 @@ client, _ := api.NewClient(api.DefaultConfig())
 kv, _, _ := client.KV().Get("key", nil)
 ```
 
+### Rust (Batata Consul SDK)
+
+[`batata-consul-client`](https://crates.io/crates/batata-consul-client) exposes
+the same endpoints as flat, typed methods on `ConsulClient`:
+
+```rust,no_run
+use batata_consul_client::{ConsulClient, ConsulClientConfig, QueryOptions};
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = ConsulClient::new(ConsulClientConfig::new("http://127.0.0.1:8848"))?;
+    let (pair, _meta) = client.kv_get("key", &QueryOptions::default()).await?;
+    println!("{:?}", pair.and_then(|p| p.value_str()));
+    Ok(())
+}
+```
+
 ### Python (Nacos SDK)
 
 ```python

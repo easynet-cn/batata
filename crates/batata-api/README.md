@@ -44,6 +44,8 @@ The crate exposes:
   import this crate directly.
 - [`batata-maintainer-client`](https://crates.io/crates/batata-maintainer-client)
   — typed admin / maintainer API client.
+- [`batata-consul-client`](https://crates.io/crates/batata-consul-client)
+  — independent Consul-compatible HTTP client; it does not depend on `batata-api`.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 

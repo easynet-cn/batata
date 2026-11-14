@@ -4,7 +4,7 @@
 `Cargo.toml`. See the [publishing checklist](../../docs/development.md#publishing-sdk-crates)
 for release order.
 
-## 1.0.0 — pending publication
+## 1.0.0 — 2026-11-13
 
 First release built from the [`easynet-cn/batata`](https://github.com/easynet-cn/batata)
 workspace. This is a **complete rewrite** of the standalone 0.0.x crate and is

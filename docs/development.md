@@ -96,21 +96,31 @@ the tag is only reflected in the artifact/Release filename.
 
 ## Publishing SDK crates
 
-Three crates are published to crates.io: `batata-api`, `batata-client` and
-`batata-maintainer-client`. Every other workspace crate sets `publish = false`.
-Versions are unified through `[workspace.package] version` in the root
-`Cargo.toml` (currently `1.0.0`); `batata-api` and `batata-client` also carry an
-explicit `version` in `[workspace.dependencies]` so their packaged manifests
-resolve from crates.io. Each published crate ships its own `README.md`,
-`LICENSE` and `CHANGELOG.md`; `batata-client` also ships `README_CN.md` and two
-compilable examples.
+Four crates are published to crates.io: `batata-api`, `batata-client`,
+`batata-maintainer-client` and `batata-consul-client`. Every other workspace
+crate sets `publish = false`. All four start at `1.0.0`. The first three take
+their version from `[workspace.package] version` in the root `Cargo.toml` and
+are linked by `^1.0.0` dependencies, so they move together.
+`batata-consul-client` declares `version = "1.0.0"` in its own manifest: it has
+no inbound workspace dependencies and must be able to publish patch releases
+without bumping the version of all 25 workspace members. When the root version
+changes, update that crate separately. Do not add it to
+`[workspace.dependencies]`; an unused entry triggers Cargo's
+`unused_dependencies` lint. `batata-api` and `batata-client` carry an explicit
+`version` in `[workspace.dependencies]` so their packaged manifests resolve
+from crates.io. Each published crate ships its own `README.md`, `LICENSE` and
+`CHANGELOG.md`; `batata-client` also ships `README_CN.md` and two compilable
+examples, and `batata-consul-client` ships `README_CN.md` plus one example.
 
-All three crates declare `rust-version = "1.89"`. The workspace is edition 2024
+All four crates declare `rust-version = "1.89"`. The workspace is edition 2024
 and uses let chains, which stabilized in Rust 1.88 and are only available in the
-2024 edition, so the edition-2024 floor of 1.85 is not sufficient. The actual
-floor is 1.89 because `batata-client` depends on `uuid` 1.29 at runtime, whose
-MSRV is 1.89 (`uuid` >= 1.27 all require 1.89). Verify before publishing with
-`cargo +1.89 check -p batata-api -p batata-client -p batata-maintainer-client`.
+2024 edition, so the edition-2024 floor of 1.85 is not sufficient. The floor is
+1.89 because `batata-client` depends on `uuid` 1.29 at runtime, whose MSRV is
+1.89 (`uuid` >= 1.27 all require 1.89). `batata-consul-client` has no
+`batata-*` dependencies and its own closure only reaches 1.88 (through
+`icu_provider` 2.4.0), but it declares 1.89 so the SDK line keeps one MSRV.
+Verify before publishing with
+`cargo +1.89 check -p batata-api -p batata-client -p batata-maintainer-client -p batata-consul-client`.
 Keep this in sync with the badge in the root READMEs and the SDK `Requirements`
 sections.
 
@@ -120,9 +130,11 @@ and requires a version requirement, so such a dependency either fails packaging
 outright or resolves to a crate that does not exist on crates.io. `batata-api`
 in particular has **no workspace-internal dependencies**; the server-only
 MCP/A2A (RAD) gRPC models live in `batata-ai::rad_model`, not in the published
-contract crate. `cargo package -p batata-api --allow-dirty` is the pre-publish
-guard for this rule: run it before any release step, since the downstream
-crates cannot be published until `batata-api` can be packaged.
+contract crate. `batata-consul-client` likewise has no workspace-internal
+dependencies, so it packages and publishes independently of the other three.
+`cargo package -p batata-api --allow-dirty` is the pre-publish guard for this
+rule: run it before any release step, since the downstream crates cannot be
+published until `batata-api` can be packaged.
 
 ### Local validation without publishing
 
@@ -143,7 +155,9 @@ cargo --config 'patch.crates-io.batata-api.path="crates/batata-api"' \
 Then extract the `.crate` files into one temporary directory, append
 `[patch.crates-io]` entries pointing at the extracted siblings, and run
 `cargo check --all-targets` for each. This validates the exact published source
-tree without touching crates.io.
+tree without touching crates.io. `batata-consul-client` has no path-only
+internal dependencies, so `cargo package -p batata-consul-client` needs none of
+those patches.
 
 ### TLS verification
 
@@ -179,36 +193,47 @@ with `batata.remote.server.grpc.sdk.tls.enabled` plus
    is always performed locally.
 2. Publish in dependency order, waiting for the crates.io index after each
    step: `batata-api` -> `batata-client` -> `batata-maintainer-client`.
+   `batata-consul-client` has no internal dependencies and is published
+   independently; it does not require any other Batata crate on crates.io.
 3. Push the `v1.0.0` tag; `.github/workflows/release.yml` builds the binary
    artifacts. The tag itself does not publish crates.
-4. Verify from a clean project with `cargo add batata-client@1.0.0`, then re-run
-   the SDK suites under `sdk-tests/` against version dependencies instead of
-   `path` dependencies.
-5. Retire the standalone 0.0.x line (see below). This must happen **after**
-   step 4: yanking both 0.0.x versions while 1.0.0 is still unpublished would
-   leave `batata-client` with no selectable version.
+4. Verify from a clean project with `cargo add batata-client@1.0.0` and
+   `cargo add batata-consul-client@1.0.0`, then re-run the SDK suites under
+   `sdk-tests/` against version dependencies instead of `path` dependencies.
+   Keep the in-repo suites on `path` dependencies so the development loop tests
+   the working tree rather than the published package.
+5. Retire the standalone 0.0.x lines (see below). This must happen **after**
+   step 4: yanking the 0.0.x versions while 1.0.0 is still unpublished would
+   leave those crate names with no selectable version.
 
-`batata-client` 1.0.0 is a rewrite of the standalone `0.0.x` releases; see its
-README and CHANGELOG for migration notes. Published versions cannot be reused,
-so the metadata, README and migration notes must be correct before step 2.
+`batata-client` and `batata-consul-client` 1.0.0 are rewrites of their
+standalone `0.0.x` releases; see their READMEs and CHANGELOGs for migration
+notes. Published versions cannot be reused, so the metadata, README and
+migration notes must be correct before step 2.
 
-### Retiring the standalone 0.0.x line
+### Retiring the standalone 0.0.x lines
 
-Decision: **yank** `batata-client` 0.0.1 / 0.0.2 from crates.io and **archive**
-the `easynet-cn/batata-client` repository. Both are manual owner-only actions
-and are deliberately not automated in CI. Yanking only blocks new resolutions:
-existing `Cargo.lock` files keep working, and it can be undone.
+Decision: **yank** `batata-client` 0.0.1 / 0.0.2 and `batata-consul-client`
+0.0.1 / 0.0.2 from crates.io, and **archive** both standalone repositories
+(`easynet-cn/batata-client` and `easynet-cn/batata-consul-client`). These are
+manual owner-only actions and are deliberately not automated in CI. Yanking
+only blocks new resolutions: existing `Cargo.lock` files keep working, and it
+can be undone. Never yank before the corresponding 1.0.0 is published and
+verified.
 
 ```bash
 # Requires `cargo login <token>` (token: https://crates.io/settings/tokens)
 cargo yank batata-client --version 0.0.1
 cargo yank batata-client --version 0.0.2
+cargo yank batata-consul-client --version 0.0.1
+cargo yank batata-consul-client --version 0.0.2
 
 # Undo a mistaken yank if needed:
 # cargo yank --undo batata-client --version 0.0.2
+# cargo yank --undo batata-consul-client --version 0.0.2
 ```
 
-Before archiving, add a banner at the top of the standalone repository's
+Before archiving, add a banner at the top of each standalone repository's
 README pointing to the monorepo, commit it, then archive the repository:
 
 ```text
@@ -217,13 +242,14 @@ README pointing to the monorepo, commit it, then archive the repository:
 > workspace: https://github.com/easynet-cn/batata/tree/main/crates/batata-client
 ```
 
-Archive it from GitHub Settings -> "Archive this repository", or with the GitHub
-CLI (`gh repo archive easynet-cn/batata-client --yes`). `gh` is not installed on
-the release machine; install and authorize it manually before using the CLI.
-Cargo credentials live in `~/.cargo/credentials.toml` and are never committed.
+Use the analogous text for `batata-consul-client`, pointing at
+`https://github.com/easynet-cn/batata/tree/main/crates/batata-consul-client`.
 
-Out of scope: `batata-consul-client` 0.0.2 is also owned by the same account,
-but it is not part of this SDK release and is not yanked.
+Archive each repository from GitHub Settings -> "Archive this repository", or
+with the GitHub CLI (`gh repo archive easynet-cn/batata-client --yes` and
+`gh repo archive easynet-cn/batata-consul-client --yes`). `gh` is not installed
+on the release machine; install and authorize it manually before using the CLI.
+Cargo credentials live in `~/.cargo/credentials.toml` and are never committed.
 
 ## Project Statistics
 

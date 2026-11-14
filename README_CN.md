@@ -70,16 +70,19 @@ Web 控制台是独立的前端项目：
 |-------|------|
 | [`batata-client`](https://crates.io/crates/batata-client) | 配置管理、服务发现、支持 TLS/mTLS 的 gRPC、鉴权与故障转移 |
 | [`batata-maintainer-client`](https://crates.io/crates/batata-maintainer-client) | 基于 HTTP/HTTPS 的运维接口：集群、命名空间、配置、服务、AI、插件 |
-| [`batata-api`](https://crates.io/crates/batata-api) | 共享协议模型（传递依赖，一般无需直接引用） |
+| [`batata-api`](https://crates.io/crates/batata-api) | Nacos 兼容面的共享协议模型（传递依赖，一般无需直接引用） |
+| [`batata-consul-client`](https://crates.io/crates/batata-consul-client) | Consul 兼容 HTTP API 客户端：KV、catalog、health、ACL、session、阻塞查询 |
 
 ```bash
 cargo add batata-client
 cargo add batata-maintainer-client
+cargo add batata-consul-client
 ```
 
-三个 crate 统一使用 `1.0.0` 版本，示例见各自 README。注意 `batata-client`
-1.0.0 是对早期独立仓库 `0.0.x` 的重写（旧版本已 yank，旧仓库已 archive），
-升级前请阅读其 README 与 CHANGELOG 中的迁移说明。
+四个 crate 的首版均为 `1.0.0`。前三个沿用 workspace 统一版本；
+`batata-consul-client` 独立维护版本号，以便单独发布补丁版本。示例见各自 README。
+注意 `batata-client` 与 `batata-consul-client` 的 1.0.0 都是对早期独立仓库
+`0.0.x` 的重写，升级前请阅读各自 README 与 CHANGELOG 中的迁移说明。
 
 ## 快速开始
 

@@ -3,7 +3,7 @@
 `batata-maintainer-client` follows the workspace version declared in the root
 `Cargo.toml`.
 
-## 1.0.0 — pending publication
+## 1.0.0 — 2026-11-13
 
 Initial release.
 
@@ -18,6 +18,6 @@ Initial release.
 - `MaintainerClientConfig::with_tls(ca)` / `with_mtls(ca, cert, key)` for
   `https://` endpoints terminated with a private CA or requiring mutual TLS.
 
-This crate has no 0.0.x history. The SDK line as a whole replaces the yanked
+This crate has no 0.0.x history. The SDK line as a whole supersedes the
 standalone `batata-client` 0.0.x releases; see the
 [batata-client migration notes](https://github.com/easynet-cn/batata/blob/main/crates/batata-client/README.md#migrating-from-00x).

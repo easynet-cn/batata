@@ -2,7 +2,7 @@
 
 `batata-api` follows the workspace version declared in the root `Cargo.toml`.
 
-## 1.0.0 — pending publication
+## 1.0.0 — 2026-11-13
 
 Initial release.
 

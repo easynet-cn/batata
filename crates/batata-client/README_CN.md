@@ -337,8 +337,8 @@ cargo run -p batata-client --example naming_example
 ## 从 0.0.x 迁移
 
 `1.0.0` 是**完全重写**，不是可以直接升级的小版本。`0.0.1` 与 `0.0.2`
-来自独立仓库 `easynet-cn/batata-client`，这两个版本**已 yank**，该仓库
-**已 archive**。自 `1.0.0` 起，crate 在
+来自独立仓库 `easynet-cn/batata-client`，现已被 `1.0.0` 取代。自 `1.0.0`
+起，crate 在
 [`easynet-cn/batata`](https://github.com/easynet-cn/batata) workspace 中构建与发布。
 
 主要差异：
@@ -356,8 +356,8 @@ cargo run -p batata-client --example naming_example
 - 协议模型拆到独立的 `batata-api` crate（`Instance` 为方便起见在此重新导出）。
 - gRPC 生成代码已签入 `batata-api`，编译客户端不再需要 `protoc` 或 `build.rs`。
 
-被 yank 的版本不能再被新解析选中，但已有 `Cargo.lock` 仍可继续使用。
-请按 API 迁移来规划升级，而不是只改版本号。详见 [CHANGELOG.md](CHANGELOG.md)。
+旧版本仍会被已有 `Cargo.lock` 锁定，请按 API 迁移来规划升级，而不是只改
+版本号。详见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 环境要求
 

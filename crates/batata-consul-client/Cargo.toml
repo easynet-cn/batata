@@ -1,12 +1,18 @@
 [package]
-publish = false
 name = "batata-consul-client"
-version.workspace = true
+# Independent version: this crate has no inbound workspace dependencies, so it
+# must be able to publish patch releases without bumping all 25 members.
+version = "1.0.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Consul-compatible HTTP client SDK for Batata"
+readme = "README.md"
+keywords = ["consul", "batata", "http", "service-discovery", "kv-store"]
+categories = ["network-programming", "api-bindings"]
+documentation = "https://docs.rs/batata-consul-client"
+rust-version = "1.89"
 
 [dependencies]
 reqwest = { workspace = true, features = ["json", "stream"] }

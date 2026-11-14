@@ -78,8 +78,10 @@ regular config and discovery workloads should use `batata-client` directly.
 - [`batata-api`](https://crates.io/crates/batata-api) — shared wire models.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history. The 1.0.0 release of the
-SDK line replaces the yanked standalone `batata-client` 0.0.x versions; see the
+SDK line supersedes the standalone `batata-client` 0.0.x versions; see the
 [batata-client migration notes](https://github.com/easynet-cn/batata/blob/main/crates/batata-client/README.md#migrating-from-00x).
+For the Consul-compatible HTTP surface use
+[`batata-consul-client`](https://crates.io/crates/batata-consul-client).
 
 ## Requirements
 

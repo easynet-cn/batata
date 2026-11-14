@@ -73,17 +73,21 @@ workspace:
 |-------|---------|
 | [`batata-client`](https://crates.io/crates/batata-client) | Config, service discovery, gRPC with TLS/mTLS, auth and failover |
 | [`batata-maintainer-client`](https://crates.io/crates/batata-maintainer-client) | Admin APIs over HTTP/HTTPS: cluster, namespace, config, naming, AI, plugins |
-| [`batata-api`](https://crates.io/crates/batata-api) | Shared wire models (transitive dependency) |
+| [`batata-api`](https://crates.io/crates/batata-api) | Shared Nacos-compatible wire models (transitive dependency) |
+| [`batata-consul-client`](https://crates.io/crates/batata-consul-client) | Consul-compatible HTTP API client: KV, catalog, health, ACL, sessions, blocking queries |
 
 ```bash
 cargo add batata-client
 cargo add batata-maintainer-client
+cargo add batata-consul-client
 ```
 
-All three crates share version `1.0.0`. See each crate's README for quick-start
-examples. Note that `batata-client` 1.0.0 is a rewrite of the earlier standalone
-`0.0.x` releases (yanked, with that repository archived); its README and
-CHANGELOG contain migration notes.
+All four crates start at version `1.0.0`. The first three follow the workspace
+version; `batata-consul-client` maintains its own version so it can publish
+patch releases independently. See each crate's README for quick-start
+examples. `batata-client` and `batata-consul-client` 1.0.0 are rewrites of the
+earlier standalone `0.0.x` releases; their READMEs and CHANGELOGs contain
+migration notes.
 
 ## Quick Start
 
