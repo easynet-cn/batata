@@ -20,7 +20,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test basic long polling for config changes
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_config_long_poll_basic() {
     let client = authenticated_client().await;
@@ -96,7 +96,7 @@ async fn test_config_long_poll_basic() {
 
 /// Test long poll timeout
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_config_long_poll_timeout() {
     let client = authenticated_client().await;
@@ -171,7 +171,7 @@ async fn test_config_long_poll_timeout() {
 
 /// Test long poll with MD5 match
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_config_long_poll_md5_match() {
     let client = authenticated_client().await;
@@ -244,7 +244,7 @@ async fn test_config_long_poll_md5_match() {
 
 /// Test concurrent long polls
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_concurrent_long_polls() {
     let client = authenticated_client().await;
@@ -366,7 +366,7 @@ async fn test_concurrent_long_polls() {
 
 /// Test long poll removal
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_long_poll_removal() {
     let client = authenticated_client().await;
@@ -428,7 +428,7 @@ async fn test_long_poll_removal() {
 
 /// Test long poll with empty MD5 (initial poll)
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_long_poll_empty_md5() {
     let client = authenticated_client().await;

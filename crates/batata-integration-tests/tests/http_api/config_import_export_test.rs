@@ -19,7 +19,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test export single configuration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_export_single_config() {
     let client = authenticated_client().await;
@@ -53,7 +53,7 @@ async fn test_export_single_config() {
 
 /// Test export multiple configurations
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_export_multiple_configs() {
     let client = authenticated_client().await;
@@ -89,7 +89,7 @@ async fn test_export_multiple_configs() {
 
 /// Test import configuration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_import_config() {
     let client = authenticated_client().await;
@@ -128,7 +128,7 @@ async fn test_import_config() {
 
 /// Test import with namespace
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_import_config_with_namespace() {
     let client = authenticated_client().await;
@@ -173,7 +173,7 @@ async fn test_import_config_with_namespace() {
 
 /// Test export with namespace
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_export_config_with_namespace() {
     let client = authenticated_client().await;
@@ -212,7 +212,7 @@ async fn test_export_config_with_namespace() {
 
 /// Test batch import
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_batch_import() {
     let client = authenticated_client().await;
@@ -242,7 +242,7 @@ async fn test_batch_import() {
 
 /// Test round-trip export/import
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_export_import_roundtrip() {
     let client = authenticated_client().await;

@@ -658,14 +658,13 @@ mod tests {
         // No crash = success
     }
 
-    /// Reverted 2026-04-15: the previous version of this test asserted that
-    /// non-responsible cluster nodes skip probing when a cluster interceptor
-    /// chain is set. That gate was removed because per-node registries do
-    /// not replicate `update_check_result` through Raft yet, so gating the
-    /// probe makes other nodes' health responses go stale. Until status
-    /// replication lands, every node probes every active check.
+    /// The cluster responsibility gate was restored in `27e72b00` once check
+    /// status started replicating through Raft (`RaftHealthReplicator` +
+    /// `RegistryApplyHook`). Only the node responsible for the probed target
+    /// runs the probe; the other nodes receive the result via the apply hook.
+    /// This installs a chain whose local address is deliberately NOT the
+    /// responsible node and asserts that no probe executes here.
     #[tokio::test]
-    #[ignore = "cluster gate removed; needs Raft status replication first"]
     async fn test_reactor_registry_check_respects_cluster_gate() {
         use crate::healthcheck::interceptor::HealthCheckInterceptorChain;
         use crate::healthcheck::registry::*;

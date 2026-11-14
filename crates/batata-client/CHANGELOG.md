@@ -59,13 +59,12 @@ not API compatible with it.
   `server_addrs`, so pass `https://host:port` when the HTTP endpoint is served
   over TLS.
 
-## 0.0.2, 0.0.1 — legacy (yank pending)
+## 0.0.2, 0.0.1 — legacy (yanked)
 
 Published on 2025-12-21 from the standalone
 [`easynet-cn/batata-client`](https://github.com/easynet-cn/batata-client)
-repository. Both versions are to be yanked **after** 1.0.0 is published and
-verified (release step 5), so that new resolutions cannot select an
-incompatible API; that repository is archived afterwards. They are not yanked
-yet.
-Yanking does not delete the crate: existing `Cargo.lock` files still resolve the
-old versions. See the [migration notes](README.md#migrating-from-00x).
+repository. Both versions were yanked on crates.io on 2026-11-14 (release
+step 5, after 1.0.0 was published and verified), so new resolutions cannot
+select the incompatible API; the standalone repository was archived on
+2026-11-14 as well. Yanking does not delete the crate: existing `Cargo.lock`
+files still resolve the old versions. See the [migration notes](README.md#migrating-from-00x).

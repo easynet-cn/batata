@@ -30,16 +30,15 @@ fn status_label(success: bool) -> &'static str {
 /// local state machine has applied the entry, giving us read-your-write
 /// consistency on the same node that received an HTTP TTL update.
 ///
-/// Because every node's reactor runs the same probe loop, the leader
-/// receives N copies of the same status proposal per probe interval.
-///
-/// That redundancy is what makes gating safe *once it exists*: the apply
-/// path fans out to every node, so a node that does not probe still learns
-/// the result. Gating the probe loop to the responsible node (shard key =
-/// the probed target's `ip:port`, see `RegistryCheckTask::responsible_id`)
-/// is therefore the intended follow-up, and it must be conditional on
-/// replication being active — in standalone mode there is no apply fan-out,
-/// so every node has to probe for itself.
+/// Each probe result produces one Raft write. The Nacos facade installs a
+/// cluster responsibility chain in `HealthCheckReactor`, so only the node
+/// responsible for the probed target's `ip:port` probes (see
+/// `RegistryCheckTask::responsible_id`) and the status is proposed once per
+/// interval; the apply path fans out to every node. Standalone mode has no
+/// apply fan-out and installs a chain without the responsibility check, and
+/// the Consul facade deliberately installs no sharding chain because an
+/// agent check exists only on the node that served the registration. Those
+/// paths still probe locally on every node that owns the check.
 ///
 /// The Nacos facade deliberately does not use this channel at all; see
 /// `HealthCheckManager`'s documentation.

@@ -202,9 +202,9 @@ with `batata.remote.server.grpc.sdk.tls.enabled` plus
    `sdk-tests/` against version dependencies instead of `path` dependencies.
    Keep the in-repo suites on `path` dependencies so the development loop tests
    the working tree rather than the published package.
-5. Retire the standalone 0.0.x lines (see below). This must happen **after**
-   step 4: yanking the 0.0.x versions while 1.0.0 is still unpublished would
-   leave those crate names with no selectable version.
+5. Retire the standalone 0.0.x lines (completed 2026-11-14; see below). This
+   must happen **after** step 4: yanking the 0.0.x versions while 1.0.0 is
+   still unpublished would leave those crate names with no selectable version.
 
 `batata-client` and `batata-consul-client` 1.0.0 are rewrites of their
 standalone `0.0.x` releases; see their READMEs and CHANGELOGs for migration
@@ -221,6 +221,13 @@ only blocks new resolutions: existing `Cargo.lock` files keep working, and it
 can be undone. Never yank before the corresponding 1.0.0 is published and
 verified.
 
+**Status (2026-11-14): completed.** All four 0.0.x versions are
+`yanked=true` (verified via the crates.io API and the sparse index), both
+1.0.0 releases remain `yanked=false` with `default_version=1.0.0`, the
+Archived README banners were pushed to both standalone repositories, and both
+repositories are `archived=true` on GitHub. The commands and banner below are
+kept as a runbook for future release lines, not as pending work.
+
 ```bash
 # Requires `cargo login <token>` (token: https://crates.io/settings/tokens)
 cargo yank batata-client --version 0.0.1
@@ -233,8 +240,8 @@ cargo yank batata-consul-client --version 0.0.2
 # cargo yank --undo batata-consul-client --version 0.0.2
 ```
 
-Before archiving, add a banner at the top of each standalone repository's
-README pointing to the monorepo, commit it, then archive the repository:
+The Archived banner committed at the top of each standalone repository's
+README points to the monorepo:
 
 ```text
 > **Archived.** This repository contains the 0.0.x prototype of batata-client.
@@ -247,15 +254,16 @@ Use the analogous text for `batata-consul-client`, pointing at
 
 Archive each repository from GitHub Settings -> "Archive this repository", or
 with the GitHub CLI (`gh repo archive easynet-cn/batata-client --yes` and
-`gh repo archive easynet-cn/batata-consul-client --yes`). `gh` is not installed
-on the release machine; install and authorize it manually before using the CLI.
-Cargo credentials live in `~/.cargo/credentials.toml` and are never committed.
+`gh repo archive easynet-cn/batata-consul-client --yes`). This step was
+performed by the repository owner on 2026-11-14; `gh` is not required when the
+Settings UI is used. Cargo credentials live in `~/.cargo/credentials.toml`
+and are never committed.
 
 ## Project Statistics
 
 - **~50,000+ lines** of Rust code
 - **25 internal crates** in workspace
-- **4045 unit tests** (`cargo test --workspace --exclude batata-integration-tests`, 2026-11-13)
+- **4047 unit tests** (`cargo test --workspace --exclude batata-integration-tests`, 2026-11-14; 0 failed / 33 ignored)
 - **3 benchmark suites** for performance testing; absolute RPS is not a gate —
   use `scripts/bench_ab.py` or the same-binary A/B guards in the code (see
   ADR-0002 in [Architecture](architecture.md))
@@ -263,13 +271,12 @@ Cargo credentials live in `~/.cargo/credentials.toml` and are never committed.
 ## Ignored test inventory
 
 `#[ignore]` means the test does not exist as far as the gate is concerned. There
-are 162 ignored Rust tests; they are **not** bulk-enabled. Classification
-(2026-11-08):
+are 161 ignored Rust tests; they are **not** bulk-enabled. Classification
+(2026-11-14; the 2026-11-08 census had 162):
 
 | Reason string | Count | Interpretation |
 |---|---|---|
-| `requires running server` | 82 | Environment-dependent |
-| `feature not implemented yet` | 26 | Stale label: the endpoints now exist, but the tests still need a live server |
+| `requires running server` | 108 | Environment-dependent; includes 26 cases reclassified on 2026-11-14 from a stale "unimplemented" label |
 | `#[ignore]` (no reason) | 16 | Environment-dependent; 4 of these sit in the unused `test_both_databases!` macro |
 | `performance tests require specialized setup` | 11 | Environment-dependent; run via the perf gate |
 | `requires test database` | 10 | Environment-dependent |
@@ -277,9 +284,17 @@ are 162 ignored Rust tests; they are **not** bulk-enabled. Classification
 | `requires running gRPC server` | 2 | Environment-dependent |
 | `requires PostgreSQL database` | 2 | Environment-dependent |
 | `requires MySQL database` | 2 | Environment-dependent |
-| `cluster gate removed; needs Raft status replication first` | 1 | The only real functional gap |
 
-So 135 are environment-dependent, 26 carry a stale "unimplemented" label that
-must be re-checked before enabling, and 1 documents an unimplemented Raft
-status replication. None are enabled by this inventory; the authoritative
-source is the `#[ignore = "..."]` reason string in each file.
+All 161 are environment-dependent. On 2026-11-14 the 26 stale
+`feature not implemented yet` labels were corrected to
+`requires running server`: the endpoints exist, but all 26 tests log in
+through a live server first, so they cannot be enabled in the unit gate. The
+single `cluster gate removed; needs Raft status replication first` entry was
+removed from the inventory entirely: Raft status replication landed in
+`27e72b00`, the responsibility gate is back in `HealthCheckReactor`, and that
+test now runs in the normal unit suite. Per-node check identity (for example
+`serfHealth` registered by several Consul agents) is handled by
+`InstanceCheckConfig::registry_key()` / `qualify_check_key()` since
+`d53093ca`, so no functional gap remains in this inventory. None of the
+ignored tests are enabled here; the authoritative source is the
+`#[ignore = "..."]` reason string in each file.

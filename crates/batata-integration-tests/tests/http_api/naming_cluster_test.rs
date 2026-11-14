@@ -19,7 +19,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test creating a cluster
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_create_cluster() {
     let client = authenticated_client().await;
@@ -56,7 +56,7 @@ async fn test_create_cluster() {
 
 /// Test getting cluster info
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_get_cluster_info() {
     let client = authenticated_client().await;
@@ -98,7 +98,7 @@ async fn test_get_cluster_info() {
 
 /// Test updating cluster configuration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_update_cluster() {
     let client = authenticated_client().await;
@@ -149,7 +149,7 @@ async fn test_update_cluster() {
 
 /// Test deleting cluster
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_delete_cluster() {
     let client = authenticated_client().await;
@@ -198,7 +198,7 @@ async fn test_delete_cluster() {
 
 /// Test cluster health check
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_cluster_health_check() {
     let client = authenticated_client().await;
@@ -238,7 +238,7 @@ async fn test_cluster_health_check() {
 
 /// Test cluster statistics
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_cluster_stats() {
     let client = authenticated_client().await;
@@ -275,7 +275,7 @@ async fn test_cluster_stats() {
 
 /// Test cluster with metadata
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_cluster_with_metadata() {
     let client = authenticated_client().await;
@@ -311,7 +311,7 @@ async fn test_cluster_with_metadata() {
 
 /// Test cluster weight for load balancing
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_cluster_weight() {
     let client = authenticated_client().await;

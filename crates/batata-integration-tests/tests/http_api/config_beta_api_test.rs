@@ -19,7 +19,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test publishing beta configuration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_publish_beta_config() {
     let client = authenticated_client().await;
@@ -58,7 +58,7 @@ async fn test_publish_beta_config() {
 
 /// Test deleting beta configuration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_delete_beta_config() {
     let client = authenticated_client().await;
@@ -106,7 +106,7 @@ async fn test_delete_beta_config() {
 
 /// Test beta config with namespace
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_beta_config_with_namespace() {
     let client = authenticated_client().await;
@@ -147,7 +147,7 @@ async fn test_beta_config_with_namespace() {
 
 /// Test beta config with tags
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_beta_config_with_tags() {
     let client = authenticated_client().await;
@@ -186,7 +186,7 @@ async fn test_beta_config_with_tags() {
 
 /// Test multiple beta IPs
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
+#[ignore = "requires running server"]
 
 async fn test_beta_config_multiple_ips() {
     let client = authenticated_client().await;

@@ -59,11 +59,12 @@ not API compatible with it.
 See the [migration notes](README.md#migrating-from-00x) for a call-by-call
 mapping.
 
-## 0.0.2, 0.0.1 — legacy
+## 0.0.2, 0.0.1 — legacy (yanked)
 
 Published from the standalone
 [`easynet-cn/batata-consul-client`](https://github.com/easynet-cn/batata-consul-client)
-repository. These versions are superseded by 1.0.0 and are retired (yanked on
-crates.io, with that repository archived) as part of the release checklist,
-**after** 1.0.0 is published and verified. Yanking does not delete the crate:
-existing `Cargo.lock` files still resolve the old versions.
+repository. These versions are superseded by 1.0.0 and were yanked on
+crates.io on 2026-11-14 (release step 5, after 1.0.0 was published and
+verified), and the standalone repository was archived on 2026-11-14. Yanking
+does not delete the crate: existing `Cargo.lock` files still resolve the old
+versions.

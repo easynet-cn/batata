@@ -802,10 +802,11 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             reactor.set_registry(inner.registry.clone());
 
             // Cluster mode: install the Raft replicator + apply hook so
-            // every node's `InstanceCheckRegistry` converges through Raft
-            // instead of running the probe loop independently. The leader
-            // probes and writes status; followers' probes are dropped at
-            // `replicate_status` and they receive the apply via the hook.
+            // every node's `InstanceCheckRegistry` converges through Raft.
+            // A probe result is written from whichever node ran the probe
+            // (`replicate_status` forwards the write to the leader), and the
+            // apply hook updates the local registry on every node. No
+            // sharding gate is installed here; see the NOTE below.
             // See `project_health_status_raft_sync_plan.md`.
             if let Some(ref raft) = inner.raft_node_for_health {
                 use batata_naming::healthcheck::raft_replicator::{
