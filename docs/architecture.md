@@ -221,6 +221,23 @@ awaits the queue, so a slow audit store cannot apply backpressure to config
 publish/remove or grow the heap. `AuditQueueStats` exposes accepted, dropped
 and append-failure counters, and full/closed-queue warnings are rate-limited.
 
+**Follow-up (F17, 2026-11-14): shard the standalone config CAS lock.**
+`EmbeddedPersistService` previously held one process-wide `Mutex<()>` across
+the read -> `casMd5` check -> WriteBatch sequence, which serialized every
+standalone config publish. It now holds a configurable number of mutexes
+(`batata.persistence.embedded.cas_shards`, default 64) selected by a stable
+hash of `(dataId, groupId, tenantId)`; gray publishes deliberately share the
+main config's shard. Only the `(Embedded, Standalone)` quadrant benefits:
+cluster writes are ordered by the Raft log and external databases use
+`SELECT FOR UPDATE`, so both ignore the setting. A same-session A/B (3 rounds
+x 15s, one release binary with the shard count injected) measured no
+single-key regression and, at the default count, +34.8% RPS on a 64-key write
+load and +46.3% on a 256-key load. Shard counts from 16 to 128 are within
+noise of one another except for a marginal +4.6% at 128 on the 256-key load.
+A concurrent-CAS comparison showed identical semantics to the old single
+lock. See [Database](database.md#config-cas-lock-sharding) for the tuning
+notes.
+
 **Verification.** Absolute RPS is not used as evidence. The A/B comparison runs
 the full-scan reference and the bounded path in the same process, against the
 same RocksDB fixture and the same release binary; correctness equivalence is

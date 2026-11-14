@@ -68,6 +68,7 @@ export RUST_LOG=info
 | Key | Default | Description |
 |-----|---------|-------------|
 | `batata.sql.init.platform` | _(empty)_ | Storage platform: `mysql`, `postgresql`, or empty (=embedded) |
+| `batata.persistence.embedded.cas_shards` | `64` | Independent config CAS locks for the standalone embedded backend; range `1..=1024`, read once at startup, ignored by cluster and external DB modes |
 | `batata.db.url` | _(empty)_ | Database connection URL |
 | `batata.db.pool.max_connections` | `100` | Max pool connections |
 | `batata.db.pool.min_connections` | `10` | Min pool connections |

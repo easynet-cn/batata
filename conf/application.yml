@@ -149,6 +149,11 @@ batata.db.migration.enabled: true
 #batata.persistence.embedded.data_dir: data
 # RocksDB database name (subdirectory under data_dir, default: batata_rocksdb)
 #batata.persistence.embedded.db_name: batata_rocksdb
+# Number of independent config CAS locks for the standalone embedded backend.
+# Only effective when platform is empty AND standalone=true; cluster (Raft)
+# and external DB modes ignore it. Read once at startup (no hot reload).
+# Valid range: 1..=1024; out-of-range values fall back to 64 with a warning.
+#batata.persistence.embedded.cas_shards: 64
 
 # =============================================================================
 # Authentication

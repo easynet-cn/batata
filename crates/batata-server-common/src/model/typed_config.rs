@@ -3186,9 +3186,16 @@ pub struct PersistenceConfig {
     pub embedded: PersistenceEmbeddedConfig,
 }
 
+/// Default for `batata.persistence.embedded.cas_shards`.
+///
+/// The value lives in `batata-persistence`, which owns the lock array, so the
+/// config default and the library fallback cannot drift apart.
+fn default_embedded_cas_shards() -> i64 {
+    batata_persistence::embedded::DEFAULT_CONFIG_CAS_SHARDS as i64
+}
+
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `PersistenceEmbeddedConfig`.
-#[derive(Default)]
 pub struct PersistenceEmbeddedConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// Directory where embedded storage files are kept.
@@ -3196,6 +3203,20 @@ pub struct PersistenceEmbeddedConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// Name of the embedded database.
     pub db_name: Option<String>,
+    #[serde(default = "default_embedded_cas_shards")]
+    /// Number of independent config CAS locks used by the standalone embedded
+    /// backend. Only the `(Embedded, Standalone)` storage mode reads it.
+    pub cas_shards: i64,
+}
+
+impl Default for PersistenceEmbeddedConfig {
+    fn default() -> Self {
+        Self {
+            data_dir: None,
+            db_name: None,
+            cas_shards: default_embedded_cas_shards(),
+        }
+    }
 }
 
 // ============================================================================

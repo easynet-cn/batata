@@ -29,6 +29,23 @@ use crate::traits::namespace::NamespacePersistence;
 
 mod ai_resource;
 
+/// Default number of independent locks guarding config CAS sequences.
+///
+/// A single global mutex serializes every standalone config publish. Sharding
+/// by config key lets unrelated keys proceed in parallel while keeping the
+/// read -> CAS check -> write sequence atomic for one key. 64 was selected by
+/// same-binary A/B measurements (see `docs/database.md`, "Config CAS lock
+/// sharding"). Deployments override it with
+/// `batata.persistence.embedded.cas_shards`; this is the single source of
+/// truth for both the config default and the library fallback.
+pub const DEFAULT_CONFIG_CAS_SHARDS: usize = 64;
+
+/// Upper bound for `batata.persistence.embedded.cas_shards`.
+///
+/// Each shard is one `Mutex<()>`, so a very large value only wastes memory and
+/// cannot improve throughput once the lock is no longer contended.
+pub const MAX_CONFIG_CAS_SHARDS: usize = 1024;
+
 /// Standalone embedded persistence using RocksDB
 ///
 /// Reads via `RocksDbReader`, writes directly to RocksDB (no Raft).
@@ -43,36 +60,94 @@ pub struct EmbeddedPersistService {
     /// caller read. RocksDB has no compare-and-set, so the read and the write
     /// are held together under this lock. Nothing is awaited while it is held.
     task_lock: Mutex<()>,
-    /// Serializes config CAS (read -> check -> WriteBatch) sequences.
+    /// Serializes config CAS (read -> check -> WriteBatch) sequences per key.
     ///
     /// RocksDB has no compare-and-set, so two concurrent publishes with the
     /// same `casMd5` could both pass the check and both write. The read, the
-    /// CAS check and the write are held together under this single global lock.
-    /// The guarded methods contain no `.await`, so a `std::sync` guard is safe
-    /// and deadlock-free (no other lock is taken while it is held).
-    config_cas_lock: Mutex<()>,
+    /// CAS check and the write are held together under the shard selected by
+    /// the config key; gray and main publishes deliberately share a shard, so
+    /// the mutual exclusion of the former global lock is preserved. The
+    /// guarded methods contain no `.await`, so a `std::sync` guard is safe and
+    /// deadlock-free (no other lock is taken while it is held).
+    config_cas_locks: Vec<Mutex<()>>,
 }
 
 impl EmbeddedPersistService {
-    /// Create from a RocksStateMachine
+    /// Create from a RocksStateMachine with the default CAS shard count.
     pub fn from_state_machine(sm: &RocksStateMachine) -> Self {
+        Self::from_state_machine_with_cas_shards(sm, DEFAULT_CONFIG_CAS_SHARDS)
+    }
+
+    /// Create from a RocksStateMachine with an explicit CAS shard count.
+    ///
+    /// The count is clamped to `1..=MAX_CONFIG_CAS_SHARDS` so a caller can
+    /// never build a service whose shard vector is empty (which would make
+    /// every shard lookup panic on a modulo by zero).
+    pub fn from_state_machine_with_cas_shards(sm: &RocksStateMachine, cas_shards: usize) -> Self {
         let db = sm.db();
+        Self::from_db_with_cas_shards(db, cas_shards)
+    }
+
+    /// Create from a raw RocksDB instance with the default CAS shard count.
+    pub fn new(db: Arc<DB>) -> Self {
+        Self::new_with_cas_shards(db, DEFAULT_CONFIG_CAS_SHARDS)
+    }
+
+    /// Create from a raw RocksDB instance with an explicit CAS shard count.
+    pub fn new_with_cas_shards(db: Arc<DB>, cas_shards: usize) -> Self {
+        Self::from_db_with_cas_shards(db, cas_shards)
+    }
+
+    fn from_db_with_cas_shards(db: Arc<DB>, cas_shards: usize) -> Self {
+        let shards = cas_shards.clamp(1, MAX_CONFIG_CAS_SHARDS);
         Self {
             reader: RocksDbReader::new(db.clone()),
             db,
             task_lock: Mutex::new(()),
-            config_cas_lock: Mutex::new(()),
+            config_cas_locks: (0..shards).map(|_| Mutex::new(())).collect(),
         }
     }
 
-    /// Create from a raw RocksDB instance
-    pub fn new(db: Arc<DB>) -> Self {
-        Self {
-            reader: RocksDbReader::new(db.clone()),
-            db,
-            task_lock: Mutex::new(()),
-            config_cas_lock: Mutex::new(()),
-        }
+    /// Map a config key to one of `shards` CAS shards.
+    ///
+    /// `DefaultHasher::new()` uses fixed keys, so the mapping is stable for
+    /// the lifetime of the process. Every part of the compound key is hashed;
+    /// hasher output for `&str` is length-delimited, so concatenating the
+    /// three fields cannot alias (for example `("ab", "c")` vs `("a", "bc")`).
+    fn config_cas_shard_index(
+        data_id: &str,
+        group_id: &str,
+        tenant_id: &str,
+        shards: usize,
+    ) -> usize {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        (data_id, group_id, tenant_id).hash(&mut hasher);
+        (hasher.finish() as usize) % shards
+    }
+
+    /// Return the CAS lock guarding a main config publish.
+    fn config_cas_shard(&self, data_id: &str, group_id: &str, tenant_id: &str) -> &Mutex<()> {
+        let index =
+            Self::config_cas_shard_index(data_id, group_id, tenant_id, self.config_cas_locks.len());
+        &self.config_cas_locks[index]
+    }
+
+    /// Return the CAS lock guarding a gray publish.
+    ///
+    /// `gray_name` is accepted to keep the call site explicit but is not part
+    /// of the shard key: gray and main publishes for one dataId must contend
+    /// on the same lock, exactly as they did under the single global mutex.
+    fn config_cas_shard_for_gray(
+        &self,
+        data_id: &str,
+        group_id: &str,
+        tenant_id: &str,
+        _gray_name: &str,
+    ) -> &Mutex<()> {
+        self.config_cas_shard(data_id, group_id, tenant_id)
     }
 
     /// Get a column family handle
@@ -356,7 +431,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         // guard keeps the async_trait future Send and never blocks a runtime
         // worker across an await.
         let _cas_guard = self
-            .config_cas_lock
+            .config_cas_shard(data_id, group_id, tenant_id)
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let key = RocksStateMachine::config_key(data_id, group_id, tenant_id);
@@ -577,7 +652,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         // check and write must be atomic with respect to other publishes. No
         // `.await` in this method, so a std::sync guard is safe here.
         let _cas_guard = self
-            .config_cas_lock
+            .config_cas_shard_for_gray(data_id, group_id, tenant_id, gray_name)
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let key = RocksStateMachine::config_gray_key(data_id, group_id, tenant_id, gray_name);
@@ -1489,10 +1564,177 @@ mod tests {
     use tempfile::TempDir;
 
     async fn create_test_service() -> (EmbeddedPersistService, TempDir) {
+        create_test_service_with_cas_shards(DEFAULT_CONFIG_CAS_SHARDS).await
+    }
+
+    async fn create_test_service_with_cas_shards(
+        cas_shards: usize,
+    ) -> (EmbeddedPersistService, TempDir) {
         let tmp_dir = TempDir::new().unwrap();
         let sm = RocksStateMachine::new(tmp_dir.path()).await.unwrap();
-        let service = EmbeddedPersistService::from_state_machine(&sm);
+        let service = EmbeddedPersistService::from_state_machine_with_cas_shards(&sm, cas_shards);
         (service, tmp_dir)
+    }
+
+    // ==================== CAS lock sharding ====================
+
+    #[test]
+    fn test_cas_shard_index_is_stable_and_bounded() {
+        for shards in [1, 16, DEFAULT_CONFIG_CAS_SHARDS, 128, MAX_CONFIG_CAS_SHARDS] {
+            for data_id in ["", "a", "app.properties", "bench-multi-0"] {
+                for group_id in ["", "DEFAULT_GROUP"] {
+                    for tenant_id in ["", "public", "tenant-a"] {
+                        let index = EmbeddedPersistService::config_cas_shard_index(
+                            data_id, group_id, tenant_id, shards,
+                        );
+                        assert!(
+                            index < shards,
+                            "shard index {index} is out of range for {shards} shards"
+                        );
+                        assert_eq!(
+                            index,
+                            EmbeddedPersistService::config_cas_shard_index(
+                                data_id, group_id, tenant_id, shards
+                            ),
+                            "the same key must always resolve to the same shard"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cas_shard_index_hashes_every_key_part() {
+        let (data_id, group_id, tenant_id) = ("app.properties", "DEFAULT_GROUP", "public");
+        let shards = DEFAULT_CONFIG_CAS_SHARDS;
+        let base =
+            EmbeddedPersistService::config_cas_shard_index(data_id, group_id, tenant_id, shards);
+
+        // With 64 shards, a correct three-part hash lands on another shard well
+        // within 64 tries. Dropping any part from the hash collapses every
+        // candidate onto `base` and fails the assertion.
+        let data_differs = (0..64).any(|i| {
+            EmbeddedPersistService::config_cas_shard_index(
+                &format!("app-{i}.properties"),
+                group_id,
+                tenant_id,
+                shards,
+            ) != base
+        });
+        assert!(data_differs, "dataId must affect the shard");
+
+        let group_differs = (0..64).any(|i| {
+            EmbeddedPersistService::config_cas_shard_index(
+                data_id,
+                &format!("GROUP-{i}"),
+                tenant_id,
+                shards,
+            ) != base
+        });
+        assert!(group_differs, "groupId must affect the shard");
+
+        let tenant_differs = (0..64).any(|i| {
+            EmbeddedPersistService::config_cas_shard_index(
+                data_id,
+                group_id,
+                &format!("tenant-{i}"),
+                shards,
+            ) != base
+        });
+        assert!(tenant_differs, "tenantId must affect the shard");
+    }
+
+    #[test]
+    fn test_cas_shards_are_distributed_for_every_configured_count() {
+        for shards in [16, 32, DEFAULT_CONFIG_CAS_SHARDS, 128] {
+            let mut seen = std::collections::HashSet::new();
+            for i in 0..shards * 8 {
+                seen.insert(EmbeddedPersistService::config_cas_shard_index(
+                    &format!("bench-multi-{i}"),
+                    "DEFAULT_GROUP",
+                    "public",
+                    shards,
+                ));
+            }
+            assert!(
+                seen.len() > shards / 2,
+                "only {} of {} shards were used",
+                seen.len(),
+                shards
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cas_shard_mutexes_are_independent_for_distinct_keys() {
+        let (svc, _tmp) = create_test_service().await;
+        let (group, tenant) = ("DEFAULT_GROUP", "public");
+        let shards = DEFAULT_CONFIG_CAS_SHARDS;
+        let first = "bench-multi-0";
+        let other = (1..128)
+            .map(|i| format!("bench-multi-{i}"))
+            .find(|candidate| {
+                EmbeddedPersistService::config_cas_shard_index(candidate, group, tenant, shards)
+                    != EmbeddedPersistService::config_cas_shard_index(first, group, tenant, shards)
+            })
+            .expect("a key on another shard");
+
+        let _held = svc.config_cas_shard(first, group, tenant).lock().unwrap();
+        assert!(
+            svc.config_cas_shard(&other, group, tenant)
+                .try_lock()
+                .is_ok(),
+            "an unrelated key must not be blocked by another key's CAS guard"
+        );
+        assert!(
+            svc.config_cas_shard(first, group, tenant)
+                .try_lock()
+                .is_err(),
+            "the same key must still be serialized under one guard"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cas_shard_is_shared_by_gray_publish() {
+        let (svc, _tmp) = create_test_service().await;
+        let (data_id, group_id, tenant_id) = ("app.properties", "DEFAULT_GROUP", "public");
+        let main = svc.config_cas_shard(data_id, group_id, tenant_id);
+        for gray_name in ["", "beta", "canary"] {
+            let gray = svc.config_cas_shard_for_gray(data_id, group_id, tenant_id, gray_name);
+            assert!(
+                std::ptr::eq(main, gray),
+                "gray publish '{gray_name}' must contend on the main config shard"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_configured_cas_shard_count_is_applied() {
+        let cases = [
+            (1_usize, 1_usize),
+            (16, 16),
+            (128, 128),
+            (0, 1), // an empty lock vector would make the modulo panic
+            (MAX_CONFIG_CAS_SHARDS + 1, MAX_CONFIG_CAS_SHARDS),
+        ];
+        for (requested, expected) in cases {
+            let (svc, _tmp) = create_test_service_with_cas_shards(requested).await;
+            assert_eq!(
+                svc.config_cas_locks.len(),
+                expected,
+                "requested {requested} shards"
+            );
+            // A lookup must stay in range for every configured count.
+            let _guard = svc.config_cas_shard("a", "G", "T").lock().unwrap();
+        }
+
+        // With one shard, distinct keys still share the single guard.
+        let (one, _tmp) = create_test_service_with_cas_shards(1).await;
+        assert!(std::ptr::eq(
+            one.config_cas_shard("a", "G", "T"),
+            one.config_cas_shard("b", "G", "T")
+        ));
     }
 
     // ==================== Config Tests ====================

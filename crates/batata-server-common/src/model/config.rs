@@ -147,21 +147,41 @@ fn try_parse_env_value(s: &str) -> config::Value {
     s.into()
 }
 
-/// Collect environment variable overrides for a given prefix, mapped to config keys.
+/// Config keys that themselves contain an underscore cannot be expressed by
+/// the generic `BATATA_*` mapping, because every `_` in the variable name is
+/// treated as a path separator. `BATATA_PERSISTENCE_EMBEDDED_CAS_SHARDS` would
+/// otherwise become `batata.persistence.embedded.cas.shards` and be silently
+/// ignored. Register explicit aliases for such keys here.
+const ENV_KEY_ALIASES: &[(&str, &str)] = &[(
+    "BATATA_PERSISTENCE_EMBEDDED_CAS_SHARDS",
+    "batata.persistence.embedded.cas_shards",
+)];
+
+/// Map one environment variable name to its config key.
 ///
-/// `BATATA_*`: prefix is mapped to `batata.` (e.g., `BATATA_SERVER_MAIN_PORT` → `batata.server.main.port`)
+/// `BATATA_*`: prefix maps to `batata.` and each `_` becomes a path separator
+/// (for example `BATATA_SERVER_MAIN_PORT` -> `batata.server.main.port`), unless
+/// the variable has an explicit alias in [`ENV_KEY_ALIASES`].
+fn env_config_key(prefix: &str, env_name: &str) -> Option<String> {
+    let prefix_with_sep = format!("{prefix}_");
+    let rest = env_name.strip_prefix(&prefix_with_sep)?;
+    if let Some((_, alias)) = ENV_KEY_ALIASES.iter().find(|(name, _)| *name == env_name) {
+        return Some((*alias).to_string());
+    }
+    Some(format!(
+        "{}.{}",
+        prefix.to_lowercase(),
+        rest.to_lowercase().replace('_', ".")
+    ))
+}
+
+/// Collect environment variable overrides for a given prefix, mapped to config keys.
 ///
 /// Returns sorted Vec to ensure deterministic override order.
 fn collect_env_overrides(prefix: &str) -> Vec<(String, config::Value)> {
-    let prefix_with_sep = format!("{prefix}_");
     let mut overrides: Vec<(String, config::Value)> = std::env::vars()
         .filter_map(|(key, value)| {
-            let rest = key.strip_prefix(&prefix_with_sep)?;
-            let config_key = format!(
-                "{}.{}",
-                prefix.to_lowercase(),
-                rest.to_lowercase().replace('_', ".")
-            );
+            let config_key = env_config_key(prefix, &key)?;
             Some((config_key, try_parse_env_value(&value)))
         })
         .collect();
@@ -837,6 +857,30 @@ impl Configuration {
         let data_dir = self.embedded_data_dir();
         let db_name = self.embedded_db_name();
         format!("{}/{}", data_dir, db_name)
+    }
+
+    /// Number of independent config CAS locks for `EmbeddedPersistService`.
+    ///
+    /// Only the `(Embedded, Standalone)` storage mode uses this value; cluster
+    /// writes are ordered by the Raft log and external databases use SQL row
+    /// locks. Values outside `1..=MAX_CONFIG_CAS_SHARDS` fall back to the
+    /// default with a warning, so a bad tuning value neither prevents startup
+    /// nor silently changes behaviour. The value is read once when the
+    /// persistence service is built; changing it requires a restart.
+    pub fn embedded_cas_shards(&self) -> usize {
+        use batata_persistence::embedded::{DEFAULT_CONFIG_CAS_SHARDS, MAX_CONFIG_CAS_SHARDS};
+
+        let value = self.typed.persistence.embedded.cas_shards;
+        if (1..=MAX_CONFIG_CAS_SHARDS as i64).contains(&value) {
+            return value as usize;
+        }
+        tracing::warn!(
+            configured = value,
+            default = DEFAULT_CONFIG_CAS_SHARDS,
+            max = MAX_CONFIG_CAS_SHARDS,
+            "batata.persistence.embedded.cas_shards out of range; using default"
+        );
+        DEFAULT_CONFIG_CAS_SHARDS
     }
 
     // ========================================================================
@@ -3696,6 +3740,66 @@ batata.server.main.port: 8888
         assert_eq!(
             cfg.deploy_topology(),
             batata_persistence::DeployTopology::Cluster
+        );
+    }
+
+    // ========================================================================
+    // Embedded config CAS shard count
+    // ========================================================================
+
+    #[test]
+    fn test_embedded_cas_shards_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(
+            cfg.embedded_cas_shards(),
+            batata_persistence::embedded::DEFAULT_CONFIG_CAS_SHARDS
+        );
+        assert_eq!(
+            cfg.typed.persistence.embedded.cas_shards,
+            batata_persistence::embedded::DEFAULT_CONFIG_CAS_SHARDS as i64
+        );
+    }
+
+    #[test]
+    fn test_embedded_cas_shards_override() {
+        let cfg = build_config(vec![(
+            "batata.persistence.embedded.cas_shards",
+            128_i64.into(),
+        )]);
+        assert_eq!(cfg.embedded_cas_shards(), 128);
+    }
+
+    #[test]
+    fn test_embedded_cas_shards_invalid_values_fall_back() {
+        for value in [0_i64, -1, 1025, i64::MAX] {
+            let cfg = build_config(vec![(
+                "batata.persistence.embedded.cas_shards",
+                value.into(),
+            )]);
+            assert_eq!(
+                cfg.embedded_cas_shards(),
+                batata_persistence::embedded::DEFAULT_CONFIG_CAS_SHARDS,
+                "value {value} must fall back to the default"
+            );
+        }
+    }
+
+    #[test]
+    fn test_env_config_key_generic_mapping() {
+        assert_eq!(
+            env_config_key("BATATA", "BATATA_SERVER_MAIN_PORT"),
+            Some("batata.server.main.port".to_string())
+        );
+        assert_eq!(env_config_key("BATATA", "NACOS_SERVER_MAIN_PORT"), None);
+    }
+
+    #[test]
+    fn test_env_config_key_cas_shards_alias() {
+        // Without the alias this resolves to `...embedded.cas.shards`, which
+        // the typed config silently ignores.
+        assert_eq!(
+            env_config_key("BATATA", "BATATA_PERSISTENCE_EMBEDDED_CAS_SHARDS"),
+            Some("batata.persistence.embedded.cas_shards".to_string())
         );
     }
 

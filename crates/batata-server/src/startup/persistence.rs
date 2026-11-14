@@ -222,8 +222,13 @@ async fn init_embedded_standalone(
     .map_err(|e| format!("Failed to initialize RocksDB state machine: {}", e))?;
 
     let rdb = sm.db();
-    let persist: Arc<dyn PersistenceService> =
-        Arc::new(batata_persistence::EmbeddedPersistService::from_state_machine(&sm));
+    let cas_shards = configuration.embedded_cas_shards();
+    info!("Standalone embedded config CAS shards: {}", cas_shards);
+    let persist: Arc<dyn PersistenceService> = Arc::new(
+        batata_persistence::EmbeddedPersistService::from_state_machine_with_cas_shards(
+            &sm, cas_shards,
+        ),
+    );
     let core_config = configuration.to_core_config();
     let smm = Arc::new(ServerMemberManager::new(&core_config));
     let cm: Arc<dyn ClusterManager> = smm.clone();
