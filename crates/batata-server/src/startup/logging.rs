@@ -23,7 +23,7 @@
 use std::path::PathBuf;
 
 use tracing::Level;
-use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::non_blocking::{NonBlockingBuilder, WorkerGuard};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::layer::SubscriberExt;
@@ -282,11 +282,12 @@ impl LoggingConfig {
 
 /// Guard that keeps the logging system alive.
 ///
-/// Holds file appender worker guards and optional OpenTelemetry provider.
-/// Must be kept alive for the duration of the application. When dropped,
-/// the OTEL provider is shut down and all buffered log output is flushed.
+/// Holds the worker guards of every non-blocking appender (console and file
+/// layers) plus the optional OpenTelemetry provider. Must be kept alive for
+/// the duration of the application. When dropped, the OTEL provider is shut
+/// down and all buffered log output is flushed.
 pub struct LoggingGuard {
-    _file_guards: Vec<WorkerGuard>,
+    _appender_guards: Vec<WorkerGuard>,
     #[cfg(feature = "http-tracing")]
     _otel_provider: Option<OtelProvider>,
     // When `http-tracing` is disabled the provider is compiled out; keep a
@@ -307,7 +308,8 @@ impl Drop for LoggingGuard {
         }
         #[cfg(not(feature = "http-tracing"))]
         let _ = self._otel_provider.take();
-        // WorkerGuards are dropped automatically, flushing remaining log output
+        // WorkerGuards are dropped automatically, flushing the buffered
+        // console and file output before the process exits.
     }
 }
 
@@ -355,7 +357,26 @@ pub fn init_logging(
         let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(filter);
         let _ = LOG_RELOAD_HANDLE.set(reload_handle);
 
+        // Writing directly to `std::io::stdout()` serializes every emitting
+        // thread on the process-wide stdout lock. Under config-write load this
+        // was the largest contention point, so hand console output to a
+        // dedicated appender thread instead. Formatting still happens on the
+        // emitting thread and the layer configuration is unchanged, therefore
+        // ANSI, target, file/line, thread names and the reloadable filter all
+        // behave exactly as before.
+        //
+        // `lossy(false)` keeps every log line: when the bounded queue is full
+        // the producer applies backpressure rather than silently dropping
+        // events. The WorkerGuard is stored in LoggingGuard so buffered output
+        // is flushed on shutdown; dropping it early would stop the worker.
+        let (console_writer, console_guard) = NonBlockingBuilder::default()
+            .lossy(false)
+            .thread_name("batata-console-appender")
+            .finish(std::io::stdout());
+        guards.push(console_guard);
+
         let console_layer = fmt::layer()
+            .with_writer(console_writer)
             .with_target(true)
             .with_thread_names(true)
             .with_file(true)
@@ -487,7 +508,7 @@ pub fn init_logging(
     }
 
     Ok(LoggingGuard {
-        _file_guards: guards,
+        _appender_guards: guards,
         _otel_provider: otel_provider,
     })
 }
