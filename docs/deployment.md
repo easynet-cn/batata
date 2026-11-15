@@ -76,6 +76,114 @@ Everything else on `/v3/console/**` — configuration CRUD, history, namespaces,
 services — is proxied and covered by
 `crates/batata-console/tests/console_remote_deployment.rs`.
 
+## Console Same-Origin Gateway
+
+The packaged `batata-ui` is a single SPA served by the console port (8081). Its
+Consul and Apollo panes call root-relative prefixes `/consul-api` and
+`/apollo-api`; the console forwards them to the matching protocol-adapter HTTP
+servers. **No API listening port changes** — the browser only needs 8081. Port
+8848 stays a pure SDK/Admin surface and serves no UI.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `batata.console.gateway.enabled` | `true` | Master switch for both routes |
+| `batata.console.gateway.consul.target` | empty | Ordered, comma-separated upstream URLs |
+| `batata.console.gateway.apollo.target` | empty | Same for Apollo |
+| `batata.console.gateway.connect.timeout.secs` | `5` | Connect timeout only; no total request timeout |
+
+Route registration is decided once at startup:
+
+- **No explicit target**: the route is registered only when
+  `batata.plugin.<consul|apollo>.enabled` is true in this process, and forwards
+  to `127.0.0.1:<batata.plugin.*.port>`. Each cluster node therefore forwards
+  to its own plugin server (8500/8510/8520, 18080/18090/18100).
+- **Explicit target**: the route is registered even when the local plugin is
+  disabled. This is required for `-d console`, where the console process never
+  starts plugin servers. Point it at a server node's plugin port.
+- **Disabled or unused route**: the scope is not registered and the prefix
+  returns 404 instead of the SPA shell (HTML 200).
+
+Multiple targets are **sticky**: every request uses the current node, and only
+a transport error switches to the next one (matching `batata-client`'s
+connection failover). Request-level load balancing is deliberately avoided —
+Consul blocking queries and `/v1/health/stream` SSE hold per-process
+subscriptions. Responses are streamed without a total timeout, so `?wait=5m`
+long polls are not cut short; hop-by-hop headers are dropped and upstream
+`Content-Encoding` is preserved.
+
+Example for a separated console against a multi-node cluster:
+
+```bash
+./target/release/batata-server -d console \
+  --batata.console.port=8081 \
+  --batata.console.gateway.consul.target=http://10.0.0.1:8500,http://10.0.0.2:8510 \
+  --batata.console.gateway.apollo.target=http://10.0.0.1:18080
+```
+
+Security: upstream targets come from configuration only, never from request
+headers or query parameters. Enabling the gateway exposes the plugin APIs on
+8081, so keep the console's rate limiter enabled and restrict that port.
+
+### Default-off plugins and the UI contract
+
+Both protocol adapters are **disabled by default** in `conf/application.yml`
+and in the typed configuration (`PluginConsulConfig` / `PluginApolloConfig`).
+With no opt-in, the gateway registers no scope, `/consul-api/**` and
+`/apollo-api/**` fail closed with 404, and the console UI shows no Consul or
+Apollo provider entry.
+
+The console advertises the effective state through
+`GET /v3/console/server/state`, which always returns string flags
+`consul_enabled` and `apollo_enabled` (`"true"` / `"false"`), even when a
+disabled plugin never registers a state provider. The frontend uses these two
+keys — not a build-time flag — to decide whether the provider switcher is
+rendered. Do not add a UI entry that bypasses this check.
+
+Enable the plugins only for the run that needs them, **without editing the
+config file**:
+
+```bash
+# CLI (highest priority)
+./target/debug/batata-server -d merged -m standalone \
+  --batata.plugin.consul.enabled=true \
+  --batata.plugin.apollo.enabled=true
+
+# Or environment variables
+BATATA_PLUGIN_CONSUL_ENABLED=true BATATA_PLUGIN_APOLLO_ENABLED=true \
+  ./target/debug/batata-server -d merged -m standalone
+```
+
+`--dotted.key=value` is the supported CLI form (`--key value` is not parsed).
+Both forms override the YAML file and leave its default-off values untouched.
+
+### Running the UI integration tests
+
+`gateway.spec.ts` is production-shaped: it runs against the console port
+(8081), not the Vite dev server, and derives its expectations from
+`/v3/console/server/state`, so the same spec validates both the enabled shape
+(upstream JSON, provider entries visible) and the default-off shape (404,
+no entries).
+
+```bash
+# 1. Start batata with the plugins enabled (see above).
+# 2. Build and sync the packaged UI into batata/console-ui.
+cd ../batata-ui && pnpm build:ui
+# 3. Run the gateway spec against 8081.
+pnpm exec playwright test --config e2e/playwright.config.ts gateway.spec.ts
+```
+
+If Playwright's bundled Chromium is not installed, set `E2E_CHROME_PATH` to a
+local Chrome executable (for example
+`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`); the setting
+is optional and does not change the default behaviour. To install the bundled
+browser instead, run `pnpm exec playwright install chromium` yourself.
+
+Implementation note: the console context path is empty by default, so its
+`web::scope("")` is a catch-all and actix does not fall back to sibling
+services. The two gateway scopes are therefore registered **before** the
+console scope; registering them afterwards makes every gateway request a 404
+even when the plugins are enabled.
+
 ## Standalone Mode
 
 ```bash

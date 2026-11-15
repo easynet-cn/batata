@@ -421,6 +421,55 @@ impl Configuration {
             .or_else(|| Some("console-ui".to_string()))
     }
 
+    /// Whether the same-origin gateway on the console port is enabled.
+    pub fn console_gateway_enabled(&self) -> bool {
+        self.config
+            .get_bool("batata.console.gateway.enabled")
+            .unwrap_or(true)
+    }
+
+    /// Ordered upstream targets for one gateway route (`consul` or `apollo`).
+    ///
+    /// An empty value means no remote target is configured, so the gateway
+    /// falls back to this process's own plugin port on loopback.
+    pub fn console_gateway_targets(&self, name: &str) -> Vec<String> {
+        self.config
+            .get_string(&format!("batata.console.gateway.{name}.target"))
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Connect timeout for gateway upstream calls, in seconds.
+    pub fn console_gateway_connect_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.console.gateway.connect.timeout.secs")
+            .unwrap_or(5)
+            .max(0) as u64
+    }
+
+    /// Whether a protocol adapter plugin is enabled in this process.
+    ///
+    /// Reads the raw config tree rather than the typed struct: plugin `enabled`
+    /// has a `true` serde default while `conf/application.yml` ships `false`,
+    /// and the plugins themselves use `Config::get_bool` in `from_config()`.
+    pub fn plugin_enabled(&self, name: &str) -> bool {
+        self.config
+            .get_bool(&format!("batata.plugin.{name}.enabled"))
+            .unwrap_or(false)
+    }
+
+    /// Port configured for a protocol adapter plugin in this process.
+    pub fn plugin_port(&self, name: &str) -> u16 {
+        let default = if name == "apollo" { 8080 } else { 8500 };
+        let key = format!("batata.plugin.{name}.port");
+        let value = self.config.get_int(&key).unwrap_or(default);
+        port_to_u16(value, &key)
+    }
+
     /// Check if console is in remote mode.
     /// Derived from deployment type: `console` deployment → remote mode.
     pub fn is_console_remote_mode(&self) -> bool {
@@ -2941,15 +2990,24 @@ mod tests {
     #[test]
     fn test_typed_consul_plugin_defaults() {
         let cfg = build_config(vec![]);
-        assert!(cfg.typed.plugin.consul.enabled);
+        assert!(!cfg.typed.plugin.consul.enabled);
         assert_eq!(cfg.typed.plugin.consul.port, 8500);
+
+        // Explicit opt-in through a property override must win over the default.
+        let enabled = build_config(vec![("batata.plugin.consul.enabled", true.into())]);
+        assert!(enabled.typed.plugin.consul.enabled);
+        assert!(enabled.plugin_enabled("consul"));
     }
 
     #[test]
     fn test_typed_apollo_plugin_defaults() {
         let cfg = build_config(vec![]);
-        assert!(cfg.typed.plugin.apollo.enabled);
+        assert!(!cfg.typed.plugin.apollo.enabled);
         assert_eq!(cfg.typed.plugin.apollo.port, 8080);
+
+        let enabled = build_config(vec![("batata.plugin.apollo.enabled", true.into())]);
+        assert!(enabled.typed.plugin.apollo.enabled);
+        assert!(enabled.plugin_enabled("apollo"));
     }
 
     #[test]
@@ -3529,8 +3587,8 @@ batata.server.main.port: 8888
         assert_eq!(typed.ratelimit.max_requests, 100);
         // Plugin
         assert!(!typed.plugin.control.enabled);
-        assert!(typed.plugin.consul.enabled);
-        assert!(typed.plugin.apollo.enabled);
+        assert!(!typed.plugin.consul.enabled);
+        assert!(!typed.plugin.apollo.enabled);
         assert!(typed.plugin.visibility.enabled);
         // Otel
         assert!(!typed.otel.enabled);

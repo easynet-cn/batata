@@ -107,6 +107,25 @@ batata.console.context_path:
 #batata.console.remote.username: nacos
 #batata.console.remote.password: nacos
 
+# --- Console Same-Origin Gateway (batata-ui Consul/Apollo panes) ---
+# The browser only talks to the console port (8081). These two prefixes are
+# forwarded to the matching protocol-adapter HTTP servers; their listening
+# ports and routes do not change. Enabled by default, but a route is registered
+# only when its plugin is enabled locally OR an explicit remote target is set.
+#batata.console.gateway.enabled: true
+
+# Comma-separated, ordered upstream URLs. Empty = use this process's own plugin
+# port on loopback (each cluster node reads its own --batata.plugin.*.port).
+# A separated console (`-d console`) never starts plugin servers, so an
+# explicit target is REQUIRED there. Multiple targets are sticky: every request
+# uses the current one until a transport error switches to the next.
+#batata.console.gateway.consul.target:
+#batata.console.gateway.apollo.target:
+
+# Connect timeout only. There is deliberately no total request timeout, so
+# Consul blocking queries (?wait=5m) and SSE streams are not cut short.
+#batata.console.gateway.connect.timeout.secs: 5
+
 # =============================================================================
 # Database
 # =============================================================================

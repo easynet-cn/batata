@@ -18,6 +18,7 @@ use batata_core::service::cluster_client::ClusterClientManager;
 use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
 
+use super::console_gateway;
 use crate::{
     api::ai::{AgentRegistry, McpServerRegistry, configure_mcp_registry, registry_app_data},
     api::cloud::{
@@ -68,6 +69,10 @@ pub fn console_server(
     } else {
         None
     };
+    // Same-origin gateway for the Consul/Apollo UI panes. Resolved once at
+    // startup; a disabled plugin (or a disabled gateway) simply leaves the
+    // corresponding scope unregistered.
+    let gateway_state = console_gateway::build_state(&app_state.configuration);
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
@@ -150,6 +155,27 @@ pub fn console_server(
         if let Some(ref ns) = naming_service {
             app = app.app_data(web::Data::new(ns.clone()));
         }
+        // Register the gateway scopes BEFORE the console scope. The console
+        // context path is empty by default, which makes `web::scope("")` a
+        // catch-all: actix does not fall back to sibling services once a scope
+        // matches, so gateway scopes registered after it would never see a
+        // request and `/consul-api/**` would always answer 404.
+        if let Some(ref gateway) = gateway_state {
+            if gateway.consul_enabled() {
+                app = app.service(
+                    web::scope(console_gateway::CONSUL_PREFIX)
+                        .default_service(web::to(console_gateway::forward_consul)),
+                );
+            }
+            if gateway.apollo_enabled() {
+                app = app.service(
+                    web::scope(console_gateway::APOLLO_PREFIX)
+                        .default_service(web::to(console_gateway::forward_apollo)),
+                );
+            }
+            app = app.app_data(gateway.clone());
+        }
+
         app = app.service(
             web::scope(&context_path)
                 .service(auth::v3::route::routes())
@@ -175,6 +201,13 @@ pub fn console_server(
                 )
                 .configure(batata_console::configure_v2_console_routes),
         );
+
+        // Gateway scopes sit beside the console scope, NOT inside it: the UI
+        // uses root-relative prefixes and the console may have its own
+        // context path. A real HTTP forward is required here; rewriting the
+        // path and re-dispatching inside this process would collide with the
+        // console's own `/v1/auth/users/login` route. Their registration order
+        // relative to the console scope is enforced above.
 
         if let Some(ref ui_dir) = ui_dir {
             app = app
@@ -769,6 +802,11 @@ pub async fn serve_ui(req: HttpRequest, ui: web::Data<UiState>) -> HttpResponse 
         if path.starts_with(prefix) {
             return HttpResponse::NotFound().finish();
         }
+    }
+    // Gateway prefixes fail closed with 404 when the gateway is disabled,
+    // instead of answering an API request with the SPA shell (HTML 200).
+    if console_gateway::is_gateway_path(path) {
+        return HttpResponse::NotFound().finish();
     }
     let base = Path::new(&ui.dir);
     // Resolve the requested file; guard against path traversal.

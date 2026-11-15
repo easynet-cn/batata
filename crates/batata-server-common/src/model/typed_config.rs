@@ -1835,8 +1835,12 @@ pub struct PluginControlRuleExternalConfig {
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `PluginConsulConfig`.
 pub struct PluginConsulConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     /// Whether the Consul adapter is enabled.
+    ///
+    /// Disabled by default, matching `conf/application.yml` and the plugin's
+    /// own `from_config()` read. Opt in explicitly via
+    /// `batata.plugin.consul.enabled=true` (CLI, env, or config file).
     pub enabled: bool,
     #[serde(default = "default_consul_port")]
     /// The port the Consul API is served on.
@@ -1870,7 +1874,7 @@ pub struct PluginConsulConfig {
 impl Default for PluginConsulConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             port: default_consul_port(),
             version: None,
             datacenter: None,
@@ -1928,8 +1932,12 @@ impl Default for PluginConsulClientConfig {
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `PluginApolloConfig`.
 pub struct PluginApolloConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     /// Whether the Apollo adapter is enabled.
+    ///
+    /// Disabled by default, matching `conf/application.yml` and the plugin's
+    /// own `from_config()` read. Opt in explicitly via
+    /// `batata.plugin.apollo.enabled=true` (CLI, env, or config file).
     pub enabled: bool,
     #[serde(default = "default_apollo_port")]
     /// The port the Apollo API is served on.
@@ -1945,7 +1953,7 @@ pub struct PluginApolloConfig {
 impl Default for PluginApolloConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             port: default_apollo_port(),
             http: PluginApolloHttpConfig::default(),
             version: default_apollo_version(),

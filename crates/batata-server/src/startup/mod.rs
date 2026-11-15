@@ -5,6 +5,7 @@
 
 /// `cluster` module.
 pub mod cluster;
+mod console_gateway;
 mod dns;
 mod grpc;
 mod http;

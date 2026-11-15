@@ -119,12 +119,18 @@ MySQL / PostgreSQL setups: [`docs/database.md`](docs/database.md)
 
 | Port | Service | Description |
 |------|---------|-------------|
-| 8848 | Main HTTP API | Nacos-compatible API |
-| 8081 | Console HTTP API | Web management console |
+| 8848 | Main HTTP API | Nacos-compatible SDK/Admin API (no UI) |
+| 8081 | Console HTTP API | Web console, only browser-facing entry (also serves `/consul-api` and `/apollo-api`, see [`docs/deployment.md`](docs/deployment.md)) |
 | 8080 | Apollo HTTP API | Apollo Config/Admin/OpenAPI (use per-node ports in cluster) |
 | 9848 | SDK gRPC | Client SDK communication |
 | 9849 | Cluster gRPC | Inter-node communication |
 | 15010 | xDS gRPC | Service mesh xDS/ADS protocol |
+
+> Consul/Apollo adapters are off by default. The console advertises their
+> effective state through `/v3/console/server/state`, and the UI only shows a
+> provider entry when the matching flag is `"true"`. Enable them per run with
+> `--batata.plugin.*.enabled=true` or `BATATA_PLUGIN_*` overrides — no config
+> file change. See [`docs/deployment.md`](docs/deployment.md).
 
 ## Compatibility
 

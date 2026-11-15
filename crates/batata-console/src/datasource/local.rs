@@ -978,6 +978,21 @@ impl ConsoleDataSource for LocalDataSource {
         let cfg = &self.configuration;
         let mut state_map = HashMap::with_capacity(30);
 
+        // Stable UI contract: both plugin flags are always present as strings,
+        // even when a disabled plugin never registers a state provider. The
+        // console frontend uses these keys to decide whether the Consul/Apollo
+        // provider entries are shown, so an absent key must not be a third
+        // state. Read the raw effective configuration, the same source the
+        // plugins and the console gateway use for their own opt-in checks.
+        state_map.insert(
+            "consul_enabled".to_string(),
+            Some(cfg.plugin_enabled("consul").to_string()),
+        );
+        state_map.insert(
+            "apollo_enabled".to_string(),
+            Some(cfg.plugin_enabled("apollo").to_string()),
+        );
+
         // Console server port
         state_map.insert(
             SERVER_PORT_STATE.to_string(),
