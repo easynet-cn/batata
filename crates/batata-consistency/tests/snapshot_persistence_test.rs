@@ -7,8 +7,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
-use openraft::{CommittedLeaderId, LogId, RaftSnapshotBuilder, SnapshotMeta};
 use tempfile::tempdir;
 
 use batata_consistency::bincode;
@@ -16,15 +16,22 @@ use batata_consistency::raft::NamingApplyHook;
 use batata_consistency::raft::state_machine::{
     CF_CONFIG, CF_INSTANCES, RocksStateMachine, StoredInstance,
 };
+use batata_consistency::raft::types::{CommittedLeaderId, LogId, SnapshotMeta};
 use batata_consistency::raft::{SnapshotFile, snapshot_format};
 
 /// Build a `SnapshotMeta` at the given log index, the way openraft would hand
-/// it to `install_snapshot`.
-fn meta_at(index: u64) -> SnapshotMeta<u64, openraft::BasicNode> {
+/// it to `install_snapshot`. Since 0.10 a snapshot is identified by the log
+/// position it covers; the `snapshot_id` field no longer exists.
+fn meta_at(index: u64) -> SnapshotMeta {
     SnapshotMeta {
-        last_log_id: Some(LogId::new(CommittedLeaderId::new(1, 0), index)),
+        last_log_id: Some(LogId::new(
+            CommittedLeaderId {
+                term: 1,
+                node_id: 0,
+            },
+            index,
+        )),
         last_membership: Default::default(),
-        snapshot_id: format!("snapshot-{}-1", index),
     }
 }
 
@@ -66,7 +73,7 @@ async fn built_snapshot_is_persisted_and_reloadable() {
     db.put_cf(&cf, b"cfg:key", b"cfg:value").unwrap();
 
     let snapshot = sm.build_snapshot().await.unwrap();
-    let expected_id = snapshot.meta.snapshot_id.clone();
+    let expected_last_log_id = snapshot.meta.last_log_id;
 
     // Staged writes must not survive: only the published directory remains.
     let dirs = committed_snapshot_dirs(&snapshots);
@@ -84,7 +91,7 @@ async fn built_snapshot_is_persisted_and_reloadable() {
         .await
         .unwrap()
         .expect("snapshot should be readable from disk");
-    assert_eq!(loaded.meta.snapshot_id, expected_id);
+    assert_eq!(loaded.meta.last_log_id, expected_last_log_id);
 
     // The recovered body must actually restore the state machine.
     let mut restored = open_sm(dir.path(), "state3", &snapshots).await;
@@ -118,7 +125,7 @@ async fn installed_snapshot_is_persisted_too() {
     let meta = meta_at(11);
     let mut target = open_sm(dir.path(), "target", &snapshots).await;
     target
-        .install_snapshot(&meta, Box::new(SnapshotFile::open(&body).await.unwrap()))
+        .install_snapshot(&meta, SnapshotFile::open(&body).await.unwrap())
         .await
         .unwrap();
 
@@ -128,7 +135,7 @@ async fn installed_snapshot_is_persisted_too() {
         .await
         .unwrap()
         .expect("installed snapshot should be on disk");
-    assert_eq!(loaded.meta.snapshot_id, meta.snapshot_id);
+    assert_eq!(loaded.meta.last_log_id, meta.last_log_id);
 }
 
 #[tokio::test]
@@ -140,9 +147,7 @@ async fn only_the_newest_snapshot_is_kept() {
 
     for index in [5u64, 9] {
         let empty = empty_snapshot(dir.path(), &format!("empty-{index}")).await;
-        sm.install_snapshot(&meta_at(index), Box::new(empty))
-            .await
-            .unwrap();
+        sm.install_snapshot(&meta_at(index), empty).await.unwrap();
     }
 
     let dirs = committed_snapshot_dirs(&snapshots);
@@ -178,12 +183,9 @@ async fn corrupted_snapshot_body_is_refused() {
 
     // The untouched body installs cleanly.
     let mut good = open_sm(dir.path(), "good", &snapshots).await;
-    good.install_snapshot(
-        &meta_at(4),
-        Box::new(SnapshotFile::open(&body).await.unwrap()),
-    )
-    .await
-    .expect("a healthy snapshot must install");
+    good.install_snapshot(&meta_at(4), SnapshotFile::open(&body).await.unwrap())
+        .await
+        .expect("a healthy snapshot must install");
 
     // Flip one byte in the middle: the checksum must catch it before anything
     // is written to the database.
@@ -198,10 +200,7 @@ async fn corrupted_snapshot_body_is_refused() {
 
     let mut target = open_sm(dir.path(), "target", &snapshots).await;
     let result = target
-        .install_snapshot(
-            &meta_at(5),
-            Box::new(SnapshotFile::open(&corrupted).await.unwrap()),
-        )
+        .install_snapshot(&meta_at(5), SnapshotFile::open(&corrupted).await.unwrap())
         .await;
     assert!(result.is_err(), "a corrupted snapshot must be refused");
 }
@@ -232,10 +231,7 @@ async fn large_snapshot_round_trips_in_batches() {
 
     let mut target = open_sm(dir.path(), "target", &snapshots).await;
     target
-        .install_snapshot(
-            &meta_at(20),
-            Box::new(SnapshotFile::open(&body).await.unwrap()),
-        )
+        .install_snapshot(&meta_at(20), SnapshotFile::open(&body).await.unwrap())
         .await
         .expect("large snapshot must install");
 
@@ -354,10 +350,7 @@ async fn install_hands_restored_instances_to_the_naming_hook() {
     *target.naming_hook().write().await = Some(hook.clone());
 
     target
-        .install_snapshot(
-            &meta_at(7),
-            Box::new(SnapshotFile::open(&body).await.unwrap()),
-        )
+        .install_snapshot(&meta_at(7), SnapshotFile::open(&body).await.unwrap())
         .await
         .unwrap();
 
@@ -378,10 +371,7 @@ async fn install_without_a_naming_hook_still_succeeds() {
     let mut target = open_sm(dir.path(), "target", &snapshots).await;
     // No hook registered: the default no-op must keep the install working.
     let empty = empty_snapshot(dir.path(), "empty").await;
-    target
-        .install_snapshot(&meta_at(3), Box::new(empty))
-        .await
-        .unwrap();
+    target.install_snapshot(&meta_at(3), empty).await.unwrap();
 
     let mut reopened = open_sm(dir.path(), "target2", &snapshots).await;
     assert!(reopened.get_current_snapshot().await.unwrap().is_some());

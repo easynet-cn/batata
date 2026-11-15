@@ -2,9 +2,6 @@
 //!
 //! Implements openraft's storage traits using RocksDB for persistence.
 
-// Allow large error types - StorageError is from openraft and follows their design patterns
-#![allow(clippy::result_large_err)]
-
 use crate::bincode;
 use std::fmt::Debug;
 use std::ops::RangeBounds;
@@ -12,15 +9,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use openraft::storage::{LogFlushed, LogState, RaftLogStorage};
-use openraft::{
-    Entry, ErrorSubject, ErrorVerb, LogId, OptionalSend, RaftLogReader, StorageError, Vote,
-};
+use openraft::storage::{IOFlushed, LogState, RaftLogStorage};
+use openraft::{OptionalSend, RaftLogReader};
 use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::types::{NodeId, TypeConfig};
+use super::types::{Entry, LogId, TypeConfig, Vote};
 
 // Column family names
 const CF_LOGS: &str = "logs";
@@ -49,44 +44,26 @@ fn sync_write_options() -> rocksdb::WriteOptions {
     opts
 }
 
-/// Helper to create StorageError for vote operations
-fn vote_error(
-    e: impl std::error::Error + Send + Sync + 'static,
-    verb: ErrorVerb,
-) -> StorageError<NodeId> {
-    StorageError::from_io_error(
-        ErrorSubject::Vote,
-        verb,
-        std::io::Error::other(e.to_string()),
-    )
-}
-
-/// Helper to create StorageError for log operations
-fn logs_error(
-    e: impl std::error::Error + Send + Sync + 'static,
-    verb: ErrorVerb,
-) -> StorageError<NodeId> {
-    StorageError::from_io_error(
-        ErrorSubject::Logs,
-        verb,
-        std::io::Error::other(e.to_string()),
-    )
+/// openraft 0.10 storage traits return `io::Error`; the subject/verb context
+/// is attached by openraft itself, so preserve only the underlying error here.
+fn io_error(e: impl std::fmt::Display) -> std::io::Error {
+    std::io::Error::other(e.to_string())
 }
 
 /// RocksDB-based log store for Raft
 pub struct RocksLogStore {
     db: Arc<DB>,
     /// Cached last log ID for performance
-    last_log_id: RwLock<Option<LogId<NodeId>>>,
+    last_log_id: RwLock<Option<LogId>>,
     /// Cached vote
-    vote: RwLock<Option<Vote<NodeId>>>,
+    vote: RwLock<Option<Vote>>,
     /// Cached last purged log ID
-    last_purged: RwLock<Option<LogId<NodeId>>>,
+    last_purged: RwLock<Option<LogId>>,
 }
 
 impl RocksLogStore {
     /// Create a new RocksDB log store with default configuration
-    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
+    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         Self::with_options(path, None, None).await
     }
 
@@ -97,7 +74,7 @@ impl RocksLogStore {
         path: P,
         custom_db_opts: Option<Options>,
         custom_cf_opts: Option<Options>,
-    ) -> Result<Self, StorageError<NodeId>> {
+    ) -> Result<Self, std::io::Error> {
         let db_opts = custom_db_opts.unwrap_or_else(|| {
             let mut opts = Options::default();
             opts.create_if_missing(true);
@@ -127,8 +104,7 @@ impl RocksLogStore {
             ColumnFamilyDescriptor::new(CF_STATE, cf_opts),
         ];
 
-        let db = DB::open_cf_descriptors(&db_opts, path, cfs)
-            .map_err(|e| logs_error(e, ErrorVerb::Read))?;
+        let db = DB::open_cf_descriptors(&db_opts, path, cfs).map_err(io_error)?;
 
         let store = Self {
             db: Arc::new(db),
@@ -145,7 +121,7 @@ impl RocksLogStore {
     }
 
     /// Load cached values from storage
-    async fn load_cached_values(&self) -> Result<(), StorageError<NodeId>> {
+    async fn load_cached_values(&self) -> Result<(), std::io::Error> {
         // Load vote
         let vote = self.load_vote_internal()?;
         *self.vote.write().await = vote;
@@ -199,43 +175,41 @@ impl RocksLogStore {
     }
 
     /// Serialize an entry using bincode (3-5x faster than JSON, 40-60% smaller).
-    fn serialize_entry(entry: &Entry<TypeConfig>) -> Result<Vec<u8>, StorageError<NodeId>> {
-        bincode::serialize(entry).map_err(|e| logs_error(e, ErrorVerb::Write))
+    fn serialize_entry(entry: &Entry) -> Result<Vec<u8>, std::io::Error> {
+        bincode::serialize(entry).map_err(io_error)
     }
 
     /// Deserialize an entry from bincode.
-    fn deserialize_entry(bytes: &[u8]) -> Result<Entry<TypeConfig>, StorageError<NodeId>> {
-        bincode::deserialize(bytes).map_err(|e| logs_error(e, ErrorVerb::Read))
+    fn deserialize_entry(bytes: &[u8]) -> Result<Entry, std::io::Error> {
+        bincode::deserialize(bytes).map_err(io_error)
     }
 
     /// Load vote from storage
-    fn load_vote_internal(&self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
+    fn load_vote_internal(&self) -> Result<Option<Vote>, std::io::Error> {
         match self.db.get_cf(self.cf_state(), KEY_VOTE) {
             Ok(Some(bytes)) => {
-                let vote: Vote<NodeId> =
-                    bincode::deserialize(&bytes).map_err(|e| vote_error(e, ErrorVerb::Read))?;
+                let vote: Vote = bincode::deserialize(&bytes).map_err(io_error)?;
                 Ok(Some(vote))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(vote_error(e, ErrorVerb::Read)),
+            Err(e) => Err(io_error(e)),
         }
     }
 
     /// Load last purged log ID
-    fn load_last_purged_internal(&self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
+    fn load_last_purged_internal(&self) -> Result<Option<LogId>, std::io::Error> {
         match self.db.get_cf(self.cf_state(), KEY_LAST_PURGED) {
             Ok(Some(bytes)) => {
-                let log_id: LogId<NodeId> =
-                    bincode::deserialize(&bytes).map_err(|e| logs_error(e, ErrorVerb::Read))?;
+                let log_id: LogId = bincode::deserialize(&bytes).map_err(io_error)?;
                 Ok(Some(log_id))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(logs_error(e, ErrorVerb::Read)),
+            Err(e) => Err(io_error(e)),
         }
     }
 
     /// Calculate the last log ID by scanning the log store
-    fn calculate_last_log_id(&self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
+    fn calculate_last_log_id(&self) -> Result<Option<LogId>, std::io::Error> {
         let mut iter = self.db.raw_iterator_cf(self.cf_logs());
         iter.seek_to_last();
 
@@ -254,7 +228,7 @@ impl RaftLogReader<TypeConfig> for RocksLogStore {
     async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
         &mut self,
         range: RB,
-    ) -> Result<Vec<Entry<TypeConfig>>, StorageError<NodeId>> {
+    ) -> Result<Vec<Entry>, std::io::Error> {
         let start = match range.start_bound() {
             std::ops::Bound::Included(&n) => n,
             std::ops::Bound::Excluded(&n) => n + 1,
@@ -288,12 +262,16 @@ impl RaftLogReader<TypeConfig> for RocksLogStore {
         debug!("Read {} log entries from range {:?}", entries.len(), range);
         Ok(entries)
     }
+
+    async fn read_vote(&mut self) -> Result<Option<Vote>, std::io::Error> {
+        Ok(*self.vote.read().await)
+    }
 }
 
 impl RaftLogStorage<TypeConfig> for RocksLogStore {
     type LogReader = Self;
 
-    async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, StorageError<NodeId>> {
+    async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, std::io::Error> {
         let last_purged = *self.last_purged.read().await;
         let last_log_id = *self.last_log_id.read().await;
 
@@ -303,19 +281,15 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         })
     }
 
-    async fn save_vote(&mut self, vote: &Vote<NodeId>) -> Result<(), StorageError<NodeId>> {
-        let bytes = bincode::serialize(vote).map_err(|e| vote_error(e, ErrorVerb::Write))?;
+    async fn save_vote(&mut self, vote: &Vote) -> Result<(), std::io::Error> {
+        let bytes = bincode::serialize(vote).map_err(io_error)?;
         self.db
             .put_cf_opt(self.cf_state(), KEY_VOTE, &bytes, &sync_write_options())
-            .map_err(|e| vote_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         *self.vote.write().await = Some(*vote);
         debug!("Saved vote: {:?}", vote);
         Ok(())
-    }
-
-    async fn read_vote(&mut self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
-        Ok(*self.vote.read().await)
     }
 
     async fn get_log_reader(&mut self) -> Self::LogReader {
@@ -332,15 +306,15 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
     async fn append<I>(
         &mut self,
         entries: I,
-        callback: LogFlushed<TypeConfig>,
-    ) -> Result<(), StorageError<NodeId>>
+        callback: IOFlushed<TypeConfig>,
+    ) -> Result<(), std::io::Error>
     where
-        I: IntoIterator<Item = Entry<TypeConfig>> + OptionalSend,
+        I: IntoIterator<Item = Entry> + OptionalSend,
         I::IntoIter: OptionalSend,
     {
         let entries: Vec<_> = entries.into_iter().collect();
         if entries.is_empty() {
-            callback.log_io_completed(Ok(()));
+            callback.io_completed(Ok(()));
             return Ok(());
         }
 
@@ -356,7 +330,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
 
         self.db
             .write_opt(batch, &sync_write_options())
-            .map_err(|e| logs_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         if let Some(log_id) = last_log_id {
             *self.last_log_id.write().await = Some(log_id);
@@ -365,13 +339,14 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         if entries.len() > 1 {
             debug!("Appended {} log entries", entries.len());
         }
-        callback.log_io_completed(Ok(()));
+        callback.io_completed(Ok(()));
         Ok(())
     }
 
-    async fn truncate(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
-        // Delete all entries with index > log_id.index
-        let start_key = Self::encode_log_index(log_id.index + 1);
+    async fn truncate_after(&mut self, last_log_id: Option<LogId>) -> Result<(), std::io::Error> {
+        // Keep entries up to and including last_log_id; None clears all logs.
+        let start = last_log_id.map(|id| id.index + 1).unwrap_or(0);
+        let start_key = Self::encode_log_index(start);
 
         let mut batch = rocksdb::WriteBatch::default();
         let mut iter = self.db.raw_iterator_cf(self.cf_logs());
@@ -386,16 +361,16 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
 
         self.db
             .write_opt(batch, &sync_write_options())
-            .map_err(|e| logs_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         // Update cached last log ID
-        *self.last_log_id.write().await = Some(log_id);
+        *self.last_log_id.write().await = last_log_id;
 
-        debug!("Truncated logs after index {}", log_id.index);
+        debug!("Truncated logs after {:?}", last_log_id);
         Ok(())
     }
 
-    async fn purge(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
+    async fn purge(&mut self, log_id: LogId) -> Result<(), std::io::Error> {
         // Delete all entries with index <= log_id.index
         let end_key = Self::encode_log_index(log_id.index + 1);
 
@@ -414,13 +389,12 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         }
 
         // Save last purged log ID
-        let last_purged_bytes =
-            bincode::serialize(&log_id).map_err(|e| logs_error(e, ErrorVerb::Write))?;
+        let last_purged_bytes = bincode::serialize(&log_id).map_err(io_error)?;
         batch.put_cf(self.cf_state(), KEY_LAST_PURGED, &last_purged_bytes);
 
         self.db
             .write_opt(batch, &sync_write_options())
-            .map_err(|e| logs_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         *self.last_purged.write().await = Some(log_id);
 

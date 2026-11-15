@@ -10,8 +10,8 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
-use openraft::network::{RPCOption, RaftNetwork};
-use openraft::{BasicNode, Snapshot, Vote};
+use openraft::BasicNode;
+use openraft::network::{RPCOption, RaftNetworkV2};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
@@ -19,6 +19,7 @@ use tonic::transport::Server;
 use batata_consistency::bincode;
 use batata_consistency::raft::network::RaftNetworkConnection;
 use batata_consistency::raft::state_machine::{CF_NAMESPACE, RocksStateMachine};
+use batata_consistency::raft::types::{Snapshot, SnapshotMeta, Vote};
 use batata_consistency::raft::{
     RaftConfig, RaftGrpcService, RaftNode, RaftRequest, ServerState, SnapshotFile,
 };
@@ -182,8 +183,7 @@ async fn follower_installs_streamed_snapshot_and_keeps_membership() {
     let meta_bytes = tokio::fs::read(snapshot_path.join("__raft_snapshot_meta"))
         .await
         .expect("read snapshot meta");
-    let meta: openraft::SnapshotMeta<u64, BasicNode> =
-        bincode::deserialize(&meta_bytes).expect("decode snapshot meta");
+    let meta: SnapshotMeta = bincode::deserialize(&meta_bytes).expect("decode snapshot meta");
     // The body stays on disk: the sender streams it from the file, so nothing
     // has to be read into memory to start the transfer.
     let data_path = snapshot_path.join("data");
@@ -200,14 +200,13 @@ async fn follower_installs_streamed_snapshot_and_keeps_membership() {
     assert!(!has_namespace(&fresh.db, "ns-snapshot"));
 
     // Stream the snapshot over real gRPC, exactly the way the leader does.
-    let vote: Vote<u64> = leader.node.metrics().vote;
+    let vote: Vote = leader.node.metrics().vote;
     let snapshot = Snapshot {
         meta: meta.clone(),
-        snapshot: Box::new(
-            SnapshotFile::open(&data_path)
-                .await
-                .expect("open snapshot body"),
-        ),
+        // 0.10 `Snapshot` owns its data directly instead of boxing it.
+        snapshot: SnapshotFile::open(&data_path)
+            .await
+            .expect("open snapshot body"),
     };
 
     let mut connection = RaftNetworkConnection::new(fresh.addr.clone());

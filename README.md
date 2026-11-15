@@ -202,7 +202,7 @@ Licensed under the Apache-2.0 License — see [LICENSE](LICENSE).
 - [Consul](https://www.consul.io/) - KV store and service discovery API design
 - [Apollo](https://github.com/apolloconfig/apollo) - Config Service / Admin Service / OpenAPI design
 - [batata-ui](https://github.com/easynet-cn/batata-ui) - Web console frontend
-- [OpenRaft](https://github.com/datafuselabs/openraft) - Raft consensus
+- [OpenRaft](https://github.com/databendlabs/openraft) - Raft consensus (0.10)
 - [SeaORM](https://www.sea-ql.org/SeaORM/) - Async ORM
 - [Actix-web](https://actix.rs/) - Web framework
 - [Tonic](https://github.com/hyperium/tonic) - gRPC implementation

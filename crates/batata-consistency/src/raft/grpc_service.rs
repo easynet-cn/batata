@@ -22,7 +22,7 @@ use batata_server_api::raft::{
 
 use super::node::RaftNode;
 use super::request::RaftRequest;
-use super::types::{NodeId, TypeConfig};
+use super::types::{Entry, Membership, Snapshot, Vote};
 
 /// Upper bound on a single received snapshot stream. A buggy or malicious
 /// leader must not be able to fill the disk with an unbounded stream; real
@@ -50,7 +50,7 @@ impl RaftGrpcService {
     }
 
     /// Convert proto Entry to openraft Entry using bincode deserialization.
-    fn from_proto_entry(entry: ProtoEntry) -> anyhow::Result<openraft::Entry<TypeConfig>> {
+    fn from_proto_entry(entry: ProtoEntry) -> anyhow::Result<Entry> {
         // Every entry produced by this codebase carries a log_id. Fabricating
         // LogId(0, 0) for a missing one would let openraft append the entry at
         // an index that disagrees with the leader and corrupt the follower log.
@@ -64,14 +64,13 @@ impl RaftGrpcService {
                 openraft::EntryPayload::Normal(req)
             }
             2 => {
-                let membership: openraft::Membership<NodeId, openraft::BasicNode> =
-                    bincode::deserialize(&entry.payload)?;
+                let membership: Membership = bincode::deserialize(&entry.payload)?;
                 openraft::EntryPayload::Membership(membership)
             }
             other => anyhow::bail!("unknown Raft entry payload_type {other} for {log_id:?}"),
         };
 
-        Ok(openraft::Entry { log_id, payload })
+        Ok(Entry { log_id, payload })
     }
 }
 
@@ -80,7 +79,7 @@ impl RaftGrpcService {
 /// Reconstructing a vote from `term`/`leader_id` drops the `committed` flag and
 /// can make a node misinterpret a step-down under mixed-version or malformed
 /// traffic, so a missing vote is a protocol error instead.
-fn required_vote(vote: Option<ProtoVote>, rpc: &str) -> Result<openraft::Vote<NodeId>, Status> {
+fn required_vote(vote: Option<ProtoVote>, rpc: &str) -> Result<Vote, Status> {
     super::proto_convert::from_proto_vote(vote)
         .ok_or_else(|| Status::invalid_argument(format!("{rpc} request is missing vote")))
 }
@@ -133,8 +132,12 @@ impl RaftService for RaftGrpcService {
                 Status::internal(format!("AppendEntries failed: {}", e))
             })?;
 
-        // AppendEntriesResponse is an enum in openraft 0.9
-        let (success, conflict, higher_vote) = match response {
+        // 0.10 returns an `AppendResult` from the core. Convert it back to the
+        // wire enum so the gRPC contract stays byte-for-byte compatible with
+        // the 0.9 transport (the leader reconstructs the AppendResult with
+        // `into_append_result(prev_log_id, last_log_id)`).
+        let wire = openraft::raft::AppendEntriesResponse::from(response);
+        let (success, conflict, higher_vote) = match wire {
             openraft::raft::AppendEntriesResponse::Success => (true, None, None),
             openraft::raft::AppendEntriesResponse::PartialSuccess(log_id) => {
                 let match_log = log_id.map(|l| ProtoLogId {
@@ -174,10 +177,12 @@ impl RaftService for RaftGrpcService {
 
         let vote = required_vote(req.vote, "Vote")?;
 
-        let vote_req = openraft::raft::VoteRequest {
+        // 0.10 added `leadership_transfer_from`; the wire has no such field,
+        // and `VoteRequest::new()` sets it to `None` for an ordinary election.
+        let vote_req = openraft::raft::VoteRequest::new(
             vote,
-            last_log_id: super::proto_convert::from_proto_log_id(req.last_log_id),
-        };
+            super::proto_convert::from_proto_log_id(req.last_log_id),
+        );
 
         let response = raft_node.raft().vote(vote_req).await.map_err(|e| {
             error!("Vote failed: {}", e);
@@ -226,7 +231,7 @@ impl RaftService for RaftGrpcService {
         let mut chunk_count: usize = 0;
         let mut total_bytes: u64 = 0;
         let mut meta: Option<batata_server_api::raft::SnapshotMeta> = None;
-        let mut vote: Option<openraft::Vote<NodeId>> = None;
+        let mut vote: Option<Vote> = None;
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| {
@@ -302,16 +307,21 @@ impl RaftService for RaftGrpcService {
         // but replying with our own vote lets the leader step down correctly.
         let vote = vote.unwrap_or_else(|| raft_node.metrics().vote);
 
-        let snapshot_id = meta.snapshot_id.clone();
+        // 0.10 dropped `SnapshotMeta::snapshot_id`; the wire still carries the
+        // slot for compatibility, but locally a snapshot is identified by the
+        // log position it covers.
+        let up_to_index = meta.last_log_id.map(|l| l.index).unwrap_or(0);
         let body = super::snapshot_file::SnapshotFile::open(&staging_path)
             .await
             .map_err(|e| {
                 error!("Failed to reopen staged snapshot: {}", e);
                 Status::internal(format!("Failed to install snapshot: {}", e))
             })?;
-        let snapshot = openraft::Snapshot {
+        // `Snapshot` no longer boxes its data: the file handle is owned by the
+        // state machine once `install_full_snapshot()` takes the snapshot.
+        let snapshot = Snapshot {
             meta,
-            snapshot: Box::new(body),
+            snapshot: body,
         };
 
         raft_node
@@ -319,7 +329,7 @@ impl RaftService for RaftGrpcService {
             .install_full_snapshot(vote, snapshot)
             .await
             .map_err(|e| {
-                error!("Failed to install snapshot {}: {}", snapshot_id, e);
+                error!("Failed to install snapshot up to {}: {}", up_to_index, e);
                 Status::internal(format!("Failed to install snapshot: {}", e))
             })?;
 
@@ -328,8 +338,8 @@ impl RaftService for RaftGrpcService {
         let _ = tokio::fs::remove_file(&staging_path).await;
 
         info!(
-            "Snapshot installed: id={}, chunks={}, bytes={}",
-            snapshot_id, chunk_count, total_bytes
+            "Snapshot installed: up_to_index={}, chunks={}, bytes={}",
+            up_to_index, chunk_count, total_bytes
         );
 
         let metrics = raft_node.metrics();
@@ -511,11 +521,11 @@ impl RaftManagementService for RaftManagementGrpcService {
         let raft_node = self.get_raft().await?;
         let _req = request.into_inner();
 
-        // Call openraft's trigger().elect() to start a new election.
-        // This causes this node (a follower) to become a candidate and start
-        // a new election term, which is the mechanism used to implement
-        // leader transfer on openraft 0.9 (which lacks transfer_leader()).
-        match raft_node.raft().trigger().elect().await {
+        // Call openraft's trigger().elect(false) to start a new election
+        // immediately (no pre-vote round). This causes this node (a follower)
+        // to become a candidate and start a new election term, which backs the
+        // `transfer_leader` admin handler.
+        match raft_node.raft().trigger().elect(false).await {
             Ok(_) => {
                 info!(
                     "Election triggered successfully on node {}",
@@ -577,7 +587,7 @@ mod tests {
         assert!(required_vote(None, "AppendEntries").is_err());
         assert!(required_vote(None, "Vote").is_err());
 
-        let proto = crate::raft::proto_convert::to_proto_vote(&openraft::Vote::new(3, 7));
+        let proto = crate::raft::proto_convert::to_proto_vote(&Vote::new(3, 7));
         let vote = required_vote(Some(proto), "Vote").unwrap();
         assert_eq!(vote.leader_id().term, 3);
         assert_eq!(vote.leader_id().node_id, 7);

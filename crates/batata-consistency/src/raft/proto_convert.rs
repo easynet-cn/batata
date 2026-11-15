@@ -7,17 +7,27 @@ use batata_server_api::raft::{
     LogId as ProtoLogId, Membership as ProtoMembership, RaftNodeInfo,
     SnapshotMeta as ProtoSnapshotMeta, Vote as ProtoVote,
 };
-use openraft::{BasicNode, LogId, Membership, StoredMembership};
+use openraft::BasicNode;
 
-use super::types::NodeId;
+use super::types::{
+    CommittedLeaderId, LogId, Membership, NodeId, SnapshotMeta, StoredMembership, Vote,
+};
 
 /// Convert proto LogId to openraft LogId.
-pub fn from_proto_log_id(log_id: Option<ProtoLogId>) -> Option<LogId<NodeId>> {
-    log_id.map(|l| LogId::new(openraft::CommittedLeaderId::new(l.term, 0), l.index))
+pub fn from_proto_log_id(log_id: Option<ProtoLogId>) -> Option<LogId> {
+    log_id.map(|l| {
+        LogId::new(
+            CommittedLeaderId {
+                term: l.term,
+                node_id: 0,
+            },
+            l.index,
+        )
+    })
 }
 
 /// Convert openraft LogId to proto LogId.
-pub fn to_proto_log_id(log_id: Option<LogId<NodeId>>) -> Option<ProtoLogId> {
+pub fn to_proto_log_id(log_id: Option<LogId>) -> Option<ProtoLogId> {
     log_id.map(|l| ProtoLogId {
         term: l.leader_id.term,
         index: l.index,
@@ -25,18 +35,18 @@ pub fn to_proto_log_id(log_id: Option<LogId<NodeId>>) -> Option<ProtoLogId> {
 }
 
 /// Convert proto Vote to openraft Vote.
-pub fn from_proto_vote(vote: Option<ProtoVote>) -> Option<openraft::Vote<NodeId>> {
+pub fn from_proto_vote(vote: Option<ProtoVote>) -> Option<Vote> {
     vote.map(|v| {
         if v.committed {
-            openraft::Vote::new_committed(v.term, v.leader_id)
+            Vote::new_committed(v.term, v.leader_id)
         } else {
-            openraft::Vote::new(v.term, v.leader_id)
+            Vote::new(v.term, v.leader_id)
         }
     })
 }
 
 /// Convert openraft Vote to proto Vote.
-pub fn to_proto_vote(vote: &openraft::Vote<NodeId>) -> ProtoVote {
+pub fn to_proto_vote(vote: &Vote) -> ProtoVote {
     ProtoVote {
         leader_id: vote.leader_id().node_id,
         term: vote.leader_id().term,
@@ -46,7 +56,7 @@ pub fn to_proto_vote(vote: &openraft::Vote<NodeId>) -> ProtoVote {
 
 /// Resolve the address of a node, falling back to an empty string when the
 /// membership carries voter ids without node metadata.
-fn node_addr(membership: &Membership<NodeId, BasicNode>, node_id: NodeId) -> String {
+fn node_addr(membership: &Membership, node_id: NodeId) -> String {
     membership
         .get_node(&node_id)
         .map(|n| n.addr.clone())
@@ -61,9 +71,7 @@ fn node_addr(membership: &Membership<NodeId, BasicNode>, node_id: NodeId) -> Str
 /// `last_log_id`, which is exactly what JRaft does with `lastIncludedIndex`.
 ///
 /// Returns `None` for an empty membership so the field stays unset on the wire.
-pub fn to_proto_membership(
-    membership: &StoredMembership<NodeId, BasicNode>,
-) -> Option<ProtoMembership> {
+pub fn to_proto_membership(membership: &StoredMembership) -> Option<ProtoMembership> {
     let inner = membership.membership();
 
     let voters: Vec<RaftNodeInfo> = inner
@@ -74,7 +82,7 @@ pub fn to_proto_membership(
         })
         .collect();
     let learners: Vec<RaftNodeInfo> = inner
-        .learner_ids()
+        .non_write_voter_ids()
         .map(|id| RaftNodeInfo {
             node_id: id,
             addr: node_addr(inner, id),
@@ -94,8 +102,8 @@ pub fn to_proto_membership(
 /// matching openraft's own `Membership` invariant.
 pub fn from_proto_membership(
     membership: Option<ProtoMembership>,
-    log_id: Option<LogId<NodeId>>,
-) -> StoredMembership<NodeId, BasicNode> {
+    log_id: Option<LogId>,
+) -> StoredMembership {
     let mut voters = BTreeSet::new();
     let mut nodes: BTreeMap<NodeId, BasicNode> = BTreeMap::new();
 
@@ -109,17 +117,28 @@ pub fn from_proto_membership(
         }
     }
 
-    StoredMembership::new(log_id, Membership::new(vec![voters], nodes))
+    // 0.10 makes `new()` fallible: every voter must have node metadata. This
+    // conversion inserts one `BasicNode` per wire voter, so the invariant
+    // always holds. `new_with_defaults()` is deliberately not used: it takes
+    // bare node ids and would discard the addresses carried on the wire.
+    let membership = Membership::new(vec![voters], nodes)
+        .expect("wire conversion inserts node metadata for every voter");
+    StoredMembership::new(log_id, membership)
 }
 
 /// Convert openraft `SnapshotMeta` to the wire `SnapshotMeta` message.
-pub fn to_proto_snapshot_meta(
-    meta: &openraft::SnapshotMeta<NodeId, BasicNode>,
-) -> ProtoSnapshotMeta {
+pub fn to_proto_snapshot_meta(meta: &SnapshotMeta) -> ProtoSnapshotMeta {
+    // The wire keeps the 0.9 `snapshot_id` slot so an older peer can still
+    // read it; openraft 0.10 dropped the field and identifies a snapshot by
+    // the log position it covers.
+    let snapshot_id = format!(
+        "snapshot-{}",
+        meta.last_log_id.map(|l| l.index).unwrap_or(0)
+    );
     ProtoSnapshotMeta {
         last_log_id: to_proto_log_id(meta.last_log_id),
         last_membership: to_proto_membership(&meta.last_membership),
-        snapshot_id: meta.snapshot_id.clone(),
+        snapshot_id,
     }
 }
 
@@ -127,16 +146,14 @@ pub fn to_proto_snapshot_meta(
 ///
 /// Returns `None` when the sender omitted metadata entirely, which the caller
 /// treats as "cannot install this snapshot" rather than installing an empty one.
-pub fn from_proto_snapshot_meta(
-    meta: Option<ProtoSnapshotMeta>,
-) -> Option<openraft::SnapshotMeta<NodeId, BasicNode>> {
+pub fn from_proto_snapshot_meta(meta: Option<ProtoSnapshotMeta>) -> Option<SnapshotMeta> {
     let meta = meta?;
     let last_log_id = from_proto_log_id(meta.last_log_id);
 
-    Some(openraft::SnapshotMeta {
+    // `snapshot_id` is a wire-only field; drop it when rebuilding the 0.10 type.
+    Some(SnapshotMeta {
         last_log_id,
         last_membership: from_proto_membership(meta.last_membership, last_log_id),
-        snapshot_id: meta.snapshot_id,
     })
 }
 
@@ -144,10 +161,7 @@ pub fn from_proto_snapshot_meta(
 mod tests {
     use super::*;
 
-    fn membership_with(
-        voters: &[NodeId],
-        learners: &[NodeId],
-    ) -> StoredMembership<NodeId, BasicNode> {
+    fn membership_with(voters: &[NodeId], learners: &[NodeId]) -> StoredMembership {
         let mut nodes = BTreeMap::new();
         for id in voters.iter().chain(learners.iter()) {
             nodes.insert(
@@ -158,9 +172,18 @@ mod tests {
             );
         }
         let voters = voters.iter().copied().collect::<BTreeSet<_>>();
+        // Every voter has a node in `nodes`, matching the production
+        // conversion invariant enforced by `Membership::new()`.
+        let membership = Membership::new(vec![voters], nodes).unwrap();
         StoredMembership::new(
-            Some(LogId::new(openraft::CommittedLeaderId::new(3, 0), 7)),
-            Membership::new(vec![voters], nodes),
+            Some(LogId::new(
+                CommittedLeaderId {
+                    term: 3,
+                    node_id: 0,
+                },
+                7,
+            )),
+            membership,
         )
     }
 
@@ -176,7 +199,7 @@ mod tests {
 
         let restored = from_proto_membership(Some(proto), *original.log_id());
         let restored_voters: Vec<NodeId> = restored.membership().voter_ids().collect();
-        let restored_learners: Vec<NodeId> = restored.membership().learner_ids().collect();
+        let restored_learners: Vec<NodeId> = restored.membership().non_write_voter_ids().collect();
 
         assert_eq!(restored_voters, vec![1, 2, 3]);
         assert_eq!(restored_learners, vec![4]);
@@ -213,10 +236,15 @@ mod tests {
     #[test]
     fn test_snapshot_meta_round_trip() {
         let membership = membership_with(&[1, 2, 3], &[]);
-        let original = openraft::SnapshotMeta {
-            last_log_id: Some(LogId::new(openraft::CommittedLeaderId::new(5, 0), 42)),
+        let original = SnapshotMeta {
+            last_log_id: Some(LogId::new(
+                CommittedLeaderId {
+                    term: 5,
+                    node_id: 0,
+                },
+                42,
+            )),
             last_membership: membership,
-            snapshot_id: "snapshot-42-1".to_string(),
         };
 
         let proto = to_proto_snapshot_meta(&original);
@@ -224,10 +252,10 @@ mod tests {
         // `last_log_id`, exactly like JRaft's `lastIncludedIndex/Term`.
         assert!(proto.last_membership.is_some());
         assert_eq!(proto.last_log_id.as_ref().unwrap().index, 42);
+        assert!(!proto.snapshot_id.is_empty());
 
         let restored = from_proto_snapshot_meta(Some(proto)).expect("meta present");
         assert_eq!(restored.last_log_id, original.last_log_id);
-        assert_eq!(restored.snapshot_id, original.snapshot_id);
         assert_eq!(
             restored
                 .last_membership

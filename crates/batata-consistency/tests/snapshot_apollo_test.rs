@@ -69,7 +69,7 @@ async fn plugin_declared_cf_survives_snapshot_round_trip() {
     let mut sm2 = RocksStateMachine::with_options_and_cfs(dir2.path(), None, None, &[])
         .await
         .unwrap();
-    sm2.install_snapshot(&meta, Box::new(SnapshotFile::open(&body).await.unwrap()))
+    sm2.install_snapshot(&meta, SnapshotFile::open(&body).await.unwrap())
         .await
         .unwrap();
 
@@ -106,7 +106,7 @@ async fn undeclared_cf_is_not_snapshotted() {
     let mut sm2 = RocksStateMachine::with_options_and_cfs(dir2.path(), None, None, &[])
         .await
         .unwrap();
-    sm2.install_snapshot(&meta, Box::new(SnapshotFile::open(&body).await.unwrap()))
+    sm2.install_snapshot(&meta, SnapshotFile::open(&body).await.unwrap())
         .await
         .unwrap();
 

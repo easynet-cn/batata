@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use openraft::{BasicNode, Raft};
+use openraft::BasicNode;
+use openraft::async_runtime::watch::WatchReceiver;
 use rocksdb::Options;
 use tracing::{debug, info};
 
@@ -19,7 +20,7 @@ use super::network::BatataRaftNetworkFactory;
 use super::plugin::PluginRegistry;
 use super::request::{RaftRequest, RaftResponse};
 use super::state_machine::RocksStateMachine;
-use super::types::{NodeId, RaftMetrics, TypeConfig};
+use super::types::{NodeId, Raft, RaftMetrics, StoredMembership};
 use crate::RaftPluginHandler;
 
 /// Resolve the index to report after a write forwarded to the leader.
@@ -55,8 +56,10 @@ pub struct RaftNode {
     /// Node address (for Raft communication)
     addr: String,
 
-    /// The underlying Raft instance
-    raft: Raft<TypeConfig>,
+    /// The underlying Raft instance. Since 0.10 the state machine type is
+    /// named by `Raft` itself, so this uses the crate alias
+    /// `Raft<TypeConfig, RocksStateMachine>`.
+    raft: Raft,
 
     /// Configuration (reserved for future dynamic reconfiguration)
     config: RaftConfig,
@@ -218,7 +221,7 @@ impl RaftNode {
     }
 
     /// Get the underlying Raft instance
-    pub fn raft(&self) -> &Raft<TypeConfig> {
+    pub fn raft(&self) -> &Raft {
         &self.raft
     }
 
@@ -318,7 +321,7 @@ impl RaftNode {
 
     /// Get current metrics
     pub fn metrics(&self) -> RaftMetrics {
-        self.raft.metrics().borrow().clone()
+        self.raft.metrics().borrow_watched().clone()
     }
 
     /// Directory snapshots live in, including the `incoming/` staging area used
@@ -340,7 +343,7 @@ impl RaftNode {
     /// which accepts eventual consistency for config reads.
     pub fn is_group_member(&self) -> bool {
         let watcher = self.raft.metrics();
-        let metrics = watcher.borrow();
+        let metrics = watcher.borrow_watched();
         let self_id = self.node_id();
         metrics
             .membership_config
@@ -630,9 +633,10 @@ impl RaftNode {
     /// Trigger an election on a remote node (for leader transfer).
     ///
     /// This sends a gRPC `TriggerElection` request to the specified node,
-    /// causing it to call `raft.trigger().elect()` and start a new election.
-    /// Used by the `transfer_leader` HTTP handler to implement leader transfer
-    /// when openraft 0.9 doesn't have a native `transfer_leader()` API.
+    /// causing it to call `raft.trigger().elect(false)` and start a new election.
+    /// Used by the `transfer_leader` HTTP handler to move leadership to the
+    /// target follower without going through openraft's vote-request based
+    /// transfer path.
     pub async fn trigger_remote_election(&self, addr: &str) -> Result<(), String> {
         use batata_server_api::raft::TriggerElectionRequest;
         use batata_server_api::raft::raft_management_service_client::RaftManagementServiceClient;
@@ -693,7 +697,11 @@ impl RaftNode {
     /// Perform a linearizable read
     /// This ensures the read sees all committed data up to the point of the read
     pub async fn linearizable_read(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.raft.ensure_linearizable().await?;
+        // 0.10 requires an explicit read policy. ReadIndex performs a quorum
+        // round trip, matching the 0.9 `ensure_linearizable()` semantics.
+        self.raft
+            .ensure_linearizable(openraft::ReadPolicy::ReadIndex)
+            .await?;
         Ok(())
     }
 
@@ -871,7 +879,7 @@ impl RaftNode {
     }
 
     /// Get cluster membership information
-    pub fn membership(&self) -> openraft::StoredMembership<NodeId, openraft::BasicNode> {
+    pub fn membership(&self) -> StoredMembership {
         (*self.metrics().membership_config).clone()
     }
 

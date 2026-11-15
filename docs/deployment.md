@@ -105,6 +105,12 @@ cargo run --release -p batata-server
 
 3. Start all nodes
 
+**Upgrading the consensus layer.** The OpenRaft 0.9 to 0.10 upgrade is
+lockstep: stop all nodes at once, wipe their RocksDB data directories, then
+start the fresh cluster and re-initialize membership. Rolling or mixed-version
+restarts are not supported. See [Database](database.md#consensus-data-on-upgrade-openraft-010)
+for the full procedure, and export config data before the wipe.
+
 ## Podman
 
 The image is built from the [`Containerfile`](../../Containerfile) at the

@@ -11,11 +11,9 @@ use crate::bincode;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use openraft::storage::{RaftSnapshotBuilder, RaftStateMachine, Snapshot};
-use openraft::{
-    Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, OptionalSend, SnapshotMeta, StorageError,
-    StoredMembership,
-};
+use futures::TryStreamExt;
+use openraft::storage::{EntryResponder, RaftSnapshotBuilder, RaftStateMachine};
+use openraft::{EntryPayload, OptionalSend};
 use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::RwLock;
@@ -27,7 +25,7 @@ use super::plugin::{PluginRegistry, RaftPluginHandler};
 use super::request::{RaftRequest, RaftResponse};
 use super::snapshot_file::SnapshotFile;
 use super::snapshot_format::{self, SnapshotReader, SnapshotWriter};
-use super::types::{NodeId, TypeConfig};
+use super::types::{LogId, Snapshot, SnapshotMeta, StoredMembership, TypeConfig};
 
 /// On-disk snapshot layout, mirroring JRaft's `LocalSnapshotStorage`:
 ///
@@ -122,16 +120,10 @@ async fn copy_file_streaming(src: &Path, dst: &Path) -> std::io::Result<u64> {
     Ok(copied)
 }
 
-/// Helper to create StorageError for state machine operations
-fn sm_error(
-    e: impl std::error::Error + Send + Sync + 'static,
-    verb: ErrorVerb,
-) -> StorageError<NodeId> {
-    StorageError::from_io_error(
-        ErrorSubject::StateMachine,
-        verb,
-        std::io::Error::other(e.to_string()),
-    )
+/// openraft 0.10 state machine methods return `io::Error`; the storage
+/// context is attached by openraft itself.
+fn io_error(e: impl std::fmt::Display) -> std::io::Error {
+    std::io::Error::other(e.to_string())
 }
 
 /// Write options for state-machine bookkeeping (last applied log id and
@@ -250,9 +242,9 @@ const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
 pub struct RocksStateMachine {
     pub(super) db: Arc<DB>,
     /// Last applied log ID
-    last_applied: RwLock<Option<LogId<NodeId>>>,
+    last_applied: RwLock<Option<LogId>>,
     /// Last membership configuration
-    last_membership: RwLock<StoredMembership<NodeId, openraft::BasicNode>>,
+    last_membership: RwLock<StoredMembership>,
     /// Registry of plugin handlers for PluginWrite operations.
     /// Wrapped in Arc so the registry can be shared with RaftNode for
     /// post-initialization plugin registration (after state_machine is moved into Raft).
@@ -296,7 +288,7 @@ pub use records::{
 impl RocksStateMachine {
     /// Index a snapshot is filed under: the last applied log index, or 0 for a
     /// state machine that has not applied anything yet.
-    fn snapshot_index(meta: &SnapshotMeta<NodeId, openraft::BasicNode>) -> u64 {
+    fn snapshot_index(meta: &SnapshotMeta) -> u64 {
         meta.last_log_id.map(|l| l.index).unwrap_or(0)
     }
 
@@ -314,24 +306,18 @@ impl RocksStateMachine {
     ///
     /// Returns `None` when no snapshot directory is configured, meaning the
     /// snapshot stays in the scratch file instead of being published.
-    async fn prepare_staging_dir(&self) -> Result<Option<PathBuf>, StorageError<NodeId>> {
+    async fn prepare_staging_dir(&self) -> Result<Option<PathBuf>, std::io::Error> {
         let Some(dir) = self.snapshot_dir.as_ref() else {
             return Ok(None);
         };
 
-        tokio::fs::create_dir_all(dir)
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        tokio::fs::create_dir_all(dir).await.map_err(io_error)?;
 
         let temp = dir.join(SNAPSHOT_TEMP_DIR);
         if temp.exists() {
-            tokio::fs::remove_dir_all(&temp)
-                .await
-                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            tokio::fs::remove_dir_all(&temp).await.map_err(io_error)?;
         }
-        tokio::fs::create_dir_all(&temp)
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        tokio::fs::create_dir_all(&temp).await.map_err(io_error)?;
 
         Ok(Some(temp))
     }
@@ -342,19 +328,17 @@ impl RocksStateMachine {
     async fn commit_staging_dir(
         &self,
         temp: &Path,
-        meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
-    ) -> Result<PathBuf, StorageError<NodeId>> {
-        let dir = self.snapshot_dir.as_ref().ok_or_else(|| {
-            sm_error(
-                std::io::Error::other("no snapshot directory"),
-                ErrorVerb::Write,
-            )
-        })?;
+        meta: &SnapshotMeta,
+    ) -> Result<PathBuf, std::io::Error> {
+        let dir = self
+            .snapshot_dir
+            .as_ref()
+            .ok_or_else(|| io_error(std::io::Error::other("no snapshot directory")))?;
 
-        let meta_bytes = bincode::serialize(meta).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let meta_bytes = bincode::serialize(meta).map_err(io_error)?;
         tokio::fs::write(temp.join(SNAPSHOT_META_FILE), &meta_bytes)
             .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         let target = dir.join(format!(
             "{}{}",
@@ -362,13 +346,9 @@ impl RocksStateMachine {
             Self::snapshot_index(meta)
         ));
         if target.exists() {
-            tokio::fs::remove_dir_all(&target)
-                .await
-                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            tokio::fs::remove_dir_all(&target).await.map_err(io_error)?;
         }
-        tokio::fs::rename(temp, &target)
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        tokio::fs::rename(temp, &target).await.map_err(io_error)?;
 
         self.prune_snapshots(&target).await?;
         Ok(target.join(SNAPSHOT_DATA_FILE))
@@ -376,31 +356,18 @@ impl RocksStateMachine {
 
     async fn publish_snapshot_file(
         &self,
-        meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
+        meta: &SnapshotMeta,
         src: &Path,
-    ) -> Result<Option<PathBuf>, StorageError<NodeId>> {
+    ) -> Result<Option<PathBuf>, std::io::Error> {
         let Some(temp) = self.prepare_staging_dir().await? else {
             return Ok(None);
         };
 
         copy_file_streaming(src, &temp.join(SNAPSHOT_DATA_FILE))
             .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         Ok(Some(self.commit_staging_dir(&temp, meta).await?))
-    }
-
-    /// Path a freshly received snapshot is streamed into before it is installed.
-    fn incoming_snapshot_path(&self) -> Option<PathBuf> {
-        let dir = self.snapshot_dir.as_ref()?;
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        Some(
-            dir.join(SNAPSHOT_INCOMING_DIR)
-                .join(format!("recv-{stamp}")),
-        )
     }
 
     /// Apply the snapshot body at `path` to RocksDB, streaming it record by
@@ -410,17 +377,11 @@ impl RocksStateMachine {
     /// appears, then filled from the snapshot. Batches are flushed once they
     /// reach [`RESTORE_BATCH_BYTES`], so peak memory is bounded by that
     /// threshold rather than by the size of the snapshot.
-    async fn restore_from_file(&self, path: &Path) -> Result<RestoreStats, StorageError<NodeId>> {
-        let file = tokio::fs::File::open(path)
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+    async fn restore_from_file(&self, path: &Path) -> Result<RestoreStats, std::io::Error> {
+        let file = tokio::fs::File::open(path).await.map_err(io_error)?;
 
         // An empty body is a valid snapshot: a node with no state at all.
-        let total_len = file
-            .metadata()
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?
-            .len();
+        let total_len = file.metadata().await.map_err(io_error)?.len();
         if total_len == 0 {
             return Ok(RestoreStats::default());
         }
@@ -430,10 +391,7 @@ impl RocksStateMachine {
             file,
         ))
         .with_total_len(total_len);
-        reader
-            .read_header()
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+        reader.read_header().await.map_err(io_error)?;
 
         let mut stats = RestoreStats::default();
         let mut cf_name = String::new();
@@ -450,7 +408,7 @@ impl RocksStateMachine {
         while let Some(kind) = reader
             .next_record(&mut cf_name, &mut key, &mut value)
             .await
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?
+            .map_err(io_error)?
         {
             match kind {
                 snapshot_format::RecordKind::ColumnFamily => {
@@ -458,7 +416,7 @@ impl RocksStateMachine {
                     if batch_bytes > 0 {
                         self.db
                             .write(std::mem::take(&mut batch))
-                            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                            .map_err(io_error)?;
                         batch_bytes = 0;
                     }
                     current = self.db.cf_handle(&cf_name);
@@ -467,10 +425,9 @@ impl RocksStateMachine {
                 }
                 snapshot_format::RecordKind::Entry => {
                     let Some(cf) = current.as_ref() else {
-                        return Err(sm_error(
-                            std::io::Error::other("snapshot entry before any column family"),
-                            ErrorVerb::Read,
-                        ));
+                        return Err(io_error(std::io::Error::other(
+                            "snapshot entry before any column family",
+                        )));
                     };
                     if !cleared {
                         // Keys are UTF-8 strings, so 0xFF as exclusive end
@@ -486,7 +443,7 @@ impl RocksStateMachine {
                     if batch_bytes >= RESTORE_BATCH_BYTES {
                         self.db
                             .write(std::mem::take(&mut batch))
-                            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                            .map_err(io_error)?;
                         batch_bytes = 0;
                         // The range delete is already durable, do not repeat it.
                         cleared = true;
@@ -497,9 +454,7 @@ impl RocksStateMachine {
         }
 
         if batch_bytes > 0 {
-            self.db
-                .write(batch)
-                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            self.db.write(batch).map_err(io_error)?;
         }
 
         Ok(stats)
@@ -509,20 +464,14 @@ impl RocksStateMachine {
     ///
     /// JRaft keeps only the newest snapshot too -- older ones are pure disk
     /// cost once the corresponding log entries have been purged.
-    async fn prune_snapshots(&self, keep: &Path) -> Result<(), StorageError<NodeId>> {
+    async fn prune_snapshots(&self, keep: &Path) -> Result<(), std::io::Error> {
         let Some(dir) = self.snapshot_dir.as_ref() else {
             return Ok(());
         };
 
-        let mut entries = tokio::fs::read_dir(dir)
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+        let mut entries = tokio::fs::read_dir(dir).await.map_err(io_error)?;
 
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?
-        {
+        while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if !name.starts_with(SNAPSHOT_DIR_PREFIX) {
@@ -673,7 +622,7 @@ impl RocksStateMachine {
     }
 
     /// Create a new RocksDB state machine with default configuration
-    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
+    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         Self::with_options(path, None, None).await
     }
 
@@ -686,7 +635,7 @@ impl RocksStateMachine {
         path: P,
         custom_db_opts: Option<Options>,
         custom_cf_opts: Option<Options>,
-    ) -> Result<Self, StorageError<NodeId>> {
+    ) -> Result<Self, std::io::Error> {
         Self::with_options_and_cfs(path, custom_db_opts, custom_cf_opts, &[]).await
     }
 
@@ -701,7 +650,7 @@ impl RocksStateMachine {
         custom_db_opts: Option<Options>,
         custom_cf_opts: Option<Options>,
         extra_cf_names: &[String],
-    ) -> Result<Self, StorageError<NodeId>> {
+    ) -> Result<Self, std::io::Error> {
         Self::with_full_options(
             path,
             custom_db_opts,
@@ -722,7 +671,7 @@ impl RocksStateMachine {
         custom_history_cf_opts: Option<Options>,
         custom_write_opts: Option<rocksdb::WriteOptions>,
         extra_cf_names: &[String],
-    ) -> Result<Self, StorageError<NodeId>> {
+    ) -> Result<Self, std::io::Error> {
         let db_opts = custom_db_opts.unwrap_or_else(|| {
             let mut opts = Options::default();
             opts.create_if_missing(true);
@@ -811,8 +760,7 @@ impl RocksStateMachine {
         }
 
         let db_path = path.as_ref().to_path_buf();
-        let db = DB::open_cf_descriptors(&db_opts, path, cfs)
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+        let db = DB::open_cf_descriptors(&db_opts, path, cfs).map_err(io_error)?;
 
         let sm = Self {
             db: Arc::new(db),
@@ -834,15 +782,14 @@ impl RocksStateMachine {
     }
 
     /// Load cached values from storage.
-    async fn load_cached_values(&self) -> Result<(), StorageError<NodeId>> {
+    async fn load_cached_values(&self) -> Result<(), std::io::Error> {
         // Load last applied
         if let Some(bytes) = self
             .db
             .get_cf(self.cf_meta(), KEY_LAST_APPLIED)
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?
+            .map_err(io_error)?
         {
-            let log_id: LogId<NodeId> =
-                bincode::deserialize(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
+            let log_id: LogId = bincode::deserialize(&bytes).map_err(io_error)?;
             *self.last_applied.write().await = Some(log_id);
         }
 
@@ -850,10 +797,9 @@ impl RocksStateMachine {
         if let Some(bytes) = self
             .db
             .get_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP)
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?
+            .map_err(io_error)?
         {
-            let membership: StoredMembership<NodeId, openraft::BasicNode> =
-                bincode::deserialize(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
+            let membership: StoredMembership = bincode::deserialize(&bytes).map_err(io_error)?;
             *self.last_membership.write().await = membership;
         }
 
@@ -1830,8 +1776,8 @@ impl RocksStateMachine {
     }
 
     /// Save last applied log ID
-    async fn save_last_applied(&self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
-        let bytes = bincode::serialize(&log_id).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+    async fn save_last_applied(&self, log_id: LogId) -> Result<(), std::io::Error> {
+        let bytes = bincode::serialize(&log_id).map_err(io_error)?;
 
         self.db
             .put_cf_opt(
@@ -1840,18 +1786,15 @@ impl RocksStateMachine {
                 &bytes,
                 &sync_write_options(),
             )
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         *self.last_applied.write().await = Some(log_id);
         Ok(())
     }
 
     /// Save membership
-    async fn save_membership(
-        &self,
-        membership: StoredMembership<NodeId, openraft::BasicNode>,
-    ) -> Result<(), StorageError<NodeId>> {
-        let bytes = bincode::serialize(&membership).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+    async fn save_membership(&self, membership: StoredMembership) -> Result<(), std::io::Error> {
+        let bytes = bincode::serialize(&membership).map_err(io_error)?;
 
         self.db
             .put_cf_opt(
@@ -1860,7 +1803,7 @@ impl RocksStateMachine {
                 &bytes,
                 &sync_write_options(),
             )
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         *self.last_membership.write().await = membership;
         Ok(())
@@ -1896,21 +1839,18 @@ impl RocksStateMachine {
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
-    async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<NodeId>> {
+    type SnapshotData = SnapshotFile;
+
+    async fn build_snapshot(&mut self) -> Result<Snapshot, std::io::Error> {
         let cf_names = self.snapshot_cf_names().await;
         let last_applied = *self.last_applied.read().await;
         let last_membership = self.last_membership.read().await.clone();
 
-        let snapshot_id = format!(
-            "snapshot-{}-{}",
-            last_applied.map(|l| l.index).unwrap_or(0),
-            chrono::Utc::now().timestamp_millis()
-        );
-
+        // openraft 0.10 identifies a snapshot by the log position it covers;
+        // the metadata no longer carries a transfer id.
         let meta = SnapshotMeta {
             last_log_id: last_applied,
             last_membership,
-            snapshot_id: snapshot_id.clone(),
         };
 
         // Stream every column family straight into the snapshot file. Encoding
@@ -1922,22 +1862,15 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             None => self.transient_snapshot_path.clone(),
         };
         if let Some(parent) = staged.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            tokio::fs::create_dir_all(parent).await.map_err(io_error)?;
         }
 
-        let file = tokio::fs::File::create(&staged)
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let file = tokio::fs::File::create(&staged).await.map_err(io_error)?;
         let mut writer = SnapshotWriter::new(BufWriter::with_capacity(
             snapshot_format::IO_BUFFER_SIZE,
             file,
         ));
-        writer
-            .write_header()
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        writer.write_header().await.map_err(io_error)?;
 
         let mut entries = 0usize;
         let mut bytes = 0u64;
@@ -1949,33 +1882,27 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             writer
                 .start_column_family(cf_name)
                 .await
-                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                .map_err(io_error)?;
 
             // Iterate explicitly and propagate RocksDB errors: `.flatten()` on
             // the iterator would silently drop a read error and yield an
             // incomplete column family that still gets a valid checksum.
             let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
             for item in iter {
-                let (key, value) = item.map_err(|e| sm_error(e, ErrorVerb::Read))?;
-                writer
-                    .write_entry(&key, &value)
-                    .await
-                    .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                let (key, value) = item.map_err(io_error)?;
+                writer.write_entry(&key, &value).await.map_err(io_error)?;
                 entries += 1;
                 bytes += (key.len() + value.len()) as u64;
             }
         }
 
-        writer
-            .finish()
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        writer.finish().await.map_err(io_error)?;
         writer
             .into_inner()
             .into_inner()
             .sync_all()
             .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+            .map_err(io_error)?;
 
         // Publish under snapshot_{index} so the node can restart from this
         // snapshot instead of replaying a log that may already be purged.
@@ -1992,47 +1919,40 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
         };
 
         info!(
-            "Built snapshot {} with {} entries ({} bytes)",
-            snapshot_id, entries, bytes
+            "Built snapshot at log index {} with {} entries ({} bytes)",
+            last_applied.map(|l| l.index).unwrap_or(0),
+            entries,
+            bytes
         );
 
         Ok(Snapshot {
             meta,
-            snapshot: Box::new(
-                SnapshotFile::open(&published)
-                    .await
-                    .map_err(|e| sm_error(e, ErrorVerb::Read))?,
-            ),
+            snapshot: SnapshotFile::open(&published).await.map_err(io_error)?,
         })
     }
 }
 
 impl RaftStateMachine<TypeConfig> for RocksStateMachine {
+    type SnapshotData = SnapshotFile;
     type SnapshotBuilder = Self;
 
-    async fn applied_state(
-        &mut self,
-    ) -> Result<
-        (
-            Option<LogId<NodeId>>,
-            StoredMembership<NodeId, openraft::BasicNode>,
-        ),
-        StorageError<NodeId>,
-    > {
+    async fn applied_state(&mut self) -> Result<(Option<LogId>, StoredMembership), std::io::Error> {
         let last_applied = *self.last_applied.read().await;
         let last_membership = self.last_membership.read().await.clone();
         Ok((last_applied, last_membership))
     }
 
-    async fn apply<I>(&mut self, entries: I) -> Result<Vec<RaftResponse>, StorageError<NodeId>>
+    async fn apply<Strm>(&mut self, mut entries: Strm) -> Result<(), std::io::Error>
     where
-        I: IntoIterator<Item = Entry<TypeConfig>> + OptionalSend,
-        I::IntoIter: OptionalSend,
+        Strm: futures::Stream<Item = Result<EntryResponder<TypeConfig>, std::io::Error>>
+            + Unpin
+            + OptionalSend,
     {
-        let mut responses = Vec::new();
-        let mut last_log_id: Option<LogId<NodeId>> = None;
+        let mut last_log_id: Option<LogId> = None;
 
-        for entry in entries {
+        // openraft 0.10 streams entries paired with a responder, so a client
+        // write is answered as soon as its own entry has been applied.
+        while let Some((entry, responder)) = entries.try_next().await? {
             let log_id = entry.log_id;
 
             let response = match entry.payload {
@@ -2046,21 +1966,20 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             };
 
             last_log_id = Some(log_id);
-            responses.push(response);
+            if let Some(responder) = responder {
+                responder.send(response);
+            }
         }
 
-        // Persist last_applied ONCE after the entire batch, not per-entry.
-        // This reduces RocksDB writes from 2N to N+1 for a batch of N entries.
+        // Persist last_applied once after the whole stream, not per entry.
         if let Some(log_id) = last_log_id {
             self.save_last_applied(log_id).await?;
         }
 
-        Ok(responses)
+        Ok(())
     }
 
-    async fn get_current_snapshot(
-        &mut self,
-    ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<NodeId>> {
+    async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot>, std::io::Error> {
         let Some(path) = self.latest_snapshot_dir().await else {
             return Ok(None);
         };
@@ -2072,14 +1991,13 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
                 return Ok(None);
             }
         };
-        let meta: SnapshotMeta<NodeId, openraft::BasicNode> =
-            match bincode::deserialize(&meta_bytes) {
-                Ok(meta) => meta,
-                Err(e) => {
-                    warn!("Corrupt snapshot meta at {:?}: {}", path, e);
-                    return Ok(None);
-                }
-            };
+        let meta: SnapshotMeta = match bincode::deserialize(&meta_bytes) {
+            Ok(meta) => meta,
+            Err(e) => {
+                warn!("Corrupt snapshot meta at {:?}: {}", path, e);
+                return Ok(None);
+            }
+        };
 
         let data_path = path.join(SNAPSHOT_DATA_FILE);
         let body = match SnapshotFile::open(&data_path).await {
@@ -2092,13 +2010,13 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         let bytes = body.len().await.unwrap_or(0);
 
         info!(
-            "Loaded snapshot {} from disk ({} bytes)",
-            meta.snapshot_id, bytes
+            "Loaded snapshot at {:?} from disk ({} bytes)",
+            meta.last_log_id, bytes
         );
 
         Ok(Some(Snapshot {
             meta,
-            snapshot: Box::new(body),
+            snapshot: body,
         }))
     }
 
@@ -2123,41 +2041,18 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         }
     }
 
-    async fn begin_receiving_snapshot(
-        &mut self,
-    ) -> Result<Box<SnapshotFile>, StorageError<NodeId>> {
-        // The body is streamed into a file under `incoming/` rather than
-        // buffered in memory: openraft hands this handle back once the
-        // transfer finished, and a file is exactly what `install_snapshot`
-        // wants to read.
-        let path = self
-            .incoming_snapshot_path()
-            .unwrap_or_else(|| self.transient_snapshot_path.clone());
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
-        }
-
-        Ok(Box::new(
-            SnapshotFile::create(&path)
-                .await
-                .map_err(|e| sm_error(e, ErrorVerb::Write))?,
-        ))
-    }
-
     async fn install_snapshot(
         &mut self,
-        meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
-        snapshot: Box<SnapshotFile>,
-    ) -> Result<(), StorageError<NodeId>> {
+        meta: &SnapshotMeta,
+        snapshot: SnapshotFile,
+    ) -> Result<(), std::io::Error> {
         let source = snapshot.path().to_path_buf();
 
         // Verify before publishing or applying: a corrupt snapshot must never
         // become this node's recovery point, and must never half-restore.
         snapshot_format::verify_file(&source)
             .await
-            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+            .map_err(io_error)?;
 
         // A snapshot received from the leader is just as good as one we built,
         // so publish it under snapshot_{index}: without it this node would have
@@ -2180,8 +2075,8 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         self.reconcile_naming_view().await;
 
         info!(
-            "Snapshot installed: {:?} ({} column families, {} entries, {} bytes)",
-            meta.snapshot_id, stats.column_families, stats.entries, stats.bytes
+            "Snapshot installed at {:?} ({} column families, {} entries, {} bytes)",
+            meta.last_log_id, stats.column_families, stats.entries, stats.bytes
         );
         Ok(())
     }

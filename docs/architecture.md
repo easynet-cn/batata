@@ -127,6 +127,38 @@ The runtime exposes independent port families. This separation is intentional:
 The console port serves the UI only; it does not expose the Nacos-compatible data APIs.
 See [Configuration](configuration.md) for the relevant keys.
 
+## Consensus Layer (OpenRaft 0.10)
+
+`batata-consistency` is built on **OpenRaft 0.10**. The 0.9 to 0.10 upgrade
+removed `storage-v2`, `RaftStorage` and the v1 network adapter, so the current
+shape is:
+
+| Concern | 0.10 implementation |
+|---|---|
+| Log storage | `RaftLogStorage` + `RaftLogReader` (`RocksLogStore`); methods return `io::Error`, `truncate_after()` replaces `truncate()`, and `IOFlushed::io_completed()` replaces `LogFlushed::log_io_completed()` |
+| State machine | `RaftStateMachine<TypeConfig>` (`RocksStateMachine`); `apply()` consumes a stream of `EntryResponder` and returns each result through `ApplyResponder` |
+| Network | Native `RaftNetworkV2<TypeConfig>`; `append_entries()` returns `AppendResult`, `full_snapshot()` streams a `SnapshotOf<C, SnapshotFile>` |
+| Snapshots | `Snapshot` owns its data directly (no `Box`); `SnapshotMeta` has no `snapshot_id` — the gRPC wire message keeps the field for compatibility only |
+| Metrics / reads | `Raft::metrics()` returns a watch receiver read through `borrow_watched()`; `ensure_linearizable(ReadPolicy::ReadIndex)` replaces the zero-argument call |
+
+`Raft<C, SM>` now names the state machine, so the crate alias is
+`Raft<TypeConfig, RocksStateMachine>`. The snapshot data type is declared by
+the state machine, the snapshot builder and the network (all three use the
+file-backed `SnapshotFile`) instead of by `declare_raft_types!`.
+
+The Raft gRPC wire format is deliberately unchanged: `AppendEntriesResponse`
+is still the 0.9-shaped enum on the wire, converted with
+`AppendEntriesResponse::from(result)` on the follower and
+`into_append_result(prev_log_id, last_log_id)` on the leader. `VoteRequest`
+gained `leadership_transfer_from`, which the wire does not carry and which
+defaults to `None`.
+
+**Upgrade policy.** Persisted `Stored*` records, membership entries and
+snapshot metadata are intentionally unversioned and are not migrated between
+consensus versions. Upgrading is a **lockstep** operation: stop all nodes, wipe
+the RocksDB data directories on every node, then start a fresh cluster. Do not
+run mixed 0.9 / 0.10 nodes. See [Database](database.md) for the procedure.
+
 ## Architecture Decision Records
 
 ### ADR-0001: persistence / consensus boundary (Proposed, 2026-11-08)

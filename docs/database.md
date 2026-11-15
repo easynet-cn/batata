@@ -98,6 +98,36 @@ batata.db.migration.enabled: true
 When enabled, Batata creates or updates the schema on startup. This is the
 recommended approach for new deployments and upgrades.
 
+This covers the **SQL schema only**. It does not convert the consensus layer's
+RocksDB data.
+
+### Consensus data on upgrade (OpenRaft 0.10)
+
+`batata-consistency` upgraded from OpenRaft 0.9 to 0.10. The log store, state
+machine and snapshot APIs changed, and the persisted `Stored*` records,
+membership entries and snapshot metadata are deliberately unversioned (see
+`RaftNode::replay_persistent_instances`). An old RocksDB directory is therefore
+**not** a valid input for the new build, and there is no in-place migration.
+
+Upgrading is a **lockstep** procedure:
+
+1. Export the config data you need to keep. The embedded backend stores config,
+   namespace, instance and lock data in RocksDB, so wiping it loses that data.
+2. Stop **all** cluster nodes. Do not run a mixed 0.9 / 0.10 cluster: the gRPC
+   wire format is compatible, but the log and snapshot layouts are not.
+3. Remove the RocksDB data directories on every node:
+   - `batata.persistence.embedded.data_dir` — contains the shared business
+     database (`<data_dir>/<db_name>`, also used as the state machine store)
+     and the Raft-owned subdirectory `<data_dir>/protocol/raft` (`log/`,
+     `snapshot/`).
+4. Start the whole cluster from empty stores and re-initialize membership.
+
+Standalone embedded deployments are affected too: they construct
+`RocksStateMachine` directly and keep business data in the same RocksDB.
+MySQL / PostgreSQL deployments keep their SQL data intact; only the
+Raft-backed portions are wiped. See [Architecture](architecture.md) for the
+0.10 consensus API shape.
+
 ## Generate Database Entities
 
 ```bash

@@ -34,11 +34,6 @@
 # scripts/regression_perf_history.txt.
 
 # machine_id|storage|mode|case|median_rps|cv_pct|captured|bench_params
-mac1714-18t|rocks|standalone|Instance Register|141945|0.7|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|standalone|Instance Query|144095|0.8|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|standalone|Service List|175610|1.0|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|standalone|Config Write|57337|1.9|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|standalone|Config Read|160574|0.4|2026-10-25|c20-t2-w8-d20s-r3
 mac1714-18t|mysql|standalone|Instance Register|138308|0.4|2026-10-25|c20-t2-w8-d20s-r3
 mac1714-18t|mysql|standalone|Instance Query|143350|0.0|2026-10-25|c20-t2-w8-d20s-r3
 mac1714-18t|mysql|standalone|Service List|172972|1.2|2026-10-25|c20-t2-w8-d20s-r3
@@ -54,3 +49,8 @@ mac1714-18t|rocks|cluster|Instance Query|144194|0.2|2026-10-25|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|cluster|Service List|174415|0.1|2026-10-25|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|cluster|Config Write|2566|0.7|2026-10-25|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|cluster|Config Read|162241|0.3|2026-10-25|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|standalone|Instance Register|138496|0.1|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|standalone|Instance Query|144870|1.6|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|standalone|Service List|173979|2.3|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|standalone|Config Write|60826|0.7|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|standalone|Config Read|162550|0.2|2026-11-15|c20-t2-w8-d20s-r3

@@ -643,6 +643,14 @@ pub enum AiWriteOp {
     },
 }
 
+/// openraft 0.10 requires the application data type `D` to implement `Display`.
+/// Reuse the operation-name helper so logs stay consistent with `op_type()`.
+impl std::fmt::Display for RaftRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.op_type())
+    }
+}
+
 impl RaftRequest {
     /// Get the operation type as a string for logging
     pub fn op_type(&self) -> &'static str {

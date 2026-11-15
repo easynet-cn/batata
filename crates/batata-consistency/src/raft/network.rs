@@ -6,14 +6,13 @@ use crate::bincode;
 use std::future::Future;
 use std::time::Duration;
 
-use openraft::error::{
-    NetworkError, RPCError, RaftError, ReplicationClosed, StreamingError, Unreachable,
-};
-use openraft::network::{RPCOption, RaftNetwork};
+use openraft::errors::{NetworkError, RPCError, ReplicationClosed, StreamingError, Unreachable};
+use openraft::network::{RPCOption, RaftNetworkV2};
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, SnapshotResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, AppendResult, SnapshotResponse, VoteRequest,
+    VoteResponse,
 };
-use openraft::{BasicNode, Snapshot, Vote};
+use openraft::{BasicNode, OptionalSend};
 use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, error, warn};
 
@@ -22,7 +21,7 @@ use batata_server_api::raft::{
     Vote as ProtoVote, VoteRequest as ProtoVoteRequest, raft_service_client::RaftServiceClient,
 };
 
-use super::types::{NodeId, TypeConfig};
+use super::types::{CommittedLeaderId, Entry, LogId, NodeId, Snapshot, TypeConfig, Vote};
 
 /// Network timeout configuration for Raft gRPC connections
 #[derive(Clone, Debug)]
@@ -159,7 +158,7 @@ impl RaftNetworkConnection {
     ///
     /// The caller picks the timeout, because a snapshot transfer needs a much
     /// longer one than an ordinary AppendEntries.
-    fn endpoint(&self, timeout: Duration) -> Result<Endpoint, NetworkError> {
+    fn endpoint(&self, timeout: Duration) -> Result<Endpoint, NetworkError<TypeConfig>> {
         let endpoint = format!("http://{}", self.addr);
         debug!("Connecting to Raft node at {}", endpoint);
 
@@ -188,7 +187,9 @@ impl RaftNetworkConnection {
     }
 
     /// Ensure we have a connected client for ordinary RPCs
-    async fn ensure_client(&mut self) -> Result<&mut RaftServiceClient<Channel>, NetworkError> {
+    async fn ensure_client(
+        &mut self,
+    ) -> Result<&mut RaftServiceClient<Channel>, NetworkError<TypeConfig>> {
         if self.client.is_none() {
             let channel = self
                 .endpoint(self.network_config.rpc_timeout)?
@@ -219,7 +220,7 @@ impl RaftNetworkConnection {
     /// RPC timeout, which any sizeable snapshot exceeds.
     async fn ensure_snapshot_client(
         &mut self,
-    ) -> Result<&mut RaftServiceClient<Channel>, NetworkError> {
+    ) -> Result<&mut RaftServiceClient<Channel>, NetworkError<TypeConfig>> {
         if self.snapshot_client.is_none() {
             let channel = self
                 .endpoint(self.network_config.snapshot_timeout)?
@@ -244,7 +245,7 @@ impl RaftNetworkConnection {
     }
 
     /// Convert openraft LogId to proto LogId
-    fn to_proto_log_id(log_id: Option<openraft::LogId<NodeId>>) -> Option<ProtoLogId> {
+    fn to_proto_log_id(log_id: Option<LogId>) -> Option<ProtoLogId> {
         log_id.map(|l| ProtoLogId {
             term: l.leader_id.term,
             index: l.index,
@@ -252,12 +253,20 @@ impl RaftNetworkConnection {
     }
 
     /// Convert proto LogId to openraft LogId
-    fn from_proto_log_id(log_id: Option<ProtoLogId>) -> Option<openraft::LogId<NodeId>> {
-        log_id.map(|l| openraft::LogId::new(openraft::CommittedLeaderId::new(l.term, 0), l.index))
+    fn from_proto_log_id(log_id: Option<ProtoLogId>) -> Option<LogId> {
+        log_id.map(|l| {
+            LogId::new(
+                CommittedLeaderId {
+                    term: l.term,
+                    node_id: 0,
+                },
+                l.index,
+            )
+        })
     }
 
     /// Convert openraft Vote to proto Vote
-    fn to_proto_vote(vote: &openraft::Vote<NodeId>) -> ProtoVote {
+    fn to_proto_vote(vote: &Vote) -> ProtoVote {
         ProtoVote {
             leader_id: vote.leader_id().node_id,
             term: vote.leader_id().term,
@@ -266,13 +275,16 @@ impl RaftNetworkConnection {
     }
 
     /// Convert proto Vote to openraft Vote
-    fn from_proto_vote(vote: Option<ProtoVote>) -> Option<openraft::Vote<NodeId>> {
+    fn from_proto_vote(vote: Option<ProtoVote>) -> Option<Vote> {
         vote.map(|v| {
-            let leader_id = openraft::CommittedLeaderId::new(v.term, v.leader_id);
+            let leader_id = CommittedLeaderId {
+                term: v.term,
+                node_id: v.leader_id,
+            };
             if v.committed {
-                openraft::Vote::new_committed(leader_id.term, leader_id.node_id)
+                Vote::new_committed(leader_id.term, leader_id.node_id)
             } else {
-                openraft::Vote::new(leader_id.term, leader_id.node_id)
+                Vote::new(leader_id.term, leader_id.node_id)
             }
         })
     }
@@ -284,7 +296,7 @@ impl RaftNetworkConnection {
     /// A serialization failure aborts the RPC: emitting an empty payload with
     /// `payload_type=1/2` would make the follower reject the whole batch while
     /// the leader has already committed it locally, stalling replication.
-    fn to_proto_entry(entry: &openraft::Entry<TypeConfig>) -> Result<ProtoEntry, String> {
+    fn to_proto_entry(entry: &Entry) -> Result<ProtoEntry, String> {
         let (payload_type, payload) = match &entry.payload {
             openraft::EntryPayload::Blank => (0u32, Vec::new()),
             openraft::EntryPayload::Normal(req) => serialize_entry_payload(1, req, &entry.log_id)?,
@@ -305,7 +317,7 @@ impl RaftNetworkConnection {
 fn serialize_entry_payload<T: serde::Serialize>(
     payload_type: u32,
     value: &T,
-    log_id: &openraft::LogId<NodeId>,
+    log_id: &LogId,
 ) -> Result<(u32, Vec<u8>), String> {
     bincode::serialize(value)
         .map(|data| (payload_type, data))
@@ -317,6 +329,29 @@ fn serialize_entry_payload<T: serde::Serialize>(
             );
             format!("failed to serialize Raft entry payload {log_id:?}: {e}")
         })
+}
+
+/// Convert the 0.9-shaped wire reply into the 0.10 `AppendResult`.
+///
+/// `AppendEntriesResponse::into_append_result()` unwraps `prev_log_id` for a
+/// `Conflict`. A request replicating from the very beginning of the log has no
+/// `prev_log_id`, so a conflict reply in that position (only reachable from a
+/// malformed or mixed-version peer) must be reported as a transport failure
+/// instead of panicking the replication task. A homogeneous 0.10 follower
+/// cannot produce this combination: openraft's `ensure_log_consecutive()`
+/// accepts any request whose `prev_log_id` is `None`.
+fn append_result_from_wire(
+    wire_response: AppendEntriesResponse<TypeConfig>,
+    prev_log_id: Option<LogId>,
+    last_log_id: Option<LogId>,
+) -> Result<AppendResult<TypeConfig>, RPCError<TypeConfig>> {
+    if matches!(wire_response, AppendEntriesResponse::Conflict) && prev_log_id.is_none() {
+        warn!("Rejecting conflict reply without prev_log_id: inconsistent peer response");
+        return Err(RPCError::Unreachable(Unreachable::new(
+            &std::io::Error::other("conflict reply without prev_log_id"),
+        )));
+    }
+    Ok(wire_response.into_append_result(prev_log_id, last_log_id))
 }
 
 impl RaftNetworkConnection {
@@ -331,12 +366,18 @@ impl RaftNetworkConnection {
     }
 }
 
-impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
+impl RaftNetworkV2<TypeConfig> for RaftNetworkConnection {
+    type SnapshotData = super::snapshot_file::SnapshotFile;
+
     async fn append_entries(
         &mut self,
         req: AppendEntriesRequest<TypeConfig>,
         option: RPCOption,
-    ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
+    ) -> Result<AppendResult<TypeConfig>, RPCError<TypeConfig>> {
+        // The wire enum carries neither the acknowledged log id nor a conflict
+        // hint, so remember the ids of this request for the conversion back.
+        let prev_log_id = req.prev_log_id;
+        let last_log_id = req.last_log_id();
         let timeout = self.effective_timeout(&option);
         let client = self
             .ensure_client()
@@ -379,44 +420,29 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             })?
             .into_inner();
 
-        // Parse response - AppendEntriesResponse is an enum in openraft 0.9
-        if response.success {
-            Ok(AppendEntriesResponse::Success)
+        // Keep the 0.9-shaped wire enum, then convert to the AppendResult the
+        // openraft 0.10 leader handles.
+        let wire_response = if response.success {
+            AppendEntriesResponse::Success
         } else if let Some(vote_proto) = response.higher_vote {
             // Follower has seen a higher vote — leader must step down
             let vote = Self::from_proto_vote(Some(vote_proto))
-                .unwrap_or_else(|| openraft::Vote::new(response.term, 0));
-            Ok(AppendEntriesResponse::HigherVote(vote))
-        } else if response.conflict.is_some() {
-            Ok(AppendEntriesResponse::Conflict)
+                .unwrap_or_else(|| Vote::new(response.term, 0));
+            AppendEntriesResponse::HigherVote(vote)
         } else {
-            // Unknown failure — treat as conflict (safe fallback for prev_log_id != None)
-            Ok(AppendEntriesResponse::Conflict)
-        }
-    }
-
-    async fn install_snapshot(
-        &mut self,
-        rpc: openraft::raft::InstallSnapshotRequest<TypeConfig>,
-        _option: RPCOption,
-    ) -> Result<
-        openraft::raft::InstallSnapshotResponse<NodeId>,
-        RPCError<NodeId, BasicNode, RaftError<NodeId, openraft::error::InstallSnapshotError>>,
-    > {
-        // For incremental snapshot installation, acknowledge receipt
-        // The actual data transfer happens via full_snapshot
-        debug!("Install snapshot request received, offset: {}", rpc.offset);
-        Ok(openraft::raft::InstallSnapshotResponse { vote: rpc.vote })
+            // Conflict or unknown failure: probing again is the safe fallback.
+            AppendEntriesResponse::Conflict
+        };
+        append_result_from_wire(wire_response, prev_log_id, last_log_id)
     }
 
     async fn full_snapshot(
         &mut self,
-        vote: Vote<NodeId>,
-        snapshot: Snapshot<TypeConfig>,
-        cancel: impl Future<Output = ReplicationClosed> + Send + 'static,
+        vote: Vote,
+        snapshot: Snapshot,
+        cancel: impl Future<Output = ReplicationClosed> + OptionalSend + 'static,
         _option: RPCOption,
-    ) -> Result<SnapshotResponse<NodeId>, StreamingError<TypeConfig, openraft::error::Fatal<NodeId>>>
-    {
+    ) -> Result<SnapshotResponse<TypeConfig>, StreamingError<TypeConfig>> {
         use futures::stream;
         use tokio::io::{AsyncReadExt, BufReader};
         use tokio::select;
@@ -448,7 +474,7 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
         // sending a snapshot costs chunk_size of memory instead of two copies
         // of the whole body (the old code read it into a Vec and then copied
         // each chunk out of it).
-        let body = BufReader::with_capacity(chunk_size, *snapshot.snapshot);
+        let body = BufReader::with_capacity(chunk_size, snapshot.snapshot);
         let requests = stream::unfold(
             (body, vec![0u8; chunk_size], 0u64, true),
             move |(mut body, mut buf, mut offset, mut first)| {
@@ -542,9 +568,9 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
 
     async fn vote(
         &mut self,
-        req: VoteRequest<NodeId>,
+        req: VoteRequest<TypeConfig>,
         option: RPCOption,
-    ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
+    ) -> Result<VoteResponse<TypeConfig>, RPCError<TypeConfig>> {
         let timeout = self.effective_timeout(&option);
         let client = self
             .ensure_client()
@@ -587,7 +613,13 @@ mod tests {
 
     #[test]
     fn test_proto_log_id_conversion() {
-        let log_id = openraft::LogId::new(openraft::CommittedLeaderId::new(5, 100), 42);
+        let log_id = LogId::new(
+            CommittedLeaderId {
+                term: 5,
+                node_id: 100,
+            },
+            42,
+        );
         let proto = RaftNetworkConnection::to_proto_log_id(Some(log_id));
         assert!(proto.is_some());
         let proto = proto.unwrap();
@@ -597,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_proto_vote_conversion() {
-        let vote = openraft::Vote::new(3, 100);
+        let vote = Vote::new(3, 100);
         let proto = RaftNetworkConnection::to_proto_vote(&vote);
         assert_eq!(proto.term, 3);
         assert_eq!(proto.leader_id, 100);
@@ -616,7 +648,13 @@ mod tests {
 
     #[test]
     fn test_entry_payload_serialization_failure_is_propagated() {
-        let log_id = openraft::LogId::new(openraft::CommittedLeaderId::new(5, 1), 42);
+        let log_id = LogId::new(
+            CommittedLeaderId {
+                term: 5,
+                node_id: 1,
+            },
+            42,
+        );
         let err = serialize_entry_payload(1, &FailingPayload, &log_id).unwrap_err();
         assert!(
             err.contains("failed to serialize Raft entry payload"),
@@ -626,7 +664,13 @@ mod tests {
 
     #[test]
     fn test_entry_payload_serializes_to_non_empty_bytes() {
-        let log_id = openraft::LogId::new(openraft::CommittedLeaderId::new(5, 1), 42);
+        let log_id = LogId::new(
+            CommittedLeaderId {
+                term: 5,
+                node_id: 1,
+            },
+            42,
+        );
         let (payload_type, payload) =
             serialize_entry_payload(1, &"config-publish", &log_id).unwrap();
         assert_eq!(payload_type, 1);
@@ -635,5 +679,73 @@ mod tests {
             bincode::deserialize::<String>(&payload).unwrap(),
             "config-publish"
         );
+    }
+
+    fn log_id(term: u64, index: u64) -> LogId {
+        LogId::new(CommittedLeaderId { term, node_id: 1 }, index)
+    }
+
+    /// Guard test: `into_append_result()` unwraps `prev_log_id` for a conflict.
+    /// Removing the guard in `append_result_from_wire()` must make this panic.
+    #[test]
+    fn conflict_without_prev_log_id_is_a_transport_error() {
+        let err = append_result_from_wire(AppendEntriesResponse::Conflict, None, None).unwrap_err();
+        assert!(
+            matches!(err, RPCError::Unreachable(_)),
+            "expected a retriable transport error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn conflict_with_prev_log_id_returns_the_conflict() {
+        let prev = log_id(2, 7);
+        let result = append_result_from_wire(
+            AppendEntriesResponse::Conflict,
+            Some(prev),
+            Some(log_id(2, 9)),
+        )
+        .unwrap();
+        match result {
+            Err(openraft::raft::AppendError::Conflict { log_id, hint }) => {
+                assert_eq!(log_id, prev);
+                assert!(hint.is_none(), "the wire carries no conflict hint");
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn success_acknowledges_the_last_log_id() {
+        let last = log_id(2, 9);
+        let result = append_result_from_wire(
+            AppendEntriesResponse::Success,
+            Some(log_id(2, 7)),
+            Some(last),
+        )
+        .unwrap();
+        assert_eq!(result.unwrap(), Some(last));
+    }
+
+    #[test]
+    fn partial_success_acknowledges_the_matching_log_id() {
+        let matched = log_id(2, 8);
+        let result = append_result_from_wire(
+            AppendEntriesResponse::PartialSuccess(Some(matched)),
+            Some(log_id(2, 7)),
+            Some(log_id(2, 9)),
+        )
+        .unwrap();
+        assert_eq!(result.unwrap(), Some(matched));
+    }
+
+    #[test]
+    fn higher_vote_is_preserved() {
+        let vote = Vote::new(3, 42);
+        let result =
+            append_result_from_wire(AppendEntriesResponse::HigherVote(vote), None, None).unwrap();
+        match result {
+            Err(openraft::raft::AppendError::HigherVote(v)) => assert_eq!(v, vote),
+            other => panic!("expected HigherVote, got {other:?}"),
+        }
     }
 }

@@ -93,7 +93,7 @@ jsonwebtoken = { version = "12", features = ["rust_crypto"] }
 bcrypt = "0.19"
 
 # Consensus
-openraft = { version = "0.9", features = ["serde", "storage-v2"] }
+openraft = { version = "0.10", features = ["serde"] }
 rocksdb = "0.25"
 
 # Caching

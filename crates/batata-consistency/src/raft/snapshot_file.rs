@@ -1,7 +1,9 @@
 //! Snapshot body backed by a file on disk.
 //!
-//! openraft moves the snapshot body around as `TypeConfig::SnapshotData`, which
-//! must be `AsyncRead + AsyncWrite + AsyncSeek`. Keeping that body in a file
+//! Since openraft 0.10 the snapshot body type is declared by the state machine
+//! (`RaftStateMachine::SnapshotData`), the snapshot builder and the network
+//! (`RaftNetworkV2::SnapshotData`) rather than by the type config; all three
+//! name this file handle. Keeping that body in a file
 //! instead of a `Vec<u8>` is what makes snapshot transfer streaming: the leader
 //! reads chunks straight off disk, and the follower writes the incoming chunks
 //! straight onto disk. At no point does the whole snapshot have to fit in
@@ -21,7 +23,7 @@ use tokio::io::{
 /// Buffer size used when copying a snapshot body between files.
 const COPY_BUFFER_SIZE: usize = 64 * 1024;
 
-/// A snapshot body stored as a file, satisfying openraft's `SnapshotData`.
+/// A snapshot body stored as a file, used as the 0.10 `SnapshotData` type.
 #[derive(Debug)]
 pub struct SnapshotFile {
     file: File,
