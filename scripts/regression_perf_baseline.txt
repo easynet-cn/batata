@@ -21,8 +21,18 @@
 # therefore keyed by machine: a new workstation starts with an empty file and
 # you record its own epoch with
 #
-#   ./scripts/regression.sh --perf-capture            # rocks / standalone
-#   PERF_ROUNDS=5 PERF_STORAGE=mysql ./scripts/regression.sh --perf-capture
+#   ./scripts/regression.sh --only perf --perf-capture                 # rocks / standalone
+#   PERF_STORAGE=mysql    ./scripts/regression.sh --only perf --perf-capture
+#   PERF_STORAGE=postgres ./scripts/regression.sh --only perf --perf-capture
+#   PERF_MODE=cluster     ./scripts/regression.sh --only perf --perf-capture
+#
+# `captured` is the day a row was last measured, not a version tag: rows with
+# different dates were produced by different binaries. Only rows sharing a
+# date belong to the same code generation, and absolute RPS across two dates
+# is not directly comparable. After a consensus, storage or dependency change
+# that can move the hot path, re-capture all four (storage, mode) pairs above;
+# otherwise only the default rocks/standalone comparison stays current while
+# the other three groups keep describing an older binary.
 #
 # Tolerance is max(cv_pct, PERF_TOLERANCE), never a single global number: a
 # box that cannot resolve better than 40% must not fail runs for a 20% drop.
@@ -34,23 +44,23 @@
 # scripts/regression_perf_history.txt.
 
 # machine_id|storage|mode|case|median_rps|cv_pct|captured|bench_params
-mac1714-18t|mysql|standalone|Instance Register|138308|0.4|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|mysql|standalone|Instance Query|143350|0.0|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|mysql|standalone|Service List|172972|1.2|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|mysql|standalone|Config Write|4094|0.0|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|mysql|standalone|Config Read|4119|0.2|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|postgres|standalone|Instance Register|140818|1.1|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|postgres|standalone|Instance Query|142610|0.0|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|postgres|standalone|Service List|174051|0.8|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|postgres|standalone|Config Write|4998|0.6|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|postgres|standalone|Config Read|4235|0.3|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|cluster|Instance Register|130228|0.8|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|cluster|Instance Query|144194|0.2|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|cluster|Service List|174415|0.1|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|cluster|Config Write|2566|0.7|2026-10-25|c20-t2-w8-d20s-r3
-mac1714-18t|rocks|cluster|Config Read|162241|0.3|2026-10-25|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|standalone|Instance Register|138496|0.1|2026-11-15|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|standalone|Instance Query|144870|1.6|2026-11-15|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|standalone|Service List|173979|2.3|2026-11-15|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|standalone|Config Write|60826|0.7|2026-11-15|c20-t2-w8-d20s-r3
 mac1714-18t|rocks|standalone|Config Read|162550|0.2|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|mysql|standalone|Instance Register|142138|1.6|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|mysql|standalone|Instance Query|146372|0.2|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|mysql|standalone|Service List|175379|0.1|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|mysql|standalone|Config Write|4258|0.1|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|mysql|standalone|Config Read|4230|0.1|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|postgres|standalone|Instance Register|142458|0.2|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|postgres|standalone|Instance Query|147407|0.1|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|postgres|standalone|Service List|175707|0.3|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|postgres|standalone|Config Write|5167|0.1|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|postgres|standalone|Config Read|4343|0.2|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|cluster|Instance Register|133743|0.1|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|cluster|Instance Query|146352|0.4|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|cluster|Service List|176607|0.9|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|cluster|Config Write|2735|2.9|2026-11-15|c20-t2-w8-d20s-r3
+mac1714-18t|rocks|cluster|Config Read|161160|0.7|2026-11-15|c20-t2-w8-d20s-r3

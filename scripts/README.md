@@ -434,17 +434,24 @@ them.
 ### Performance gate
 
 `--perf` runs `bench_ab.py` for the `naming` and `config` cases and compares
-each median against `scripts/regression_perf_baseline.txt`. A scenario blocks
-when its median falls below `anchor * (1 - 0.116)`; the 11.6% tolerance is the
-observed run-to-run spread on this machine (Register/Query are ~1%, Config
-Write/Read ~12%), so a tighter band would fire on noise.
+each median against `scripts/regression_perf_baseline.txt`. Anchors are keyed
+by `(machine_id, storage, mode, case)`; a machine with no rows is never
+compared against another box's numbers. A scenario fails when its median drops
+below `anchor * (1 - tolerance)`, with `tolerance = max(anchor cv_pct,
+PERF_TOLERANCE)` and `PERF_TOLERANCE` defaulting to `0.08`. The stage is
+**advisory by default** - it is the only stage whose result depends on how busy
+the host is - and blocks only when `--perf-gate` is passed.
 
 It needs `target/release/batata-server`; without it the stage is skipped with a
-warning rather than failing (a release build is ~25 min and should not be a
-surprise side effect of a gate run).
+warning rather than failing (a release build can take several minutes and
+should not be a surprise side effect of a gate run).
 
-Refresh the anchors with the command recorded in the baseline file's header,
-and replace them in the same commit as the change that moved them.
+`--perf-capture` records anchors instead of comparing them, overwriting only
+the rows for the current `(storage, mode)` pair. After a consensus, storage or
+dependency change that can move the hot path, re-capture all four pairs with
+the commands in the baseline header; rows with different `captured` dates come
+from different binaries and their absolute RPS is not directly comparable.
+Commit the refreshed rows in the same commit as the change that moved them.
 
 ### Notes
 
