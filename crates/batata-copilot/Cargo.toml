@@ -12,7 +12,6 @@ description = "AI Copilot for Batata - LLM-powered skill/prompt optimization and
 # Internal crates
 batata-common = { workspace = true }
 batata-persistence = { workspace = true }
-batata-auth = { workspace = true }
 batata-server-common = { workspace = true }
 
 # Web framework
@@ -34,6 +33,3 @@ bytes = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 tracing = { workspace = true }
-
-# Time
-chrono = { workspace = true }

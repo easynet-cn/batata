@@ -12,7 +12,6 @@ description = "AI capabilities (MCP/A2A) for Batata - models, registries, and se
 # Internal crates
 batata-common = { workspace = true }
 batata-api = { workspace = true }
-batata-auth = { workspace = true }
 batata-core = { workspace = true }
 batata-persistence = { workspace = true }
 batata-server-common = { workspace = true }
@@ -57,7 +56,6 @@ anyhow = { workspace = true }
 
 # ZIP archive support
 zip = { workspace = true }
-base64 = { workspace = true }
 
 # Hashing
 md-5 = { workspace = true }

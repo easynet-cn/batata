@@ -386,7 +386,15 @@ pub fn start_system_stats_reporter(interval_secs: Option<u64>) -> tokio::task::J
         std::time::Duration::from_secs(interval_secs.unwrap_or(DEFAULT_SYSTEM_STATS_INTERVAL_SECS));
     tokio::spawn(async move {
         use sysinfo::System;
-        let mut sys = System::new();
+        // sysinfo 0.40 constructors return Result; stop the reporter when the
+        // platform cannot provide a System handle.
+        let mut sys = match System::new() {
+            Ok(sys) => sys,
+            Err(err) => {
+                tracing::warn!("failed to initialize sysinfo System: {err}");
+                return;
+            }
+        };
         let mut ticker = tokio::time::interval(interval);
         let pid = sysinfo::get_current_pid().ok();
 
@@ -401,8 +409,7 @@ pub fn start_system_stats_reporter(interval_secs: Option<u64>) -> tokio::task::J
             let cpu_usage: f64 = if sys.cpus().is_empty() {
                 0.0
             } else {
-                sys.cpus().iter().map(|c| c.cpu_usage() as f64).sum::<f64>()
-                    / sys.cpus().len() as f64
+                sys.cpus().iter().map(|c| c.usage() as f64).sum::<f64>() / sys.cpus().len() as f64
             };
             gauge!("system_cpu_usage_percent").set(cpu_usage);
             gauge!("system_memory_used_bytes").set(sys.used_memory() as f64);

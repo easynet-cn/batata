@@ -87,14 +87,18 @@ fn get_self_loader_metric(
 
     let sdk_con_count = connection_manager.connection_count();
 
-    let mut sys = System::new();
-    sys.refresh_cpu_usage();
-    sys.refresh_memory();
-
-    let cpu_usage: f32 =
-        sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / sys.cpus().len().max(1) as f32;
-
-    let load_avg = System::load_average().one;
+    // sysinfo 0.40 constructors return Result; fall back to zeroed metrics.
+    let (cpu_usage, load_avg) = match System::new() {
+        Ok(mut sys) => {
+            sys.refresh_cpu_usage();
+            sys.refresh_memory();
+            let cpu_usage = sys.cpus().iter().map(|cpu| cpu.usage()).sum::<f32>()
+                / sys.cpus().len().max(1) as f32;
+            let load_avg = System::load_average().map(|avg| avg.one).unwrap_or(0.0);
+            (cpu_usage, load_avg)
+        }
+        Err(_) => (0.0, 0.0),
+    };
 
     ServerLoaderMetric {
         address: address.to_string(),

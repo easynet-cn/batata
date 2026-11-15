@@ -12,9 +12,7 @@ description = "Service Mesh support for Batata (xDS protocol, Istio integration)
 # gRPC and protobuf
 tonic = { workspace = true, features = ["transport", "codegen"] }
 prost = { workspace = true }
-tower = { workspace = true }
 http = { workspace = true }
-http-body = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }

@@ -116,26 +116,35 @@ impl PayloadHandler for ServerLoaderInfoHandler {
         // Get real connection count from ConnectionManager
         let sdk_con_count = self.connection_manager.connection_count();
 
-        // Get system metrics using sysinfo
-        let mut sys = System::new();
-        sys.refresh_cpu_usage();
-        sys.refresh_memory();
+        // sysinfo 0.40 constructors return Result. Degrade to zeroed metrics
+        // instead of failing the RPC when the platform cannot provide them.
+        let (cpu_usage, mem_usage, load_avg) = match System::new() {
+            Ok(mut sys) => {
+                sys.refresh_cpu_usage();
+                sys.refresh_memory();
 
-        // Calculate CPU usage (average across all cores)
-        let cpu_usage = sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>()
-            / sys.cpus().len().max(1) as f32;
+                // Calculate CPU usage (average across all cores)
+                let cpu_usage = sys.cpus().iter().map(|cpu| cpu.usage()).sum::<f32>()
+                    / sys.cpus().len().max(1) as f32;
 
-        // Calculate memory usage percentage
-        let total_memory = sys.total_memory();
-        let used_memory = sys.used_memory();
-        let mem_usage = if total_memory > 0 {
-            (used_memory as f64 / total_memory as f64 * 100.0) as f32
-        } else {
-            0.0
+                // Calculate memory usage percentage
+                let total_memory = sys.total_memory();
+                let used_memory = sys.used_memory();
+                let mem_usage = if total_memory > 0 {
+                    (used_memory as f64 / total_memory as f64 * 100.0) as f32
+                } else {
+                    0.0
+                };
+
+                // Get system load average (1 minute)
+                let load_avg = System::load_average().map(|avg| avg.one).unwrap_or(0.0);
+                (cpu_usage, mem_usage, load_avg)
+            }
+            Err(err) => {
+                warn!("failed to collect system metrics: {err}");
+                (0.0, 0.0, 0.0)
+            }
         };
-
-        // Get system load average (1 minute)
-        let load_avg = System::load_average().one;
 
         // Build metrics map with real values
         let mut metrics = HashMap::with_capacity(4);

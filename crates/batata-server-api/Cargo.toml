@@ -14,7 +14,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
-bytes = { workspace = true }
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
 tonic-prost = { workspace = true }
 validator = { workspace = true }

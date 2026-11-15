@@ -33,6 +33,3 @@ tracing = { workspace = true }
 # Utils
 bytes = { workspace = true }
 if-addrs = { workspace = true }
-
-[dev-dependencies]
-proptest = { workspace = true }

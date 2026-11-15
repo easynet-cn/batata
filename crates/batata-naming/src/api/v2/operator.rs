@@ -191,10 +191,15 @@ async fn do_get_metrics(
     };
 
     // Get system metrics
-    let sys_info = sysinfo::System::new_all();
-    let cpu_usage = sys_info.global_cpu_usage() as f64;
-    let total_memory = sys_info.total_memory() as f64;
-    let used_memory = sys_info.used_memory() as f64;
+    // sysinfo 0.40 constructors return Result; fall back to zeroed metrics.
+    let (cpu_usage, total_memory, used_memory) = match sysinfo::System::new_all() {
+        Ok(sys) => (
+            sys.global_cpu_usage() as f64,
+            sys.total_memory() as f64,
+            sys.used_memory() as f64,
+        ),
+        Err(_) => (0.0, 0.0, 0.0),
+    };
     let memory_usage = if total_memory > 0.0 {
         (used_memory / total_memory) * 100.0
     } else {

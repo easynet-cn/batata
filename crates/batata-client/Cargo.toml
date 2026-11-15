@@ -20,7 +20,6 @@ batata-api = { workspace = true }
 # Without it tonic falls back to `rustls::ClientConfig::builder()`, which
 # panics when a workspace build enables both `ring` and `aws_lc_rs`.
 tonic = { workspace = true, features = ["transport", "tls-native-roots", "tls-aws-lc"] }
-prost = { workspace = true }
 
 # HTTP client
 reqwest = { workspace = true, features = ["multipart"] }
@@ -77,10 +76,10 @@ criterion = { workspace = true }
 rcgen = { workspace = true }
 wiremock = { workspace = true }
 uuid = { workspace = true }
-rustls = "0.23"
+rustls = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net"] }
-tokio-rustls = "0.26"
+tokio-rustls = { workspace = true }
 tokio-stream = { workspace = true, features = ["net"] }
 
 [[bench]]

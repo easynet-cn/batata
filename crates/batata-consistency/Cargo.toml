@@ -10,7 +10,6 @@ description = "Raft and Distro consensus protocols for Batata"
 
 [dependencies]
 batata-common = { workspace = true }
-batata-api = { workspace = true }
 batata-server-api = { workspace = true }
 
 # Raft consensus
@@ -20,7 +19,6 @@ byteorder = { workspace = true }
 
 # gRPC
 tonic = { workspace = true }
-prost = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -42,7 +40,6 @@ metrics = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 
 # Time
 chrono = { workspace = true }

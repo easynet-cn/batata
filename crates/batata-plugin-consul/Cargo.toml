@@ -34,10 +34,6 @@ async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 futures = { workspace = true }
 
-# gRPC / xDS
-tonic = { workspace = true }
-prost = { workspace = true }
-
 # Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

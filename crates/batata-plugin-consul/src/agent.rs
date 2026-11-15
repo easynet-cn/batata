@@ -1321,7 +1321,16 @@ pub async fn get_agent_host(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
-    let mut sys = System::new_all();
+    // sysinfo 0.40 constructors return Result; report the failure instead of
+    // returning fabricated host metrics.
+    let mut sys = match System::new_all() {
+        Ok(sys) => sys,
+        Err(err) => {
+            tracing::warn!("failed to initialize sysinfo System: {err}");
+            return HttpResponse::InternalServerError()
+                .consul_error(ConsulError::new("failed to collect host metrics"));
+        }
+    };
     sys.refresh_all();
 
     // Memory info
@@ -1357,10 +1366,14 @@ pub async fn get_agent_host(
         .collect();
 
     // Disk info (use root path)
-    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let disks = sysinfo::Disks::new_with_refreshed_list().ok();
     let disk = disks
-        .iter()
-        .find(|d| d.mount_point() == std::path::Path::new("/"))
+        .as_ref()
+        .and_then(|disks| {
+            disks
+                .iter()
+                .find(|d| d.mount_point() == std::path::Path::new("/"))
+        })
         .map(|d| HostDisk {
             path: d.mount_point().to_string_lossy().to_string(),
             total: d.total_space(),
@@ -1387,10 +1400,10 @@ pub async fn get_agent_host(
 
     let host = HostInfo {
         hostname,
-        os: System::name().unwrap_or_else(|| "unknown".to_string()),
+        os: System::name().unwrap_or_else(|_| "unknown".to_string()),
         platform: std::env::consts::OS.to_string(),
-        platform_version: System::os_version().unwrap_or_else(|| "unknown".to_string()),
-        kernel_version: System::kernel_version().unwrap_or_else(|| "unknown".to_string()),
+        platform_version: System::os_version().unwrap_or_else(|_| "unknown".to_string()),
+        kernel_version: System::kernel_version().unwrap_or_else(|_| "unknown".to_string()),
     };
 
     let response = AgentHostInfo {
@@ -1668,7 +1681,16 @@ pub async fn get_agent_metrics(
     }
 
     // Collect system metrics
-    let mut sys = System::new_all();
+    // sysinfo 0.40 constructors return Result; report the failure instead of
+    // returning fabricated host metrics.
+    let mut sys = match System::new_all() {
+        Ok(sys) => sys,
+        Err(err) => {
+            tracing::warn!("failed to initialize sysinfo System: {err}");
+            return HttpResponse::InternalServerError()
+                .consul_error(ConsulError::new("failed to collect host metrics"));
+        }
+    };
     sys.refresh_all();
 
     let mut gauges = Vec::new();

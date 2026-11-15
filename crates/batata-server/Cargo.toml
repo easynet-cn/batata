@@ -71,11 +71,9 @@ batata-plugin-apollo = { workspace = true, optional = true }
 # Web framework
 actix-web = { workspace = true }
 actix-files = { workspace = true }
-actix-rt = { workspace = true }
 
 # gRPC
 tonic = { workspace = true, features = ["transport", "tls-native-roots", "tls-aws-lc"] }
-prost = { workspace = true }
 tower = { workspace = true }
 http = { workspace = true }
 
@@ -84,12 +82,10 @@ sea-orm = { workspace = true }
 
 # Configuration
 config = { workspace = true }
-clap = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-yaml_serde = { workspace = true }
 
 # Async
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util"] }
@@ -113,14 +109,10 @@ opentelemetry-otlp = { workspace = true, optional = true }
 
 # Error handling
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 
 # Metrics
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-
-# Auth
-jsonwebtoken = { workspace = true }
 
 # System info
 sysinfo = { workspace = true }
@@ -136,7 +128,6 @@ bytes = { workspace = true }
 reqwest = { workspace = true }
 
 # Caching
-moka = { workspace = true }
 dashmap = { workspace = true }
 
 # Sync primitives
@@ -149,8 +140,8 @@ rocksdb = { workspace = true }
 # Diagnostics (optional, feature-gated)
 # `pprof` CPU sampling requires Linux + perf privileges (same as `perf`);
 # `flamegraph` feature renders an SVG inline (no external perl scripts needed).
-pprof = { version = "0.14", features = ["flamegraph"], optional = true }
-console-subscriber = { version = "0.4", optional = true }
+pprof = { workspace = true, features = ["flamegraph"], optional = true }
+console-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 actix-http = { workspace = true }

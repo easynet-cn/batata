@@ -367,6 +367,9 @@ impl AppBuilder {
 
         // Plugin state providers (consul + apollo adapters expose their
         // runtime state through the `/v3/admin/core/state` endpoint).
+        // `mut` is only needed when a consul/apollo feature pushes a provider;
+        // keep this attribute so --no-default-features builds stay warning-free.
+        #[allow(unused_mut)]
         let mut plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> =
             Vec::new();
         #[cfg(feature = "consul")]
