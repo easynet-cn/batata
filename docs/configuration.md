@@ -120,7 +120,7 @@ export RUST_LOG=info
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `batata.member.list` | _(empty)_ | Comma-separated member addresses (ip:port) |
+| `batata.member.list` | _(empty)_ | Comma-separated members `ip:port?node_id=N`; explicit positive Raft id required in cluster mode |
 | `batata.core.member.lookup.type` | `file` | Member lookup type: `file` or `address-server` |
 
 ### Config Module

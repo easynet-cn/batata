@@ -437,8 +437,9 @@ batata.config.encryption.reload.interval.ms: 0
 # =============================================================================
 
 # Member list for cluster mode (alternative to conf/cluster.conf)
-# Format: comma-separated ip:port or ip:port?raft_port=xxx
-#batata.member.list: "192.168.1.10:8848,192.168.1.11:8848,192.168.1.12:8848"
+# Format: comma-separated ip:port?node_id=N (Raft identity, required in cluster mode)
+# Optional: ?raft_port=xxx overrides the default main-port-minus-1000 Raft port.
+#batata.member.list: "192.168.1.10:8848?node_id=1,192.168.1.11:8848?node_id=2,192.168.1.12:8848?node_id=3"
 
 # Member lookup type: file (default) or address-server
 #batata.core.member.lookup.type: file

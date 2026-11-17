@@ -26,15 +26,15 @@ rm -rf data/rock-n1 data/rock-n2 data/rock-n3 logs/repro-node1 logs/repro-node2 
 mkdir -p logs/repro-node1 logs/repro-node2 logs/repro-node3
 
 cat > conf/cluster.conf <<'EOF'
-127.0.0.1:8848
-127.0.0.1:8858
-127.0.0.1:8868
+127.0.0.1:8848?node_id=1
+127.0.0.1:8858?node_id=2
+127.0.0.1:8868?node_id=3
 EOF
 
 export RUST_LOG="info,batata_plugin_consul=debug,batata_naming::healthcheck=debug"
 
 COMMON=(-m cluster
-  --batata.member.list=127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868
+  --batata.member.list=127.0.0.1:8848?node_id=1,127.0.0.1:8858?node_id=2,127.0.0.1:8868?node_id=3
   --batata.sql.init.platform=embedded
   --batata.plugin.consul.enabled=true
   --batata.plugin.apollo.enabled=true

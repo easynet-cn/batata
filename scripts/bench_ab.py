@@ -342,7 +342,10 @@ class Server:
             return [(cmd, self.args.port, self.log_path)]
 
         ports = [self.args.base_port + 10 * i for i in range(self.args.nodes)]
-        member_list = ",".join(f"127.0.0.1:{port}" for port in ports)
+        member_list = ",".join(
+            f"127.0.0.1:{port}?node_id={index}"
+            for index, port in enumerate(ports, start=1)
+        )
         nodes: list[tuple[list[str], int, str]] = []
 
         for index, port in enumerate(ports, start=1):

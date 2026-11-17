@@ -143,12 +143,19 @@ impl RaftService for RaftGrpcService {
                 let match_log = log_id.map(|l| ProtoLogId {
                     term: l.leader_id.term,
                     index: l.index,
+                    leader_id: l.leader_id.node_id,
                 });
                 (true, match_log, None)
             }
-            openraft::raft::AppendEntriesResponse::Conflict => {
-                (false, Some(ProtoLogId { term: 0, index: 0 }), None)
-            }
+            openraft::raft::AppendEntriesResponse::Conflict => (
+                false,
+                Some(ProtoLogId {
+                    term: 0,
+                    index: 0,
+                    leader_id: 0,
+                }),
+                None,
+            ),
             openraft::raft::AppendEntriesResponse::HigherVote(v) => {
                 (false, None, Some(super::proto_convert::to_proto_vote(&v)))
             }
@@ -553,7 +560,11 @@ mod tests {
 
     fn proto_entry(payload_type: u32, payload: Vec<u8>, with_log_id: bool) -> ProtoEntry {
         ProtoEntry {
-            log_id: with_log_id.then_some(ProtoLogId { term: 3, index: 7 }),
+            log_id: with_log_id.then_some(ProtoLogId {
+                term: 3,
+                index: 7,
+                leader_id: 11,
+            }),
             payload_type,
             payload,
         }

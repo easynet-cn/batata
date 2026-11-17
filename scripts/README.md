@@ -57,9 +57,9 @@ All nodes share the same external database for config storage. Naming service us
 # Create an empty database — Batata creates the schema via SeaORM migrations
 
 # Create conf/cluster.conf
-echo "127.0.0.1:8848
-127.0.0.1:8858
-127.0.0.1:8868" > conf/cluster.conf
+echo "127.0.0.1:8848?node_id=1
+127.0.0.1:8858?node_id=2
+127.0.0.1:8868?node_id=3" > conf/cluster.conf
 
 # Start 3 nodes
 cargo run -p batata-server -- -m cluster \
@@ -84,9 +84,9 @@ No external database. Config storage uses Raft consensus + RocksDB.
 
 ```bash
 # Create conf/cluster.conf
-echo "127.0.0.1:8848
-127.0.0.1:8858
-127.0.0.1:8868" > conf/cluster.conf
+echo "127.0.0.1:8848?node_id=1
+127.0.0.1:8858?node_id=2
+127.0.0.1:8868?node_id=3" > conf/cluster.conf
 
 # Ensure batata.sql.init.platform is empty in conf/application.yml
 # Start 3 nodes (each needs separate data dir)
@@ -340,10 +340,10 @@ curl -s -X POST http://127.0.0.1:8081/v3/auth/user/login \
 
 ### Cluster nodes not discovering each other
 
-Ensure `conf/cluster.conf` contains all node addresses, or set `batata.member.list` in `conf/application.yml`:
+Ensure `conf/cluster.conf` contains all node addresses with explicit Raft ids, or set `batata.member.list` in `conf/application.yml`:
 
 ```yaml
-batata.member.list: "127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868"
+batata.member.list: "127.0.0.1:8848?node_id=1,127.0.0.1:8858?node_id=2,127.0.0.1:8868?node_id=3"
 ```
 
 ### Embedded mode but using external DB

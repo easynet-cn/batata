@@ -182,7 +182,7 @@ services:
       - "--batata.sql.init.platform=embedded"
       - "-m"
       - "cluster"
-      - "--batata.member.list=batata-node1:8848,batata-node2:8858,batata-node3:8868"
+      - "--batata.member.list=batata-node1:8848?node_id=1,batata-node2:8858?node_id=2,batata-node3:8868?node_id=3"
     volumes:
       - cluster-node1-data:/app/data
       - ../../conf:/app/conf:ro
@@ -211,7 +211,7 @@ services:
       - "--batata.sql.init.platform=embedded"
       - "-m"
       - "cluster"
-      - "--batata.member.list=batata-node1:8848,batata-node2:8858,batata-node3:8868"
+      - "--batata.member.list=batata-node1:8848?node_id=1,batata-node2:8858?node_id=2,batata-node3:8868?node_id=3"
       - "--batata.server.main.port=8858"
       - "--batata.console.port=8091"
     volumes:
@@ -242,7 +242,7 @@ services:
       - "--batata.sql.init.platform=embedded"
       - "-m"
       - "cluster"
-      - "--batata.member.list=batata-node1:8848,batata-node2:8858,batata-node3:8868"
+      - "--batata.member.list=batata-node1:8848?node_id=1,batata-node2:8858?node_id=2,batata-node3:8868?node_id=3"
       - "--batata.server.main.port=8868"
       - "--batata.console.port=8101"
     volumes:

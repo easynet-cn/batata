@@ -14,12 +14,17 @@ use super::types::{
 };
 
 /// Convert proto LogId to openraft LogId.
+///
+/// The proposing leader's node id rides on the wire as `leader_id`. openraft
+/// 0.10 uses advanced leader ids, so `node_id` is part of a log's identity and
+/// participates in `Ord`; reconstructing it as `0` makes every remote log
+/// compare older than the local one and blocks vote grants in a fresh cluster.
 pub fn from_proto_log_id(log_id: Option<ProtoLogId>) -> Option<LogId> {
     log_id.map(|l| {
         LogId::new(
             CommittedLeaderId {
                 term: l.term,
-                node_id: 0,
+                node_id: l.leader_id,
             },
             l.index,
         )
@@ -31,6 +36,7 @@ pub fn to_proto_log_id(log_id: Option<LogId>) -> Option<ProtoLogId> {
     log_id.map(|l| ProtoLogId {
         term: l.leader_id.term,
         index: l.index,
+        leader_id: l.leader_id.node_id,
     })
 }
 
@@ -179,12 +185,67 @@ mod tests {
             Some(LogId::new(
                 CommittedLeaderId {
                     term: 3,
-                    node_id: 0,
+                    node_id: 6548153108518673165,
                 },
                 7,
             )),
             membership,
         )
+    }
+
+    #[test]
+    fn test_log_id_round_trip_preserves_leader_node_id() {
+        // A real cold-start log id uses a non-zero, hash-derived node id. The
+        // old conversion hardcoded 0, so this assertion failed but no existing
+        // test caught it because every fixture also used node_id: 0.
+        let original = LogId::new(
+            CommittedLeaderId {
+                term: 4,
+                node_id: 6548153108518673165,
+            },
+            19,
+        );
+
+        let wire = to_proto_log_id(Some(original)).expect("log id present");
+        assert_eq!(wire.term, 4);
+        assert_eq!(wire.index, 19);
+        assert_eq!(wire.leader_id, 6548153108518673165);
+
+        let restored = from_proto_log_id(Some(wire)).expect("log id present");
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn test_log_id_node_id_participates_in_up_to_date_comparison() {
+        // This is exactly the check openraft uses to grant or reject a vote:
+        // `candidate.last_log_id >= self.last_log_id`. Two logs with the same
+        // term and index but different proposing leaders MUST compare unequal.
+        // If the wire zeroes node_id, both collapse to T0-N0.0 and a follower
+        // can no longer order candidate logs -- the split-vote root cause.
+        let log_a = LogId::new(
+            CommittedLeaderId {
+                term: 0,
+                node_id: 2327545806963820616,
+            },
+            0,
+        );
+        let log_b = LogId::new(
+            CommittedLeaderId {
+                term: 0,
+                node_id: 6548153108518673165,
+            },
+            0,
+        );
+        assert_ne!(log_a, log_b);
+        // Distinct logs must still be strictly ordered (advanced leader ids
+        // form a total order), so neither direction collapses to Equal.
+        assert_ne!(log_a.cmp(&log_b), std::cmp::Ordering::Equal);
+
+        // Round-tripping each log through the wire must not erase that ordering.
+        let restored_a = from_proto_log_id(to_proto_log_id(Some(log_a))).unwrap();
+        let restored_b = from_proto_log_id(to_proto_log_id(Some(log_b))).unwrap();
+        assert_eq!(restored_a.cmp(&restored_b), log_a.cmp(&log_b));
+        assert_ne!(restored_a, restored_b);
     }
 
     #[test]
@@ -240,7 +301,7 @@ mod tests {
             last_log_id: Some(LogId::new(
                 CommittedLeaderId {
                     term: 5,
-                    node_id: 0,
+                    node_id: 2327545806963820616,
                 },
                 42,
             )),
@@ -252,6 +313,10 @@ mod tests {
         // `last_log_id`, exactly like JRaft's `lastIncludedIndex/Term`.
         assert!(proto.last_membership.is_some());
         assert_eq!(proto.last_log_id.as_ref().unwrap().index, 42);
+        assert_eq!(
+            proto.last_log_id.as_ref().unwrap().leader_id,
+            2327545806963820616
+        );
         assert!(!proto.snapshot_id.is_empty());
 
         let restored = from_proto_snapshot_meta(Some(proto)).expect("meta present");

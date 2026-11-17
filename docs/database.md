@@ -119,8 +119,11 @@ Upgrading is a **lockstep** procedure:
    - `batata.persistence.embedded.data_dir` — contains the shared business
      database (`<data_dir>/<db_name>`, also used as the state machine store)
      and the Raft-owned subdirectory `<data_dir>/protocol/raft` (`log/`,
-     `snapshot/`).
-4. Start the whole cluster from empty stores and re-initialize membership.
+     `snapshot/`, and the `node-id` self-check file).
+4. Assign each member an explicit `node_id` in `cluster.conf` /
+   `batata.member.list`. A changed id is a new identity: do not reuse the old
+   data directory with it.
+5. Start the whole cluster from empty stores and re-initialize membership.
 
 Standalone embedded deployments are affected too: they construct
 `RocksStateMachine` directly and keep business data in the same RocksDB.

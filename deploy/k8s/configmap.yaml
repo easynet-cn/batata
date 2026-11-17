@@ -428,7 +428,7 @@ data:
 
     # Member list for cluster mode (alternative to conf/cluster.conf)
     # Format: comma-separated ip:port or ip:port?raft_port=xxx
-    #batata.member.list: "192.168.1.10:8848,192.168.1.11:8848,192.168.1.12:8848"
+    #batata.member.list: "192.168.1.10:8848?node_id=1,192.168.1.11:8848?node_id=2,192.168.1.12:8848?node_id=3"
 
     # Member lookup type: file (default) or address-server
     #batata.core.member.lookup.type: file
@@ -889,9 +889,9 @@ data:
     # Nacos compatibility version (the Nacos version that Batata is compatible with)
     nacos.version: 3.3.0
   cluster.conf: |
-    127.0.0.1:8848
-    127.0.0.1:8858
-    127.0.0.1:8868
+    127.0.0.1:8848?node_id=1
+    127.0.0.1:8858?node_id=2
+    127.0.0.1:8868?node_id=3
 kind: ConfigMap
 metadata:
   name: batata-config

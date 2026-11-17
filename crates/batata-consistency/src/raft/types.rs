@@ -59,38 +59,3 @@ pub type RaftMetrics = openraft::RaftMetrics<TypeConfig>;
 
 /// Type alias for server state
 pub type ServerState = openraft::ServerState;
-
-/// Helper function to calculate node ID from address
-pub fn calculate_node_id(addr: &str) -> NodeId {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    addr.hash(&mut hasher);
-    hasher.finish()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_calculate_node_id() {
-        let addr1 = "192.168.1.1:7848";
-        let addr2 = "192.168.1.2:7848";
-
-        let id1 = calculate_node_id(addr1);
-        let id2 = calculate_node_id(addr2);
-
-        // Same address should produce same ID
-        assert_eq!(id1, calculate_node_id(addr1));
-        // Different addresses should produce different IDs (with high probability)
-        assert_ne!(id1, id2);
-    }
-
-    #[test]
-    fn test_calculate_node_id_deterministic() {
-        let addr = "127.0.0.1:8848";
-        let id1 = calculate_node_id(addr);
-        let id2 = calculate_node_id(addr);
-        assert_eq!(id1, id2);
-    }
-}

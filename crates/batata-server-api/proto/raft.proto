@@ -10,10 +10,16 @@ package raft;
 option java_multiple_files = true;
 option java_package = "com.alibaba.nacos.consistency.raft";
 
-// Log identifier containing term and index
+// Log identifier containing term, proposing leader and index
 message LogId {
     uint64 term = 1;
     uint64 index = 2;
+    // Node id of the committed leader that proposed this log entry.
+    // openraft 0.10 uses advanced leader ids, so node_id is part of a log's
+    // identity and participates in equality/ordering. Dropping it on the wire
+    // makes every remote log compare older than the local one, which blocks
+    // vote grants and prevents a fresh cluster from electing a leader.
+    uint64 leader_id = 3;
 }
 
 // Vote information

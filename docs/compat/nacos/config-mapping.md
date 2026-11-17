@@ -44,7 +44,7 @@ Nacos files into `conf/`.
 
 | Nacos | Batata | Notes |
 |---|---|---|
-| `nacos.member.list` | `batata.member.list` | comma-separated `ip:port`; Batata also falls back to `conf/cluster.conf` |
+| `nacos.member.list` | `batata.member.list` | comma-separated `ip:port?node_id=N` (explicit Raft id required in cluster mode); Batata also falls back to `conf/cluster.conf` |
 | `nacos.core.member.lookup.type` | `batata.core.member.lookup.type` | `file` / `address-server` |
 | `nacos.core.protocol.raft.data.*` | `batata.raft.*` | Batata uses OpenRaft, see `conf/application.yml` |
 | `nacos.core.protocol.distro.data.*` | _(internal)_ | Distro (AP) timings are not exposed as config keys |

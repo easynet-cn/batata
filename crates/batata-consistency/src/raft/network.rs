@@ -244,21 +244,26 @@ impl RaftNetworkConnection {
         })
     }
 
-    /// Convert openraft LogId to proto LogId
+    /// Convert openraft LogId to proto LogId.
+    ///
+    /// Keep in sync with `proto_convert::to_proto_log_id`: the proposing
+    /// leader's node id must cross the wire so advanced leader ids keep their
+    /// ordering after a round trip.
     fn to_proto_log_id(log_id: Option<LogId>) -> Option<ProtoLogId> {
         log_id.map(|l| ProtoLogId {
             term: l.leader_id.term,
             index: l.index,
+            leader_id: l.leader_id.node_id,
         })
     }
 
-    /// Convert proto LogId to openraft LogId
+    /// Convert proto LogId to openraft LogId.
     fn from_proto_log_id(log_id: Option<ProtoLogId>) -> Option<LogId> {
         log_id.map(|l| {
             LogId::new(
                 CommittedLeaderId {
                     term: l.term,
-                    node_id: 0,
+                    node_id: l.leader_id,
                 },
                 l.index,
             )
@@ -625,6 +630,12 @@ mod tests {
         let proto = proto.unwrap();
         assert_eq!(proto.term, 5);
         assert_eq!(proto.index, 42);
+        assert_eq!(proto.leader_id, 100);
+
+        // The network connection has its own conversion helpers; verify the
+        // full round trip keeps the proposing leader id, not just the send side.
+        let restored = RaftNetworkConnection::from_proto_log_id(Some(proto)).unwrap();
+        assert_eq!(restored, log_id);
     }
 
     #[test]

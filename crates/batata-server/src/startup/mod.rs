@@ -15,6 +15,7 @@ pub mod logging;
 pub mod persistence;
 /// `pprof` diagnostics module (on-demand CPU flamegraphs, feature-gated).
 mod pprof;
+mod raft_members;
 mod shutdown;
 mod telemetry;
 mod xds;

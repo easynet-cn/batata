@@ -196,27 +196,34 @@ cargo run --release -p batata-server
 
 ## Cluster Mode
 
-1. Configure `conf/cluster.conf` with member addresses:
+1. Configure `conf/cluster.conf` with member addresses and explicit Raft ids:
 
    ```
-   192.168.1.1:8848
-   192.168.1.2:8848
-   192.168.1.3:8848
+   192.168.1.1:8848?node_id=1
+   192.168.1.2:8848?node_id=2
+   192.168.1.3:8848?node_id=3
    ```
 
-2. Update `conf/application.yml`:
+   `node_id` is a positive u64 and is mandatory in cluster mode. It is part of
+   the Raft log identity, so it must stay the same for a given node's data
+   directory. The local value is written to `<data_dir>/protocol/raft/node-id`
+   on first start; a later mismatch is a startup error. Use
+   `?raft_port=xxx&node_id=N` when the Raft port is not `main port - 1000`.
+
+2. Update `conf/application.yml` (the equivalent comma-separated form):
 
    ```yaml
    batata.standalone: false
-   #batata.member.list: "192.168.1.10:8848,192.168.1.11:8848,192.168.1.12:8848"
+   #batata.member.list: "192.168.1.10:8848?node_id=1,192.168.1.11:8848?node_id=2,192.168.1.12:8848?node_id=3"
    ```
 
 3. Start all nodes
 
 **Upgrading the consensus layer.** The OpenRaft 0.9 to 0.10 upgrade is
-lockstep: stop all nodes at once, wipe their RocksDB data directories, then
-start the fresh cluster and re-initialize membership. Rolling or mixed-version
-restarts are not supported. See [Database](database.md#consensus-data-on-upgrade-openraft-010)
+lockstep: stop all nodes at once, assign explicit `node_id` values in the
+member list, wipe their RocksDB data directories, then start the fresh cluster
+and re-initialize membership. Rolling or mixed-version restarts are not
+supported. See [Database](database.md#consensus-data-on-upgrade-openraft-010)
 for the full procedure, and export config data before the wipe.
 
 ## Podman

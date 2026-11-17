@@ -30,16 +30,17 @@ CLUSTER_APOLLO_PORTS=(18080 18090 18100)
 CLUSTER_CONSUL_NODE_NAMES=(c1 c2 c3)
 
 # Comma-separated member list used for --batata.member.list.
-CLUSTER_MEMBER_LIST="127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868"
+# Explicit node_id values are mandatory; they are the Raft identities.
+CLUSTER_MEMBER_LIST="127.0.0.1:8848?node_id=1,127.0.0.1:8858?node_id=2,127.0.0.1:8868?node_id=3"
 
 # Write the standard 3-node cluster.conf into <project_root>/conf/cluster.conf.
 # Usage: cluster_write_conf <project_root>
 cluster_write_conf() {
     local root="$1"
     cat > "${root}/conf/cluster.conf" <<EOF
-127.0.0.1:8848
-127.0.0.1:8858
-127.0.0.1:8868
+127.0.0.1:8848?node_id=1
+127.0.0.1:8858?node_id=2
+127.0.0.1:8868?node_id=3
 EOF
 }
 

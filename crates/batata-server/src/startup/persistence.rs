@@ -325,31 +325,13 @@ async fn create_raft_node(
     extra_cf_names: &[String],
 ) -> Result<(batata_consistency::RaftNode, Arc<rocksdb::DB>), Box<dyn std::error::Error>> {
     let rocksdb_dir = configuration.embedded_rocksdb_dir();
-    let main_port = configuration.server_main_port();
 
-    // Determine this node's Raft address from cluster.conf.
-    // All nodes must agree on the SAME set of member addresses
-    // (using the SAME IPs from cluster.conf), so we find our own
-    // entry by matching the port, and derive the raft port from it.
-    let local_ip = batata_api::local_ip();
-    let node_addr = {
-        let cluster_addrs = configuration.cluster_member_addresses();
-        let mut matched_ip = local_ip.clone();
-        for addr_str in &cluster_addrs {
-            let addr_part = addr_str.split('?').next().unwrap_or(addr_str);
-            if let Some((ip, port_str)) = addr_part.rsplit_once(':')
-                && let Ok(port) = port_str.parse::<u16>()
-                && port == main_port
-            {
-                matched_ip = ip.to_string();
-                break;
-            }
-        }
-        let raft_port = main_port - batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT;
-        format!("{}:{}", matched_ip, raft_port)
-    };
-
-    let node_id = batata_consistency::calculate_node_id(&node_addr);
+    // Identity and address both come from the shared member list. All nodes
+    // parse the same explicit `node_id=` values; the local file self-check
+    // prevents a restarted node from silently adopting a different identity.
+    let members = super::raft_members::resolve_raft_members(configuration)?;
+    let node_id = members.local.node_id;
+    let node_addr = members.local.raft_addr;
     info!(
         "Initializing Raft node: node_id={}, addr={}, rocksdb_dir={}",
         node_id, node_addr, rocksdb_dir
