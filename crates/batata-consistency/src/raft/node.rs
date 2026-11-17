@@ -84,6 +84,12 @@ pub struct RaftNode {
     /// Cached gRPC channel for forwarding writes to the Raft leader.
     /// Avoids creating a new TCP/HTTP2 connection on every forwarded write.
     leader_channel: tokio::sync::Mutex<Option<LeaderChannel>>,
+
+    /// Voter ids persisted in the state machine at construction time. Unlike
+    /// `metrics()` (filled asynchronously by the engine), this is read directly
+    /// from RocksDB before the store is handed to OpenRaft, so startup identity
+    /// checks are deterministic and race-free.
+    stored_voter_ids: BTreeSet<NodeId>,
 }
 
 impl RaftNode {
@@ -174,6 +180,10 @@ impl RaftNode {
         let plugin_registry = state_machine.plugin_registry();
         let naming_hook = state_machine.naming_hook();
         let health_check_hook = state_machine.health_check_hook();
+        // Snapshot the persisted membership before Raft::new consumes the state
+        // machine. This is the authoritative identity generation of the data
+        // directory and is available synchronously, unlike the metrics watcher.
+        let stored_voter_ids = state_machine.stored_voter_ids().await;
 
         // Create network factory with configured timeouts
         let network_config = super::network::RaftNetworkConfig::from_raft_config(&config);
@@ -205,6 +215,7 @@ impl RaftNode {
                 naming_hook,
                 health_check_hook,
                 leader_channel: tokio::sync::Mutex::new(None),
+                stored_voter_ids,
             },
             db,
         ))
@@ -218,6 +229,13 @@ impl RaftNode {
     /// Get the node address
     pub fn addr(&self) -> &str {
         &self.addr
+    }
+
+    /// Voter ids persisted in the state machine when this node was created.
+    /// Empty on a fresh data dir; otherwise the identity generation stored on
+    /// disk, used to reject reuse across a node-id scheme change.
+    pub fn stored_voter_ids(&self) -> &BTreeSet<NodeId> {
+        &self.stored_voter_ids
     }
 
     /// Get the underlying Raft instance

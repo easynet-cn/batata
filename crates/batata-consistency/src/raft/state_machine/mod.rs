@@ -8,6 +8,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::bincode;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -25,7 +26,7 @@ use super::plugin::{PluginRegistry, RaftPluginHandler};
 use super::request::{RaftRequest, RaftResponse};
 use super::snapshot_file::SnapshotFile;
 use super::snapshot_format::{self, SnapshotReader, SnapshotWriter};
-use super::types::{LogId, Snapshot, SnapshotMeta, StoredMembership, TypeConfig};
+use super::types::{LogId, NodeId, Snapshot, SnapshotMeta, StoredMembership, TypeConfig};
 
 /// On-disk snapshot layout, mirroring JRaft's `LocalSnapshotStorage`:
 ///
@@ -804,6 +805,17 @@ impl RocksStateMachine {
         }
 
         Ok(())
+    }
+
+    /// Voter ids from the last membership persisted in RocksDB.
+    ///
+    /// Loaded during construction from `KEY_LAST_MEMBERSHIP`, so this reflects
+    /// the identity generation the data directory belongs to. Used at startup
+    /// to reject reuse of a directory created with a different node-id scheme
+    /// before OpenRaft skips `initialize()` and silently stalls all writes.
+    /// Returns an empty set for a never-initialized store.
+    pub async fn stored_voter_ids(&self) -> BTreeSet<NodeId> {
+        self.last_membership.read().await.voter_ids().collect()
     }
 
     /// Get column family handles

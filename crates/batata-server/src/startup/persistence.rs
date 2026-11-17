@@ -336,6 +336,14 @@ async fn create_raft_node(
         "Initializing Raft node: node_id={}, addr={}, rocksdb_dir={}",
         node_id, node_addr, rocksdb_dir
     );
+    // Reject a stale membership before any SMM/Distro work starts. The node-id
+    // file alone is not enough: on the first start with explicit ids it is
+    // written into a directory that may still hold the old address-hash
+    // membership. OpenRaft would then skip initialize() and hang every write
+    // while forwarding to identities that no longer exist. Check here, at
+    // Phase 3, so the failure is immediate and actionable.
+    let configured_ids: std::collections::BTreeMap<u64, openraft::BasicNode> =
+        members.by_id.clone();
 
     let raft_config = batata_consistency::RaftConfig {
         election_timeout_ms: configuration.raft_election_timeout_ms(),
@@ -373,6 +381,9 @@ async fn create_raft_node(
     )
     .await
     .map_err(|e| format!("Failed to initialize Raft node: {}", e))?;
+
+    let persisted_voters = raft_node.stored_voter_ids();
+    super::raft_members::ensure_membership_identity_matches(&configured_ids, persisted_voters)?;
 
     Ok((raft_node, rdb))
 }

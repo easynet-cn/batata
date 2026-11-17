@@ -126,6 +126,40 @@ pub fn build_raft_members(
     Ok(RaftMembers { by_id, local })
 }
 
+/// Reject a data directory whose persisted Raft membership uses a different
+/// node-id set than the current cluster member list.
+///
+/// The `node-id` self-check alone is not enough: on the first start with
+/// explicit ids it writes `node-id=N` into a directory that may still contain
+/// an old, address-hash-derived membership. OpenRaft then skips `initialize()`
+/// ("already initialized") and keeps forwarding writes to identities that no
+/// longer exist, which hangs the whole cluster instead of failing at startup.
+/// Comparing the persisted voter set here turns that into an actionable error.
+///
+/// An empty `persisted_ids` means the cluster has never been initialized, which
+/// is the normal fresh-start case and is allowed.
+pub fn ensure_membership_identity_matches(
+    configured: &BTreeMap<NodeId, openraft::BasicNode>,
+    persisted_ids: &BTreeSet<NodeId>,
+) -> Result<(), String> {
+    if persisted_ids.is_empty() {
+        return Ok(());
+    }
+    let configured_ids: BTreeSet<NodeId> = configured.keys().copied().collect();
+    if &configured_ids != persisted_ids {
+        return Err(format!(
+            "Raft data directory belongs to a different membership: persisted voter ids \
+             {:?} do not match cluster.conf node ids {:?}. The stored Raft log was created \
+             with different identities (for example the old address-derived ids); reusing it \
+             stalls all writes. Stop the whole cluster, wipe the Raft data directories and the \
+             state-machine store on every node, then re-initialize.",
+            persisted_ids.iter().collect::<Vec<_>>(),
+            configured_ids.iter().collect::<Vec<_>>(),
+        ));
+    }
+    Ok(())
+}
+
 /// Persist the configured id on first start and reject later identity changes.
 ///
 /// The file is a self-check, not the cluster source of truth: all peers use
@@ -309,6 +343,53 @@ mod tests {
         assert_eq!(
             parsed.by_id[&1].addr,
             format!("127.0.0.1:{}", 8858 - OFFSET)
+        );
+    }
+
+    fn configured_map(ids: &[NodeId]) -> BTreeMap<NodeId, openraft::BasicNode> {
+        ids.iter()
+            .map(|id| {
+                (
+                    *id,
+                    openraft::BasicNode {
+                        addr: format!("127.0.0.1:{}", 7800 + id),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn membership_identity_guard_allows_fresh_and_matching_state() {
+        let configured = configured_map(&[1, 2, 3]);
+        // Never initialized: empty voter set is the normal fresh-start case.
+        ensure_membership_identity_matches(&configured, &BTreeSet::new()).unwrap();
+        // Restart with the same identities: allowed.
+        ensure_membership_identity_matches(&configured, &BTreeSet::from([1, 2, 3])).unwrap();
+    }
+
+    #[test]
+    fn membership_identity_guard_rejects_stale_hashed_ids() {
+        let configured = configured_map(&[1, 2, 3]);
+        let stale = BTreeSet::from([
+            2327545806963820616,
+            6548153108518673165,
+            15200880742887333206,
+        ]);
+        let err = ensure_membership_identity_matches(&configured, &stale).unwrap_err();
+        assert!(err.contains("different membership"), "{err}");
+        assert!(err.contains("15200880742887333206"), "{err}");
+        assert!(err.contains("wipe the Raft data directories"), "{err}");
+    }
+
+    #[test]
+    fn membership_identity_guard_rejects_partial_or_changed_id_set() {
+        let configured = configured_map(&[1, 2, 3]);
+        // Subset (one node with stale data) still mismatches.
+        assert!(ensure_membership_identity_matches(&configured, &BTreeSet::from([1, 2])).is_err());
+        // Same size but a different id must be rejected too.
+        assert!(
+            ensure_membership_identity_matches(&configured, &BTreeSet::from([1, 2, 9])).is_err()
         );
     }
 

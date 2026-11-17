@@ -207,7 +207,11 @@ cargo run --release -p batata-server
    `node_id` is a positive u64 and is mandatory in cluster mode. It is part of
    the Raft log identity, so it must stay the same for a given node's data
    directory. The local value is written to `<data_dir>/protocol/raft/node-id`
-   on first start; a later mismatch is a startup error. Use
+   on first start; a later mismatch is a startup error. On startup the stored
+   membership's voter ids are also compared with the configured `node_id` set:
+   reusing a data directory created under a different identity scheme (for
+   example the former address-derived ids) fails fast with a "different
+   membership" error instead of stalling all writes. Use
    `?raft_port=xxx&node_id=N` when the Raft port is not `main port - 1000`.
 
 2. Update `conf/application.yml` (the equivalent comma-separated form):
