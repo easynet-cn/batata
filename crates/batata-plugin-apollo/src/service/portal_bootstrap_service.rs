@@ -87,14 +87,15 @@ impl PortalBootstrapService {
             .await?
             .is_none()
         {
+            // `apollo_users.password` is varchar(64), so store the bare
+            // 64-char hex digest (upstream Apollo's SHA-256 representation).
+            // A "sha256:" prefix would make this 71 chars and break SQL
+            // backends on startup.
             let digest = Sha256::digest(DEFAULT_ADMIN_USER.as_bytes());
-            let password = format!(
-                "sha256:{}",
-                digest
-                    .iter()
-                    .map(|byte| format!("{:02x}", byte))
-                    .collect::<String>()
-            );
+            let password = digest
+                .iter()
+                .map(|byte| format!("{:02x}", byte))
+                .collect::<String>();
             UserPersistence::create_user(
                 &self.persistence,
                 UserDTO {

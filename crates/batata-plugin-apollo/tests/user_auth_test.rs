@@ -393,3 +393,28 @@ async fn authorization_bearer_is_accepted_as_a_user_token() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn placeholder_authorization_token_is_ignored_when_global_auth_is_disabled() {
+    let persistence = common::make_embedded_persistence().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence))
+            .app_data(auth_config(false))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+
+    // SDK suites send a placeholder consumer token ("admin") that has no row
+    // in apollo_consumer_token. With OpenAPI auth off this must stay open.
+    let response = test::try_call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/apps/app-a/namespaces/application/items")
+            .insert_header(("Authorization", "admin"))
+            .to_request(),
+    )
+    .await
+    .expect("placeholder token must not be rejected when auth is disabled");
+    assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+}

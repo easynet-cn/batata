@@ -12,7 +12,7 @@ use batata_plugin_apollo::auth::permission::{
 use batata_plugin_apollo::persistence::traits::{
     ApolloPersistenceService, AuditLogPersistence, AuthorityPersistence, ConsumerAuditPersistence,
     ConsumerPersistence, ConsumerRolePersistence, PermissionPersistence, RolePersistence,
-    UserTokenAuditPersistence,
+    UserPersistence, UserTokenAuditPersistence,
 };
 use batata_plugin_apollo::service::{
     AuditLogService, ConsumerAuditService, PortalBootstrapService, UserTokenAuditService,
@@ -303,4 +303,24 @@ async fn consumer_roles_grant_permissions_to_consumer_identity() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test]
+async fn seeded_password_fits_the_apollo_users_column() {
+    let persistence = common::make_embedded_persistence().await;
+    PortalBootstrapService::new(persistence.clone())
+        .ensure_initialized()
+        .await
+        .unwrap();
+
+    let user = UserPersistence::get_user(&persistence, "apollo")
+        .await
+        .unwrap()
+        .expect("bootstrap admin must exist");
+    assert_eq!(
+        user.password.len(),
+        64,
+        "upstream password column is varchar(64)"
+    );
+    assert!(user.password.bytes().all(|byte| byte.is_ascii_hexdigit()));
 }

@@ -346,12 +346,26 @@ where
                             });
                             req.extensions_mut().insert(consumer);
                         }
+                        _ if !openapi_auth_enabled => {
+                            // Backward compatibility: with auth disabled, an
+                            // arbitrary Authorization value was historically
+                            // ignored on data paths. SDK suites still send a
+                            // placeholder token ("admin") that is not a real
+                            // consumer row, so keep that path open. Explicit
+                            // user-token headers remain fail-closed above.
+                            let identity = compat_admin_identity(Some(&arc)).await?;
+                            req.extensions_mut().insert(identity);
+                        }
                         _ => {
                             return Err(actix_web::error::ErrorUnauthorized(
                                 "Consumer token is not authorized for this appId",
                             ));
                         }
                     }
+                }
+                None if !openapi_auth_enabled => {
+                    let identity = compat_admin_identity(Some(&arc)).await?;
+                    req.extensions_mut().insert(identity);
                 }
                 None => {
                     return Err(actix_web::error::ErrorUnauthorized(

@@ -8,8 +8,15 @@ use subtle::ConstantTimeEq;
 use crate::api::dto::UserDTO;
 use crate::persistence::traits::{ApolloPersistenceService, UserPersistence};
 
-/// Prefix used by batata's seeded SHA-256 password hashes.
+/// Legacy prefix used by older batata SHA-256 password hashes. The current
+/// bootstrap writes a bare 64-char hex digest because `apollo_users.password`
+/// is `varchar(64)` upstream; the prefixed form does not fit on SQL backends.
 const SHA256_PASSWORD_PREFIX: &str = "sha256:";
+const SHA256_HEX_LEN: usize = 64;
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == SHA256_HEX_LEN && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
 
 /// CRUD operations for `apollo_users`.
 pub struct UserService {
@@ -63,15 +70,20 @@ impl UserService {
 
     /// Verifies a presented password against the stored representation.
     ///
-    /// Three formats are accepted so batata can read both its own rows and
+    /// Four formats are accepted so batata can read both its own rows and
     /// upstream-imported ones:
-    /// - `sha256:<hex>` — the format written by the bootstrap service;
+    /// - 64-char hex — upstream/bootstrap SHA-256 digest (fits `varchar(64)`);
+    /// - `sha256:<hex>` — legacy batata rows written before the column limit
+    ///   was discovered (only valid on backends without a strict length cap);
     /// - `$2...` — upstream Apollo's BCrypt hashes;
     /// - plaintext — legacy batata rows created before password login existed.
     ///
     /// Comparisons are constant-time where a hash is available.
     pub fn verify_password(stored: &str, presented: &str) -> bool {
-        if let Some(expected) = stored.strip_prefix(SHA256_PASSWORD_PREFIX) {
+        let expected = stored
+            .strip_prefix(SHA256_PASSWORD_PREFIX)
+            .or_else(|| is_sha256_hex(stored).then_some(stored));
+        if let Some(expected) = expected {
             let digest = Sha256::digest(presented.as_bytes());
             let actual = digest
                 .iter()
@@ -146,5 +158,27 @@ impl UserService {
                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SHA256_PASSWORD_PREFIX, UserService};
+
+    #[test]
+    fn bare_sha256_hex_is_the_schema_width_password_format() {
+        let digest = "8d3aa1a6f227d714692a9d5a7fbbda496fb09f17f7207a11ffd0a4cca6cf35b7";
+        assert_eq!(digest.len(), 64);
+        assert!(UserService::verify_password(digest, "apollo"));
+        assert!(!UserService::verify_password(digest, "wrong"));
+    }
+
+    #[test]
+    fn legacy_prefixed_sha256_and_plaintext_remain_accepted() {
+        let digest = "8d3aa1a6f227d714692a9d5a7fbbda496fb09f17f7207a11ffd0a4cca6cf35b7";
+        let prefixed = format!("{SHA256_PASSWORD_PREFIX}{digest}");
+        assert!(UserService::verify_password(&prefixed, "apollo"));
+        assert!(UserService::verify_password("plain-text", "plain-text"));
+        assert!(!UserService::verify_password("plain-text", "other"));
     }
 }

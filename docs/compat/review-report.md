@@ -2693,11 +2693,32 @@ This batch closes the audit gaps found in `batata-plugin-apollo`'s Portal user-m
 
 ### 30.3 Validation
 
-* Mutants: 12/12 killed across the two rounds — 6 for user-management guards (explicit-token validation with auth off, password verification, PAT scope fail-closed, scope ANDed with RBAC, consumer-role permission resolution, login audit) and 6 for runtime guards (env alias, namespace matching, request-path guard, permission target, rate limit, last-used write). All mutated files were byte-restored.
-* Tests: Apollo suite green (`user_auth_test` 9 cases); `cargo test --workspace --exclude batata-integration-tests` = **4111 passed / 0 failed / 33 ignored** (+48 over the pre-round 4063 baseline).
+* Mutants: 15/15 killed across the round and its post-gate fixes — 6 for user-management guards (explicit-token validation with auth off, password verification, PAT scope fail-closed, scope ANDed with RBAC, consumer-role permission resolution, login audit), 6 for runtime guards (env alias, namespace matching, request-path guard, permission target, rate limit, last-used write), and 3 for the post-gate regressions (bare SHA-256 password format, 64-char seed width, placeholder consumer-token compatibility). All mutated files were byte-restored.
+* Tests: Apollo suite green (`user_auth_test` 10 cases); `cargo test --workspace --exclude batata-integration-tests` = **4115 passed / 0 failed / 33 ignored** (+52 over the pre-round 4063 baseline).
 * Gates: `cargo fmt --all -- --check`, `cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 F / 1040 T-ID, Nacos 191/191 anchored) — all clean.
 
 ### 30.4 Documentation sync and pending gate
 
 * `docs/compat/apollo/features.md` records both round summaries; the 08-31 orphan-migration note now points to the 11-17 superseding round. The stale `always true` / `no role store populated` comments in `openapi.rs` were removed. The root `README.md` Apollo figure was corrected from `~81%` to `~85%` to match `docs/compat/README.md` (which `compat_check.py` verifies). `docs/compat/apollo/tests.md` stays unchanged: the new cases are batata-native guards, so the 401 / 1040 T-ID mapping is unaffected.
-* The changes remain **uncommitted** at HEAD `33b1e8bf`. A clean `scripts/regression.sh --full` is still pending the user's commit; generated `sdk-tests/*/TEST_REPORT.md` files must be restored after that run.
+* The round was committed as `1162f975` and pushed to gitee. The origin push was blocked by the local proxy (`CONNECT tunnel failed, response 502`, direct connect also times out) — a network issue, not a code failure. A clean `--full` was launched on that commit and exposed two regressions, fixed in §31.
+
+## 31. Full-gate regressions from the Apollo user-management round
+
+`reports/regression/20261117-173135/report.md` (commit `1162f975`, clean tree) recorded **GATE FAILED, blockers=30**: fmt, check, unit (3401/0) and all three integration suites passed, but all six matrix combinations failed. Two independent causes were found in the new Apollo code; neither was a harness artifact.
+
+### 31.1 SQL startup failed on the seeded password
+
+`seed Apollo portal user management: Query Error: value too long for type character varying(64)`. `PortalBootstrapService` wrote `sha256:<64 hex>` (71 chars) into `apollo_users.password`, which is `varchar(64)` upstream. Every SQL-backed combination therefore died at startup, so all six SDK suites were reported as "missing from the run".
+
+Fix: seed the bare 64-char hex digest (upstream Apollo's SHA-256 representation, already accepted by `ApolloPasswordEncoderFactory`); `UserService::verify_password` now accepts both the bare digest and the legacy prefixed form. Guards: a unit test for bare-hex verification and a persistence test asserting the seeded password is exactly 64 hex chars.
+
+### 31.2 Apollo Java SDK got 401 on a placeholder consumer token
+
+With `APOLLO_OPENAPI_AUTH_ENABLED=false`, the SDK still sends `Authorization: admin` (no matching `apollo_consumer_token` row). The historical middleware short-circuited when auth was disabled; the user-management rewrite instead validated every presented token as a consumer token and returned 401. Fix: on data paths, an unrecognized non-explicit token falls back to the compat admin identity when global auth is off; explicit `X-Apollo-Token` / `user-token` / `token` values remain fail-closed, and auth-enabled deployments still require a real consumer token. Guard: a new HTTP-level test with auth disabled and a placeholder Authorization header.
+
+### 31.3 Validation and follow-up
+
+* 3/3 new mutants killed (bare-hex verification, 64-char seed width, placeholder-token fallback); every mutated file byte-restored.
+* `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 F / 1040 T-ID), Apollo suites and `cargo test --workspace --exclude batata-integration-tests` = **4115 passed / 0 failed / 33 ignored** — all clean.
+* Generated `sdk-tests/*/TEST_REPORT.md` from the failed run were restored with `git restore`.
+* Fixes are pending commit; a clean `--full` must be rerun afterwards. The `origin` push also needs retrying once the local proxy recovers.
