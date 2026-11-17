@@ -17,7 +17,14 @@ pub async fn make_embedded_persistence() -> Arc<dyn ApolloPersistenceService> {
         .expect("open RocksStateMachine");
     // Keep the on-disk database alive for the test's lifetime.
     std::mem::forget(tmp);
-    Arc::new(EmbeddedApolloPersistence::new(sm.db()))
+    let persistence: Arc<dyn ApolloPersistenceService> =
+        Arc::new(EmbeddedApolloPersistence::new(sm.db()));
+    // Production plugin init always runs the same idempotent bootstrap.
+    batata_plugin_apollo::service::PortalBootstrapService::new(persistence.clone())
+        .ensure_initialized()
+        .await
+        .expect("bootstrap Apollo portal data");
+    persistence
 }
 
 /// Same as [`make_embedded_persistence`] but at a caller-chosen path (needed

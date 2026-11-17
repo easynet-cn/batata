@@ -5,9 +5,9 @@
 mod common;
 
 use actix_web::{App, test, web};
-use batata_plugin_apollo::api::dto::{AuditDTO, ConsumerDTO};
+use batata_plugin_apollo::api::dto::{AuditDTO, ConsumerDTO, NewAuditLog};
 use batata_plugin_apollo::persistence::traits::{
-    AuditPersistence, ConsumerPersistence, ConsumerTokenPersistence,
+    AuditLogPersistence, AuditPersistence, ConsumerPersistence, ConsumerTokenPersistence,
 };
 
 // ===== Audit log extension endpoints =====
@@ -52,6 +52,18 @@ async fn audit_logs_returns_paged_envelope() {
             op_client_ip: "127.0.0.1".into(),
             detail: Some("d".into()),
             data_change_created_by: Some("tester".into()),
+        },
+    )
+    .await
+    .unwrap();
+    AuditLogPersistence::create_audit_log(
+        &p,
+        NewAuditLog {
+            trace_id: "trace-test".into(),
+            span_id: "span-test".into(),
+            operator: "tester".into(),
+            op_name: "create".into(),
+            ..Default::default()
         },
     )
     .await
@@ -302,6 +314,25 @@ async fn consumer_tokens_by_app_id_empty_for_missing() {
 #[actix_web::test]
 async fn assign_consumer_role_returns_ok() {
     let p = common::make_embedded_persistence().await;
+    let consumer = ConsumerPersistence::create_consumer(
+        &p,
+        ConsumerDTO {
+            id: None,
+            app_id: "assign-role-app".into(),
+            name: "assign-role-consumer".into(),
+            org_id: "1".into(),
+            org_name: "default".into(),
+            owner_name: "tester".into(),
+            owner_email: "tester@batata.local".into(),
+            data_change_created_by: Some("tester".into()),
+            data_change_created_time: None,
+        },
+    )
+    .await
+    .unwrap();
+    let token = ConsumerTokenPersistence::create_consumer_token(&p, consumer.id, "tester")
+        .await
+        .unwrap();
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(p))
@@ -312,13 +343,23 @@ async fn assign_consumer_role_returns_ok() {
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
-            .uri("/openapi/v1/consumers/sometoken/assign-role")
-            .set_json(serde_json::json!({ "role": "Admin" }))
+            .uri(&format!(
+                "/openapi/v1/consumers/{}/assign-role",
+                token.token
+            ))
+            .set_json(serde_json::json!({ "type": "ManageConsumer" }))
             .to_request(),
     )
     .await;
-    assert!(resp.status().is_success());
-    let body: serde_json::Value = test::read_body_json(resp).await;
+    let status = resp.status();
+    let bytes = test::read_body(resp).await;
+    assert!(
+        status.is_success(),
+        "assign consumer role failed: {} {}",
+        status,
+        String::from_utf8_lossy(&bytes)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
     assert_eq!(body["status"], "ok");
 }
 
@@ -583,8 +624,11 @@ async fn server_portal_db_config_returns_a_bare_list() {
     )
     .await;
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body.as_array().unwrap().len(), 1);
-    assert_eq!(body[0]["key"], "k1");
+    let entries = body.as_array().expect("server config is a list");
+    assert!(
+        entries.iter().any(|row| row["key"] == "k1"),
+        "upserted key must be listed: {entries:?}"
+    );
 }
 
 #[actix_web::test]
@@ -606,7 +650,13 @@ async fn server_portal_db_config_find_all_returns_a_bare_list() {
         assert!(resp.status().is_success(), "GET {uri}");
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert!(body.is_array(), "GET {uri} returns List<ServerConfig>");
-        assert!(body.as_array().unwrap().is_empty());
+        assert!(
+            body.as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["key"] == "superAdmin"),
+            "bootstrap must seed superAdmin: {body:?}"
+        );
     }
 }
 
@@ -648,7 +698,13 @@ async fn server_env_config_db_config_returns_a_bare_list() {
     )
     .await;
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body[0]["key"], "env-k");
+    assert!(
+        body.as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["key"] == "env-k"),
+        "upserted env key must be listed: {body:?}"
+    );
 }
 
 #[actix_web::test]
@@ -669,7 +725,13 @@ async fn server_env_config_db_config_find_all_returns_a_bare_list() {
         assert!(resp.status().is_success(), "GET {uri}");
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert!(body.is_array(), "GET {uri} returns List<ServerConfig>");
-        assert!(body.as_array().unwrap().is_empty());
+        assert!(
+            body.as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["key"] == "superAdmin"),
+            "bootstrap must seed superAdmin: {body:?}"
+        );
     }
 }
 

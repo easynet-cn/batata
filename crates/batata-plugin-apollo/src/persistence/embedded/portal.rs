@@ -10,28 +10,33 @@ use subtle::ConstantTimeEq;
 use super::EmbeddedApolloPersistence;
 use crate::persistence::embedded::JsonStore;
 use crate::persistence::traits::{
-    AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
+    AppNamespacePersistence, AuditLogPersistence, AuditPersistence, AuthorityPersistence,
+    ConsumerAuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
     ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence,
     PermissionPersistence, ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence,
-    UserPersistence, UserTokenPersistence,
+    UserPersistence, UserTokenAuditPersistence, UserTokenPersistence,
 };
 
 use batata_consistency::raft::state_machine::{
-    CF_APOLLO_APP_NAMESPACE, CF_APOLLO_AUDIT, CF_APOLLO_CONSUMER, CF_APOLLO_CONSUMER_ROLE,
-    CF_APOLLO_CONSUMER_TOKEN, CF_APOLLO_FAVORITE, CF_APOLLO_INSTANCE_CONFIG, CF_APOLLO_PERMISSION,
-    CF_APOLLO_RELEASE_HISTORY, CF_APOLLO_ROLE, CF_APOLLO_ROLE_PERMISSION, CF_APOLLO_SERVER_CONFIG,
-    CF_APOLLO_USER_ROLE, CF_APOLLO_USER_TOKEN, CF_APOLLO_USERS,
+    CF_APOLLO_APP_NAMESPACE, CF_APOLLO_AUDIT, CF_APOLLO_AUDIT_LOG,
+    CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE, CF_APOLLO_AUTHORITIES, CF_APOLLO_CONSUMER,
+    CF_APOLLO_CONSUMER_AUDIT, CF_APOLLO_CONSUMER_ROLE, CF_APOLLO_CONSUMER_TOKEN,
+    CF_APOLLO_FAVORITE, CF_APOLLO_INSTANCE_CONFIG, CF_APOLLO_PERMISSION, CF_APOLLO_RELEASE_HISTORY,
+    CF_APOLLO_ROLE, CF_APOLLO_ROLE_PERMISSION, CF_APOLLO_SERVER_CONFIG, CF_APOLLO_USER_ROLE,
+    CF_APOLLO_USER_TOKEN, CF_APOLLO_USER_TOKEN_AUDIT, CF_APOLLO_USERS,
 };
 
 use crate::api::dto::{
     AppNamespaceDTO, AuditDTO, ConsumerDTO, ConsumerRoleDTO, FavoriteDTO, InstanceConfigDTO,
-    RoleDTO, ServerConfigDTO, UserDTO,
+    NewAuditLog, NewAuditLogDataInfluence, NewConsumerAudit, NewUserTokenAudit, RoleDTO,
+    ServerConfigDTO, UserDTO,
 };
 use crate::entity::{
-    apollo_app_namespace, apollo_audit, apollo_consumer, apollo_consumer_role,
+    apollo_app_namespace, apollo_audit, apollo_audit_log, apollo_audit_log_data_influence,
+    apollo_authorities, apollo_consumer, apollo_consumer_audit, apollo_consumer_role,
     apollo_consumer_token, apollo_favorite, apollo_instance_config, apollo_permission,
     apollo_release_history, apollo_role, apollo_role_permission, apollo_server_config,
-    apollo_user_role, apollo_user_token, apollo_users,
+    apollo_user_role, apollo_user_token, apollo_user_token_audit, apollo_users,
 };
 
 impl EmbeddedApolloPersistence {
@@ -1101,6 +1106,7 @@ impl UserTokenPersistence for EmbeddedApolloPersistence {
         token_prefix: &str,
         token_hash: &str,
         scopes: Option<&str>,
+        rate_limit: i32,
         expires: chrono::DateTime<chrono::Utc>,
         created_by: &str,
     ) -> anyhow::Result<apollo_user_token::Model> {
@@ -1113,7 +1119,7 @@ impl UserTokenPersistence for EmbeddedApolloPersistence {
             token_prefix: token_prefix.to_string(),
             token_hash: token_hash.to_string(),
             scopes: scopes.map(|s| s.to_string()),
-            rate_limit: 0,
+            rate_limit,
             expires: expires.naive_utc(),
             last_used_time: None,
             last_used_ip: None,
@@ -1129,6 +1135,29 @@ impl UserTokenPersistence for EmbeddedApolloPersistence {
         };
         store.put(format!("prefix:{}", token_prefix).as_bytes(), &model)?;
         Ok(model)
+    }
+
+    async fn touch_user_token(
+        &self,
+        id: i64,
+        last_used_time: chrono::NaiveDateTime,
+        last_used_ip: Option<&str>,
+        last_used_user_agent: Option<&str>,
+        operator: &str,
+    ) -> anyhow::Result<()> {
+        let store = self.store(CF_APOLLO_USER_TOKEN);
+        let mut model = store
+            .scan_all::<apollo_user_token::Model>()?
+            .into_iter()
+            .find(|m| m.id == id)
+            .ok_or_else(|| anyhow::anyhow!("User token not found: {}", id))?;
+        model.last_used_time = Some(last_used_time);
+        model.last_used_ip = last_used_ip.map(str::to_string);
+        model.last_used_user_agent = last_used_user_agent.map(str::to_string);
+        model.data_change_last_modified_by = Some(operator.to_string());
+        model.data_change_last_time = Some(last_used_time);
+        store.put(format!("prefix:{}", model.token_prefix).as_bytes(), &model)?;
+        Ok(())
     }
 
     async fn get_user_token_by_prefix(
@@ -1164,5 +1193,248 @@ impl UserTokenPersistence for EmbeddedApolloPersistence {
         model.deleted_at = Utc::now().timestamp_millis();
         store.put(format!("prefix:{}", model.token_prefix).as_bytes(), &model)?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl AuthorityPersistence for EmbeddedApolloPersistence {
+    async fn list_authorities(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        let store = self.store(CF_APOLLO_AUTHORITIES);
+        let mut all: Vec<apollo_authorities::Model> = store.scan_all()?;
+        all.retain(|m| m.username == username);
+        all.sort_by(|a, b| a.authority.cmp(&b.authority));
+        Ok(all.into_iter().map(|m| m.authority).collect())
+    }
+
+    async fn has_authority(&self, username: &str, authority: &str) -> anyhow::Result<bool> {
+        let store = self.store(CF_APOLLO_AUTHORITIES);
+        Ok(store
+            .get::<apollo_authorities::Model>(format!("{}:{}", username, authority).as_bytes())?
+            .is_some())
+    }
+
+    async fn assign_authority(
+        &self,
+        username: &str,
+        authority: &str,
+    ) -> anyhow::Result<apollo_authorities::Model> {
+        let store = self.store(CF_APOLLO_AUTHORITIES);
+        let key = format!("{}:{}", username, authority);
+        if let Some(existing) = store.get::<apollo_authorities::Model>(key.as_bytes())? {
+            return Ok(existing);
+        }
+        let model = apollo_authorities::Model {
+            id: self.next_id(),
+            username: username.to_string(),
+            authority: authority.to_string(),
+        };
+        store.put(key.as_bytes(), &model)?;
+        Ok(model)
+    }
+
+    async fn remove_authority(&self, username: &str, authority: &str) -> anyhow::Result<()> {
+        let store = self.store(CF_APOLLO_AUTHORITIES);
+        store.delete(format!("{}:{}", username, authority).as_bytes())?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AuditLogPersistence for EmbeddedApolloPersistence {
+    async fn create_audit_log(&self, dto: NewAuditLog) -> anyhow::Result<apollo_audit_log::Model> {
+        let store = self.store(CF_APOLLO_AUDIT_LOG);
+        let now = Utc::now().naive_utc();
+        let id = self.next_id();
+        let span_id = if dto.span_id.is_empty() {
+            format!("span-{}", id)
+        } else {
+            dto.span_id
+        };
+        let model = apollo_audit_log::Model {
+            id,
+            trace_id: dto.trace_id,
+            span_id,
+            parent_span_id: dto.parent_span_id,
+            follows_from_span_id: dto.follows_from_span_id,
+            operator: dto.operator,
+            op_type: dto.op_type,
+            op_name: dto.op_name,
+            description: dto.description,
+            is_deleted: false,
+            deleted_at: 0,
+            data_change_created_by: Some(dto.created_by.unwrap_or_else(|| "system".to_string())),
+            data_change_created_time: now,
+            data_change_last_modified_by: "system".to_string(),
+            data_change_last_time: now,
+        };
+        store.put(format!("id:{}", id).as_bytes(), &model)?;
+        Ok(model)
+    }
+
+    async fn create_data_influence(
+        &self,
+        dto: NewAuditLogDataInfluence,
+    ) -> anyhow::Result<apollo_audit_log_data_influence::Model> {
+        let store = self.store(CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE);
+        let now = Utc::now().naive_utc();
+        let id = self.next_id();
+        let model = apollo_audit_log_data_influence::Model {
+            id,
+            span_id: dto.span_id,
+            influence_entity_id: dto.entity_id,
+            influence_entity_name: dto.entity_name,
+            field_name: dto.field_name,
+            field_old_value: dto.old_value,
+            field_new_value: dto.new_value,
+            is_deleted: false,
+            deleted_at: 0,
+            data_change_created_by: Some(dto.created_by.unwrap_or_else(|| "system".to_string())),
+            data_change_created_time: now,
+            data_change_last_modified_by: "system".to_string(),
+            data_change_last_time: now,
+        };
+        store.put(format!("id:{}", id).as_bytes(), &model)?;
+        Ok(model)
+    }
+
+    async fn list_audit_logs(
+        &self,
+        op_name: Option<&str>,
+        operator: Option<&str>,
+        trace_id: Option<&str>,
+        query: Option<&str>,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit_log::Model>, u64)> {
+        let store = self.store(CF_APOLLO_AUDIT_LOG);
+        let mut all: Vec<apollo_audit_log::Model> = store.scan_all()?;
+        all.retain(|m| !m.is_deleted);
+        if let Some(value) = op_name {
+            all.retain(|m| m.op_name == value);
+        }
+        if let Some(value) = operator {
+            all.retain(|m| m.operator == value);
+        }
+        if let Some(value) = trace_id {
+            all.retain(|m| m.trace_id == value);
+        }
+        if let Some(value) = query {
+            let needle = value.to_lowercase();
+            all.retain(|m| {
+                m.operator.to_lowercase().contains(&needle)
+                    || m.op_name.to_lowercase().contains(&needle)
+                    || m.description
+                        .as_deref()
+                        .is_some_and(|d| d.to_lowercase().contains(&needle))
+            });
+        }
+        all.sort_by(|a, b| b.data_change_created_time.cmp(&a.data_change_created_time));
+        let total = all.len() as u64;
+        let page = page.max(1);
+        let size = size.max(1);
+        let start = ((page - 1) * size) as usize;
+        let page_items = if start >= all.len() {
+            Vec::new()
+        } else {
+            all.into_iter().skip(start).take(size as usize).collect()
+        };
+        Ok((page_items, total))
+    }
+
+    async fn list_influences(
+        &self,
+        span_ids: &[String],
+    ) -> anyhow::Result<Vec<apollo_audit_log_data_influence::Model>> {
+        let store = self.store(CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE);
+        let mut all: Vec<apollo_audit_log_data_influence::Model> = store.scan_all()?;
+        all.retain(|m| !m.is_deleted && span_ids.contains(&m.span_id));
+        all.sort_by(|a, b| b.data_change_created_time.cmp(&a.data_change_created_time));
+        Ok(all)
+    }
+}
+
+#[async_trait]
+impl ConsumerAuditPersistence for EmbeddedApolloPersistence {
+    async fn create_consumer_audit(
+        &self,
+        dto: NewConsumerAudit,
+    ) -> anyhow::Result<apollo_consumer_audit::Model> {
+        let store = self.store(CF_APOLLO_CONSUMER_AUDIT);
+        let now = Utc::now().naive_utc();
+        let id = self.next_id();
+        let created_by = if dto.op_by.is_empty() {
+            "system".to_string()
+        } else {
+            dto.op_by.clone()
+        };
+        let model = apollo_consumer_audit::Model {
+            id,
+            consumer_id: dto.consumer_id,
+            op_name: dto.op_name,
+            op_time: now,
+            op_by: dto.op_by,
+            data_change_created_by: created_by,
+            data_change_created_time: now,
+            data_change_last_modified_by: None,
+            data_change_last_time: Some(now),
+        };
+        store.put(format!("id:{}", id).as_bytes(), &model)?;
+        Ok(model)
+    }
+
+    async fn list_consumer_audits(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_audit::Model>> {
+        let store = self.store(CF_APOLLO_CONSUMER_AUDIT);
+        let mut all: Vec<apollo_consumer_audit::Model> = store.scan_all()?;
+        all.retain(|m| m.consumer_id == consumer_id);
+        all.sort_by(|a, b| b.op_time.cmp(&a.op_time));
+        Ok(all)
+    }
+}
+
+#[async_trait]
+impl UserTokenAuditPersistence for EmbeddedApolloPersistence {
+    async fn create_user_token_audit(
+        &self,
+        dto: NewUserTokenAudit,
+    ) -> anyhow::Result<apollo_user_token_audit::Model> {
+        let store = self.store(CF_APOLLO_USER_TOKEN_AUDIT);
+        let now = Utc::now().naive_utc();
+        let id = self.next_id();
+        let model = apollo_user_token_audit::Model {
+            id,
+            token_id: dto.token_id,
+            user_id: dto.user_id,
+            uri: dto.uri,
+            method: dto.method,
+            data_change_created_time: now,
+            data_change_last_time: now,
+        };
+        store.put(format!("id:{}", id).as_bytes(), &model)?;
+        Ok(model)
+    }
+
+    async fn list_user_token_audits(
+        &self,
+        token_id: i64,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>> {
+        let store = self.store(CF_APOLLO_USER_TOKEN_AUDIT);
+        let mut all: Vec<apollo_user_token_audit::Model> = store.scan_all()?;
+        all.retain(|m| m.token_id == Some(token_id));
+        all.sort_by(|a, b| b.data_change_created_time.cmp(&a.data_change_created_time));
+        Ok(all)
+    }
+
+    async fn list_user_token_audits_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>> {
+        let store = self.store(CF_APOLLO_USER_TOKEN_AUDIT);
+        let mut all: Vec<apollo_user_token_audit::Model> = store.scan_all()?;
+        all.retain(|m| m.user_id == user_id);
+        all.sort_by(|a, b| b.data_change_created_time.cmp(&a.data_change_created_time));
+        Ok(all)
     }
 }

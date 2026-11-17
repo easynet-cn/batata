@@ -932,6 +932,158 @@ pub struct SystemInfoDTO {
     pub git_commit_id: String,
 }
 
+/// Input for creating a distributed audit-log entry.
+#[derive(Debug, Clone, Default)]
+pub struct NewAuditLog {
+    /// Trace identifier shared by entries from one request.
+    pub trace_id: String,
+    /// Span identifier of this operation.
+    pub span_id: String,
+    /// Parent span identifier, when nested.
+    pub parent_span_id: Option<String>,
+    /// Follows-from span identifier, when applicable.
+    pub follows_from_span_id: Option<String>,
+    /// The operator account or consumer id.
+    pub operator: String,
+    /// Upstream operation type.
+    pub op_type: String,
+    /// Upstream operation name.
+    pub op_name: String,
+    /// Human readable description.
+    pub description: Option<String>,
+    /// Creator of the row.
+    pub created_by: Option<String>,
+}
+
+/// Input for creating an audit-log data influence.
+#[derive(Debug, Clone, Default)]
+pub struct NewAuditLogDataInfluence {
+    /// The owning audit-log span.
+    pub span_id: String,
+    /// Influenced entity id.
+    pub entity_id: String,
+    /// Influenced entity name.
+    pub entity_name: String,
+    /// Changed field name.
+    pub field_name: Option<String>,
+    /// Value before the operation.
+    pub old_value: Option<String>,
+    /// Value after the operation.
+    pub new_value: Option<String>,
+    /// Creator of the row.
+    pub created_by: Option<String>,
+}
+
+/// Input for recording a user-token authenticated request.
+#[derive(Debug, Clone, Default)]
+pub struct NewUserTokenAudit {
+    /// The user token that authenticated the request.
+    pub token_id: Option<i64>,
+    /// The resolved portal account name.
+    pub user_id: String,
+    /// The request URI.
+    pub uri: String,
+    /// The HTTP method.
+    pub method: String,
+}
+
+/// Input for recording a consumer management operation.
+#[derive(Debug, Clone, Default)]
+pub struct NewConsumerAudit {
+    /// The consumer affected by the operation.
+    pub consumer_id: i64,
+    /// Operation name.
+    pub op_name: String,
+    /// Operator account name.
+    pub op_by: String,
+}
+
+/// Distributed audit-log entry returned by the OpenAPI audit endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditLogDTO {
+    /// Row id.
+    pub id: Option<i64>,
+    /// Trace identifier.
+    pub trace_id: String,
+    /// Span identifier.
+    pub span_id: String,
+    /// Parent span identifier.
+    pub parent_span_id: Option<String>,
+    /// Follows-from span identifier.
+    pub follows_from_span_id: Option<String>,
+    /// Operator account or consumer id.
+    pub operator: String,
+    /// Operation type.
+    pub op_type: String,
+    /// Operation name.
+    pub op_name: String,
+    /// Human readable description.
+    pub description: Option<String>,
+    /// Whether the row is soft-deleted.
+    pub is_deleted: bool,
+    /// Soft-delete timestamp.
+    pub deleted_at: i64,
+    /// Creation timestamp.
+    pub data_change_created_time: Option<String>,
+    /// Last update timestamp.
+    pub data_change_last_time: Option<String>,
+    /// Influenced entities and fields.
+    pub data_influences: Vec<AuditLogDataInfluenceDTO>,
+}
+
+/// Data influence returned together with an audit-log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditLogDataInfluenceDTO {
+    /// Row id.
+    pub id: Option<i64>,
+    /// Influenced entity id.
+    pub entity_id: String,
+    /// Influenced entity name.
+    pub entity_name: String,
+    /// Changed field name.
+    pub field_name: Option<String>,
+    /// Value before the operation.
+    pub field_old_value: Option<String>,
+    /// Value after the operation.
+    pub field_new_value: Option<String>,
+}
+
+/// User-token request audit record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserTokenAuditDTO {
+    /// Row id.
+    pub id: Option<i64>,
+    /// User token id.
+    pub token_id: Option<i64>,
+    /// Resolved portal account name.
+    pub user_id: String,
+    /// Request URI.
+    pub uri: String,
+    /// HTTP method.
+    pub method: String,
+    /// Request timestamp.
+    pub created_time: String,
+}
+
+/// Consumer management audit record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerAuditDTO {
+    /// Row id.
+    pub id: Option<i64>,
+    /// Consumer id.
+    pub consumer_id: i64,
+    /// Operation name.
+    pub op_name: String,
+    /// Operator account name.
+    pub op_by: String,
+    /// Operation timestamp.
+    pub op_time: String,
+}
+
 /// Apollo uses Gson with `FieldNamingPolicy.IDENTITY`, so the wire key is the
 /// Java field name verbatim. Note that boolean fields keep their `is` prefix
 /// (`isPublic`), unlike Jackson bean properties.

@@ -214,7 +214,8 @@ async fn users_is_create_flag_and_username_contract() {
         .find(|u| u["username"] == username)
         .unwrap_or_else(|| panic!("created user must be listed: {users:?}"));
     assert_eq!(entry["enabled"], true);
-    assert!(entry.get("userId").is_none(), "list must use username");
+    assert_eq!(entry["userId"], username, "list must use upstream userId");
+    assert_eq!(entry["username"], username, "legacy username alias is kept");
 
     // Duplicate creation is rejected by UserPersistence.
     let (status, _) = call!(

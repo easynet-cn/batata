@@ -2675,3 +2675,29 @@ Nacos Java suite at 531 tests / 0 failures / 0 errors / 8 skipped; matrix 6
 combinations with every coverage anchor at its full case count. The archived
 `startup.log` now records the debug binary. Generated `sdk-tests/*/TEST_REPORT.md`
 and `conf/cluster.conf` were restored after the run.
+
+## 30. Apollo user-management and PAT runtime alignment (2026-11-17, uncommitted)
+
+This batch closes the audit gaps found in `batata-plugin-apollo`'s Portal user-management surface. It is an implementation + validation round, **not an inventory recount**: no F-ID status marker or T-ID status changed (577 F / 1040 T-ID, Apollo 199 / 85%).
+
+### 30.1 User-management alignment
+
+* The DDL-only `apollo_authorities`, `apollo_user_token_audit`, `apollo_audit_log`, `apollo_audit_log_data_influence` and `apollo_consumer_audit` tables now have entities, persistence traits, RocksDB and SQL implementations, and services on both backends.
+* `PortalBootstrapService` idempotently seeds the `apollo` admin, the `superAdmin` server config, and system authorities / roles / permissions. OpenAPI permission, role, user, token and audit handlers now read and write real rows instead of fixed values or no-ops.
+* `POST /openapi/v1/user/login` exchanges username/password for an upstream-shaped PAT (`apollo_pat_{prefix}_{secret}`). `X-Apollo-Token`, Bearer PAT and legacy user-token aliases are validated whenever presented, including when global OpenAPI auth is off; every PAT scope is ANDed with RBAC (superadmins included). `/user-tokens/current`, `/current/capabilities` and `/whoami` are now registered, and PAT requests plus management writes are audited.
+
+### 30.2 PAT runtime parity
+
+* `TokenScope` mirrors upstream `Env.transformEnv` normalization (`PROD`→`PRO`, `FWS`→`FAT`, trim + uppercase, unknown unchanged) and enforces `envs` / `namespaces` in the middleware data-path guard (upstream `shouldHideConfigToCurrentUser` equivalent) and in `request_has_permission` targets. Scope checks run before the superadmin short-circuit so a scoped PAT cannot bypass RBAC constraints.
+* `rateLimit` is persisted from token-create requests and enforced by a bounded per-prefix token bucket (20,000 entries / 1h idle expiry) returning 429 — the upstream Guava `RateLimiter` equivalent. Successful authentication writes `lastUsedTime` / `lastUsedIp` / `lastUsedUserAgent` on both backends.
+
+### 30.3 Validation
+
+* Mutants: 12/12 killed across the two rounds — 6 for user-management guards (explicit-token validation with auth off, password verification, PAT scope fail-closed, scope ANDed with RBAC, consumer-role permission resolution, login audit) and 6 for runtime guards (env alias, namespace matching, request-path guard, permission target, rate limit, last-used write). All mutated files were byte-restored.
+* Tests: Apollo suite green (`user_auth_test` 9 cases); `cargo test --workspace --exclude batata-integration-tests` = **4111 passed / 0 failed / 33 ignored** (+48 over the pre-round 4063 baseline).
+* Gates: `cargo fmt --all -- --check`, `cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 F / 1040 T-ID, Nacos 191/191 anchored) — all clean.
+
+### 30.4 Documentation sync and pending gate
+
+* `docs/compat/apollo/features.md` records both round summaries; the 08-31 orphan-migration note now points to the 11-17 superseding round. The stale `always true` / `no role store populated` comments in `openapi.rs` were removed. The root `README.md` Apollo figure was corrected from `~81%` to `~85%` to match `docs/compat/README.md` (which `compat_check.py` verifies). `docs/compat/apollo/tests.md` stays unchanged: the new cases are batata-native guards, so the 401 / 1040 T-ID mapping is unaffected.
+* The changes remain **uncommitted** at HEAD `33b1e8bf`. A clean `scripts/regression.sh --full` is still pending the user's commit; generated `sdk-tests/*/TEST_REPORT.md` files must be restored after that run.

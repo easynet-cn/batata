@@ -230,6 +230,14 @@ pub const CF_APOLLO_SERVICE_REGISTRY: &str = "apollo_service_registry";
 pub const CF_APOLLO_INSTANCE_CONFIG: &str = "apollo_instance_config";
 /// Apollo plugin column family for user tokens (portal session / openapi user token).
 pub const CF_APOLLO_USER_TOKEN: &str = "apollo_user_token";
+/// Apollo plugin column family for Spring Security authorities.
+pub const CF_APOLLO_AUTHORITIES: &str = "apollo_authorities";
+/// Apollo plugin column family for user-token request audit records.
+pub const CF_APOLLO_USER_TOKEN_AUDIT: &str = "apollo_user_token_audit";
+/// Apollo plugin column family for distributed audit logs.
+pub const CF_APOLLO_AUDIT_LOG: &str = "apollo_audit_log";
+/// Apollo plugin column family for audit-log data influences.
+pub const CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE: &str = "apollo_audit_log_data_influence";
 
 // Meta keys
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
@@ -742,6 +750,7 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_APOLLO_CONSUMER, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_CONSUMER_TOKEN, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_CONSUMER_AUDIT, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_CONSUMER_ROLE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_PERMISSION, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_ROLE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_ROLE_PERMISSION, cf_opts.clone()),
@@ -751,6 +760,10 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_APOLLO_SERVER_CONFIG, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_INSTANCE_CONFIG, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_USER_TOKEN, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_AUTHORITIES, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_USER_TOKEN_AUDIT, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_AUDIT_LOG, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_SERVICE_REGISTRY, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_META, cf_opts.clone()),
         ];

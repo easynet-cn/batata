@@ -18,3 +18,5 @@
 pub mod consumer_auth;
 pub mod permission;
 pub mod role;
+pub mod token_rate_limiter;
+pub mod token_scope;

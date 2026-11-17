@@ -6,6 +6,8 @@ pub mod admin;
 pub mod config;
 /// OpenAPI route handlers.
 pub mod openapi;
+/// Shared user-management helpers.
+pub mod user_management;
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))

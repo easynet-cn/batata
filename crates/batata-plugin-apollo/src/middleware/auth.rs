@@ -23,11 +23,15 @@ use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform, forwar
 use actix_web::{Error, HttpMessage, web};
 use futures::future::LocalBoxFuture;
 
+use crate::api::dto::{NewUserTokenAudit, UserDTO};
+use crate::auth::permission::Identity;
+use crate::auth::token_rate_limiter::LIMITER;
+use crate::auth::token_scope::{TokenScope, scope_allows_request};
 use crate::model::config::AuthConfig;
-use crate::persistence::traits::ApolloPersistenceService;
-// Consumer-token lookups go through the `dyn ApolloPersistenceService` vtable
-// (the `ConsumerTokenPersistence` supertrait), so no direct import is needed.
-use crate::service::UserTokenService;
+use crate::persistence::traits::{
+    ApolloPersistenceService, ServerConfigPersistence, UserPersistence,
+};
+use crate::service::{UserService, UserTokenAuditService, UserTokenService};
 
 /// Extracts the bearer credential from an `Authorization` header.
 ///
@@ -179,136 +183,180 @@ where
         let method = req.method().clone();
 
         Box::pin(async move {
-            // A handful of openapi paths are public (e.g. the login endpoint
-            // used to bootstrap a user token). They bypass authentication.
             if is_public_openapi_path(&path) {
                 return service.call(req).await;
             }
 
-            // Openapi access control is opt-in, mirroring the admin side:
-            // unless `APOLLO_OPENAPI_AUTH_ENABLED` is set the whole /openapi/v1
-            // surface stays open. This keeps an unconfigured install (and the
-            // in-process suite) usable instead of rejecting every request
-            // before any consumer has been created.
             let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
             let openapi_auth_enabled = auth_config
                 .as_ref()
                 .map(|cfg| cfg.openapi_auth_enabled)
                 .unwrap_or(false);
-            if !openapi_auth_enabled {
+            let persistence_ref: Option<std::sync::Arc<dyn ApolloPersistenceService>> = req
+                .app_data::<web::Data<std::sync::Arc<dyn ApolloPersistenceService>>>()
+                .cloned()
+                .map(|p| (*p.into_inner()).clone());
+
+            // Portal-management paths are guarded by a user token. Data paths
+            // accept a user token first (upstream's UserTokenAuthenticationFilter
+            // covers all of /openapi/**) and fall back to a consumer token.
+            let requires_user_token = is_portal_management_path(&path, method.as_str());
+            let explicit_token = extract_explicit_user_token(&req);
+            let authorization_token = extract_authorization_credential(&req);
+
+            // A presented token must always be validated, even when global
+            // auth is disabled. Otherwise the UI would report a successful
+            // login while the backend ignored its credential entirely.
+            let candidates = explicit_token.into_iter().map(|token| (token, true)).chain(
+                authorization_token
+                    .clone()
+                    .into_iter()
+                    .map(|token| (token, false)),
+            );
+
+            for (token, explicit) in candidates {
+                let arc = persistence_ref.clone().ok_or_else(|| {
+                    actix_web::error::ErrorInternalServerError("persistence unavailable")
+                })?;
+                let valid = UserTokenService::new(arc.clone())
+                    .validate(&token)
+                    .await
+                    .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+                if let Some(model) = valid {
+                    if !LIMITER.try_acquire(&model.token_prefix, model.rate_limit) {
+                        return Err(actix_web::error::ErrorTooManyRequests(
+                            "Too Many Requests, the flow is limited",
+                        ));
+                    }
+                    // Data paths carry env/cluster/namespace in the URL; enforce
+                    // the same resource scope upstream applies in its
+                    // PermissionValidator before the handler reads or writes.
+                    let scope = TokenScope::parse(model.scopes.as_deref());
+                    if !scope_allows_request(&scope, &path, method.as_str()) {
+                        return Err(actix_web::error::ErrorForbidden(
+                            "User token scope does not permit this resource",
+                        ));
+                    }
+                    let user = UserPersistence::get_user(&*arc, &model.user_id)
+                        .await
+                        .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?
+                        .ok_or_else(|| {
+                            actix_web::error::ErrorUnauthorized("User token owner no longer exists")
+                        })?;
+                    if let Err(error) = UserTokenAuditService::new(arc.clone())
+                        .record(NewUserTokenAudit {
+                            token_id: Some(model.id),
+                            user_id: model.user_id.clone(),
+                            uri: path.clone(),
+                            method: method.to_string(),
+                        })
+                        .await
+                    {
+                        tracing::warn!(%error, "failed to record Apollo user-token audit");
+                    }
+                    let last_used_ip = req
+                        .connection_info()
+                        .realip_remote_addr()
+                        .map(str::to_string);
+                    let last_used_user_agent = req
+                        .headers()
+                        .get("User-Agent")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+                    UserTokenService::new(arc.clone())
+                        .record_usage(
+                            &model,
+                            last_used_ip.as_deref(),
+                            last_used_user_agent.as_deref(),
+                        )
+                        .await;
+                    req.extensions_mut().insert(model);
+                    req.extensions_mut()
+                        .insert(Identity::User(UserService::model_to_dto(&user)));
+                    return service.call(req).await;
+                }
+                if explicit || requires_user_token {
+                    return Err(actix_web::error::ErrorUnauthorized(
+                        "Invalid or expired user token",
+                    ));
+                }
+                // An Authorization value may still be a consumer token.
+            }
+
+            if requires_user_token {
+                if openapi_auth_enabled {
+                    return Err(actix_web::error::ErrorUnauthorized(
+                        "Portal management requires a user token",
+                    ));
+                }
+                let identity = compat_admin_identity(persistence_ref.as_ref()).await?;
+                req.extensions_mut().insert(identity);
                 return service.call(req).await;
             }
 
-            // Paths that manage consumers / users / roles / permissions are
-            // protected by a portal user token (a logged-in user), not by a
-            // consumer token. Everything else under /openapi/v1 is protected by
-            // the consumer token.
-            let requires_user_token = is_portal_management_path(&path, method.as_str());
-
-            let persistence = req
-                .app_data::<web::Data<std::sync::Arc<dyn ApolloPersistenceService>>>()
-                .cloned();
-
-            // Resolve the persistence reference once; downstream calls go through
-            // the combined `dyn ApolloPersistenceService` vtable.
-            let persistence_ref: Option<std::sync::Arc<dyn ApolloPersistenceService>> =
-                persistence.map(|p| (*p.into_inner()).clone());
-
-            if requires_user_token {
-                let token = extract_user_token(&req);
-                match token {
-                    Some(t) => {
-                        let arc = persistence_ref.clone().ok_or_else(|| {
-                            actix_web::error::ErrorInternalServerError("persistence unavailable")
-                        })?;
-                        let svc = UserTokenService::new(arc);
-                        let valid = svc.validate(&t).await.map_err(|e| {
-                            actix_web::error::ErrorInternalServerError(e.to_string())
-                        })?;
-                        match valid {
-                            Some(model) => {
-                                req.extensions_mut().insert(model);
-                            }
-                            None => {
-                                return Err(actix_web::error::ErrorUnauthorized(
-                                    "Invalid or expired user token",
-                                ));
-                            }
-                        }
+            let presented = match authorization_token {
+                Some(token) => token,
+                None => {
+                    if !openapi_auth_enabled {
+                        let identity = compat_admin_identity(persistence_ref.as_ref()).await?;
+                        req.extensions_mut().insert(identity);
+                        return service.call(req).await;
                     }
-                    None => {
-                        return Err(actix_web::error::ErrorUnauthorized(
-                            "Portal management requires a user token",
-                        ));
+                    return Err(actix_web::error::ErrorUnauthorized(
+                        "Openapi access requires an 'Authorization' header with a consumer token",
+                    ));
+                }
+            };
+
+            let app_id = match extract_app_id(&path) {
+                Some(app_id) => app_id,
+                None if !openapi_auth_enabled => {
+                    let identity = compat_admin_identity(persistence_ref.as_ref()).await?;
+                    req.extensions_mut().insert(identity);
+                    return service.call(req).await;
+                }
+                None => {
+                    return Err(actix_web::error::ErrorUnauthorized(
+                        "Unable to resolve appId for consumer token",
+                    ));
+                }
+            };
+
+            let arc = persistence_ref.ok_or_else(|| {
+                actix_web::error::ErrorInternalServerError("persistence unavailable")
+            })?;
+            let svc_ref: &dyn ApolloPersistenceService = &*arc;
+
+            let stored = svc_ref
+                .get_consumer_token_by_token(&presented)
+                .await
+                .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+
+            match stored {
+                Some(token_model) => {
+                    let consumer = svc_ref
+                        .get_consumer(token_model.consumer_id)
+                        .await
+                        .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+                    match consumer {
+                        Some(consumer) if consumer.app_id == app_id => {
+                            req.extensions_mut().insert(Identity::Consumer {
+                                consumer_id: consumer.id,
+                                app_id: Some(consumer.app_id.clone()),
+                            });
+                            req.extensions_mut().insert(consumer);
+                        }
+                        _ => {
+                            return Err(actix_web::error::ErrorUnauthorized(
+                                "Consumer token is not authorized for this appId",
+                            ));
+                        }
                     }
                 }
-            } else {
-                // Consumer token: the raw Authorization header value is the token.
-                let presented = req
-                    .headers()
-                    .get("Authorization")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(bearer_from_header)
-                    .filter(|t| !t.is_empty());
-
-                let presented = match presented {
-                    Some(t) => t,
-                    None => {
-                        return Err(actix_web::error::ErrorUnauthorized(
-                            "Openapi access requires an 'Authorization' header with a consumer token",
-                        ));
-                    }
-                };
-
-                // Resolve the appId from the path: /openapi/v1/apps/{appId}/...
-                let app_id = match extract_app_id(&path) {
-                    Some(a) => a,
-                    None => {
-                        return Err(actix_web::error::ErrorUnauthorized(
-                            "Unable to resolve appId for consumer token",
-                        ));
-                    }
-                };
-
-                let arc = match persistence_ref {
-                    Some(p) => p,
-                    None => {
-                        return Err(actix_web::error::ErrorInternalServerError(
-                            "persistence unavailable",
-                        ));
-                    }
-                };
-                let svc_ref: &dyn ApolloPersistenceService = &*arc;
-
-                let stored = svc_ref
-                    .get_consumer_token_by_token(&presented)
-                    .await
-                    .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
-
-                match stored {
-                    Some(token_model) => {
-                        let consumer = svc_ref
-                            .get_consumer(token_model.consumer_id)
-                            .await
-                            .map_err(|e| {
-                                actix_web::error::ErrorInternalServerError(e.to_string())
-                            })?;
-                        match consumer {
-                            Some(c) if c.app_id == app_id => {
-                                req.extensions_mut().insert(c);
-                            }
-                            _ => {
-                                return Err(actix_web::error::ErrorUnauthorized(
-                                    "Consumer token is not authorized for this appId",
-                                ));
-                            }
-                        }
-                    }
-                    None => {
-                        return Err(actix_web::error::ErrorUnauthorized(
-                            "Invalid consumer token",
-                        ));
-                    }
+                None => {
+                    return Err(actix_web::error::ErrorUnauthorized(
+                        "Invalid consumer token",
+                    ));
                 }
             }
 
@@ -319,76 +367,106 @@ where
 
 /// Openapi paths that are reachable without any authentication.
 ///
-/// The login endpoint is the only public one: it is how a caller bootstraps a
-/// user token before accessing the portal-management endpoints.
+/// The token-issuing endpoint is the only public one: it bootstraps a PAT
+/// without introducing a Portal session.
 fn is_public_openapi_path(path: &str) -> bool {
     path == "/openapi/v1/user/login"
 }
 
 /// Whether a path is a portal-management endpoint (requires a user token).
 fn is_portal_management_path(path: &str, method: &str) -> bool {
-    // Token self-management and consumer-token issuance are reached by a logged
-    // in user, not by a consumer token.
     if path == "/openapi/v1/consumer-tokens" && method.eq_ignore_ascii_case("POST") {
         return true;
     }
-    if path.starts_with("/openapi/v1/consumers/") && path.ends_with("/tokens") {
-        return true;
-    }
-    if path.starts_with("/openapi/v1/users") {
-        return true;
-    }
-    if path.starts_with("/openapi/v1/roles") {
-        return true;
-    }
-    if path.starts_with("/openapi/v1/permissions") {
-        return true;
-    }
-    if path.starts_with("/openapi/v1/organizations") {
-        return true;
-    }
-    if path == "/openapi/v1/user" {
+    if path.starts_with("/openapi/v1/consumers")
+        || path.starts_with("/openapi/v1/consumer-tokens")
+        || path.starts_with("/openapi/v1/users")
+        || path.starts_with("/openapi/v1/user-tokens")
+        || path.starts_with("/openapi/v1/roles")
+        || path.starts_with("/openapi/v1/permissions")
+        || path.starts_with("/openapi/v1/organizations")
+        || path.starts_with("/openapi/v1/system/roles")
+        || path.starts_with("/openapi/v1/audit")
+        || path.starts_with("/openapi/v1/logs")
+        || path.starts_with("/openapi/v1/trace")
+        || path == "/openapi/v1/user"
+        || path.contains("/roles")
+        || path.contains("/permissions")
+        || path.contains("/permission-init")
+    {
         return true;
     }
     false
 }
 
-/// Extracts the user token from the `Authorization` header (no scheme) or the
-/// `user-token` header / `token` query parameter, mirroring upstream's
-/// `UserTokenAuthenticationFilter`.
-fn extract_user_token(req: &ServiceRequest) -> Option<String> {
-    if let Some(h) = req
+/// Compatibility identity used only when OpenAPI auth is disabled and no token
+/// was presented. It preserves existing SDK behavior while still letting an
+/// explicitly presented token be validated.
+async fn compat_admin_identity(
+    persistence: Option<&std::sync::Arc<dyn ApolloPersistenceService>>,
+) -> Result<Identity, Error> {
+    let username = match persistence {
+        Some(persistence) => {
+            ServerConfigPersistence::get_server_config(&**persistence, "superAdmin")
+                .await
+                .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?
+                .map(|config| config.value)
+                .unwrap_or_else(|| "apollo".to_string())
+        }
+        None => "apollo".to_string(),
+    };
+    Ok(Identity::User(UserDTO {
+        id: None,
+        username,
+        password: String::new(),
+        email: None,
+        enabled: true,
+        data_change_created_by: None,
+        data_change_created_time: None,
+    }))
+}
+
+/// Extracts a credential that is unambiguously a user token.
+///
+/// `X-Apollo-Token` is batata-ui's header; `user-token` and `token` are the
+/// legacy aliases accepted by upstream's `UserTokenAuthenticationFilter`.
+fn extract_explicit_user_token(req: &ServiceRequest) -> Option<String> {
+    for header in ["X-Apollo-Token", "user-token"] {
+        if let Some(value) = req
+            .headers()
+            .get(header)
+            .and_then(|h| h.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(value.to_string());
+        }
+    }
+    req.query_string().split('&').find_map(|kv| {
+        let (key, value) = kv.split_once('=')?;
+        (key == "token" && !value.is_empty()).then(|| value.to_string())
+    })
+}
+
+/// Extracts the `Authorization` credential, stripping an optional scheme.
+///
+/// `Consumer` and `Basic` are excluded here because they can never carry a
+/// user token. The same value is later tried as a consumer token.
+fn extract_authorization_credential(req: &ServiceRequest) -> Option<String> {
+    let trimmed = req
         .headers()
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
-    {
-        let trimmed = h.trim();
-        if let Some((scheme, value)) = trimmed.split_once(' ') {
-            if !scheme.eq_ignore_ascii_case("Consumer") {
-                return Some(value.trim().to_string());
-            }
-        } else {
-            return Some(trimmed.to_string());
+        .map(str::trim)?;
+    if let Some((scheme, value)) = trimmed.split_once(' ') {
+        if scheme.eq_ignore_ascii_case("Consumer") || scheme.eq_ignore_ascii_case("Basic") {
+            return None;
         }
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    } else {
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
     }
-    if let Some(h) = req
-        .headers()
-        .get("user-token")
-        .and_then(|h| h.to_str().ok())
-    {
-        return Some(h.trim().to_string());
-    }
-    if let Some(q) = req.query_string().split('&').find_map(|kv| {
-        let (k, v) = kv.split_once('=')?;
-        if k == "token" {
-            Some(v.to_string())
-        } else {
-            None
-        }
-    }) {
-        return Some(q);
-    }
-    None
 }
 
 /// Resolves the `{appId}` from an openapi path such as

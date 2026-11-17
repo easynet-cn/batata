@@ -2697,11 +2697,18 @@ async fn init_app_permission(
         .and_then(|v| v.as_str())
         .unwrap_or("admin");
     let permission_service = PermissionService::new(data.get_ref().clone());
-    // Upstream creates AppMaster + CreateCluster + CreateNamespace per app.
-    let target_id = format!("App+{}", app_id);
-    let types = [1, 2, 3];
-    for pt in types {
-        let _ = permission_service.create(pt, &target_id, operator).await;
+    // Upstream initializes CreateNamespace/CreateCluster/AssignRole for the app.
+    // Keep the legacy `App+<appId>` target as well for older batata clients.
+    let types = [
+        crate::auth::permission::permission_type_ids::CREATE_NAMESPACE,
+        crate::auth::permission::permission_type_ids::CREATE_CLUSTER,
+        crate::auth::permission::permission_type_ids::ASSIGN_ROLE,
+        crate::auth::permission::permission_type_ids::MANAGE_APP_MASTER,
+    ];
+    for target_id in [app_id.clone(), format!("App+{}", app_id)] {
+        for pt in types {
+            let _ = permission_service.create(pt, &target_id, operator).await;
+        }
     }
     HttpResponse::Ok().json(serde_json::json!({ "appId": app_id }))
 }

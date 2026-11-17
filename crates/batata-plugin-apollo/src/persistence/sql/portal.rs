@@ -10,18 +10,21 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 
+use crate::api::dto::{NewAuditLog, NewAuditLogDataInfluence, NewConsumerAudit, NewUserTokenAudit};
 use crate::entity::{
-    apollo_app_namespace, apollo_audit, apollo_consumer, apollo_consumer_role,
+    apollo_app_namespace, apollo_audit, apollo_audit_log, apollo_audit_log_data_influence,
+    apollo_authorities, apollo_consumer, apollo_consumer_audit, apollo_consumer_role,
     apollo_consumer_token, apollo_favorite, apollo_instance_config, apollo_permission,
     apollo_release_history, apollo_role, apollo_role_permission, apollo_server_config,
-    apollo_user_role, apollo_user_token, apollo_users,
+    apollo_user_role, apollo_user_token, apollo_user_token_audit, apollo_users,
 };
 use crate::persistence::sql::SqlApolloPersistence;
 use crate::persistence::traits::{
-    AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
+    AppNamespacePersistence, AuditLogPersistence, AuditPersistence, AuthorityPersistence,
+    ConsumerAuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
     ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence,
     PermissionPersistence, ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence,
-    UserPersistence, UserTokenPersistence,
+    UserPersistence, UserTokenAuditPersistence, UserTokenPersistence,
 };
 use chrono::Utc;
 
@@ -1095,6 +1098,7 @@ impl UserTokenPersistence for SqlApolloPersistence {
         token_prefix: &str,
         token_hash: &str,
         scopes: Option<&str>,
+        rate_limit: i32,
         expires: chrono::DateTime<chrono::Utc>,
         created_by: &str,
     ) -> anyhow::Result<apollo_user_token::Model> {
@@ -1106,7 +1110,7 @@ impl UserTokenPersistence for SqlApolloPersistence {
             token_prefix: Set(token_prefix.to_string()),
             token_hash: Set(token_hash.to_string()),
             scopes: Set(scopes.map(|s| s.to_string())),
-            rate_limit: Set(0),
+            rate_limit: Set(rate_limit),
             expires: Set(expires.naive_utc()),
             is_deleted: Set(false),
             deleted_at: Set(0),
@@ -1117,6 +1121,28 @@ impl UserTokenPersistence for SqlApolloPersistence {
             ..Default::default()
         };
         Ok(active_model.insert(db).await?)
+    }
+
+    async fn touch_user_token(
+        &self,
+        id: i64,
+        last_used_time: chrono::NaiveDateTime,
+        last_used_ip: Option<&str>,
+        last_used_user_agent: Option<&str>,
+        operator: &str,
+    ) -> anyhow::Result<()> {
+        let model = apollo_user_token::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("User token not found: {}", id))?;
+        let mut active_model: apollo_user_token::ActiveModel = model.into();
+        active_model.last_used_time = Set(Some(last_used_time));
+        active_model.last_used_ip = Set(last_used_ip.map(str::to_string));
+        active_model.last_used_user_agent = Set(last_used_user_agent.map(str::to_string));
+        active_model.data_change_last_modified_by = Set(Some(operator.to_string()));
+        active_model.data_change_last_time = Set(Some(last_used_time));
+        active_model.update(&self.db).await?;
+        Ok(())
     }
 
     async fn get_user_token_by_prefix(
@@ -1152,5 +1178,261 @@ impl UserTokenPersistence for SqlApolloPersistence {
         active_model.deleted_at = Set(Utc::now().timestamp_millis());
         active_model.update(db).await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl AuthorityPersistence for SqlApolloPersistence {
+    async fn list_authorities(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        let mut all = apollo_authorities::Entity::find()
+            .filter(apollo_authorities::Column::Username.eq(username))
+            .order_by_asc(apollo_authorities::Column::Authority)
+            .all(&self.db)
+            .await?;
+        all.sort_by(|a, b| a.authority.cmp(&b.authority));
+        Ok(all.into_iter().map(|m| m.authority).collect())
+    }
+
+    async fn has_authority(&self, username: &str, authority: &str) -> anyhow::Result<bool> {
+        Ok(apollo_authorities::Entity::find()
+            .filter(apollo_authorities::Column::Username.eq(username))
+            .filter(apollo_authorities::Column::Authority.eq(authority))
+            .one(&self.db)
+            .await?
+            .is_some())
+    }
+
+    async fn assign_authority(
+        &self,
+        username: &str,
+        authority: &str,
+    ) -> anyhow::Result<apollo_authorities::Model> {
+        let db = &self.db;
+        if let Some(existing) = apollo_authorities::Entity::find()
+            .filter(apollo_authorities::Column::Username.eq(username))
+            .filter(apollo_authorities::Column::Authority.eq(authority))
+            .one(db)
+            .await?
+        {
+            return Ok(existing);
+        }
+        Ok(apollo_authorities::ActiveModel {
+            username: Set(username.to_string()),
+            authority: Set(authority.to_string()),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?)
+    }
+
+    async fn remove_authority(&self, username: &str, authority: &str) -> anyhow::Result<()> {
+        apollo_authorities::Entity::delete_many()
+            .filter(apollo_authorities::Column::Username.eq(username))
+            .filter(apollo_authorities::Column::Authority.eq(authority))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AuditLogPersistence for SqlApolloPersistence {
+    async fn create_audit_log(&self, dto: NewAuditLog) -> anyhow::Result<apollo_audit_log::Model> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        let span_id = if dto.span_id.is_empty() {
+            format!("span-{}", now.and_utc().timestamp_millis())
+        } else {
+            dto.span_id
+        };
+        Ok(apollo_audit_log::ActiveModel {
+            trace_id: Set(dto.trace_id),
+            span_id: Set(span_id),
+            parent_span_id: Set(dto.parent_span_id),
+            follows_from_span_id: Set(dto.follows_from_span_id),
+            operator: Set(dto.operator),
+            op_type: Set(dto.op_type),
+            op_name: Set(dto.op_name),
+            description: Set(dto.description),
+            is_deleted: Set(false),
+            deleted_at: Set(0),
+            data_change_created_by: Set(Some(
+                dto.created_by.unwrap_or_else(|| "system".to_string()),
+            )),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set("system".to_string()),
+            data_change_last_time: Set(now),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?)
+    }
+
+    async fn create_data_influence(
+        &self,
+        dto: NewAuditLogDataInfluence,
+    ) -> anyhow::Result<apollo_audit_log_data_influence::Model> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        Ok(apollo_audit_log_data_influence::ActiveModel {
+            span_id: Set(dto.span_id),
+            influence_entity_id: Set(dto.entity_id),
+            influence_entity_name: Set(dto.entity_name),
+            field_name: Set(dto.field_name),
+            field_old_value: Set(dto.old_value),
+            field_new_value: Set(dto.new_value),
+            is_deleted: Set(false),
+            deleted_at: Set(0),
+            data_change_created_by: Set(Some(
+                dto.created_by.unwrap_or_else(|| "system".to_string()),
+            )),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set("system".to_string()),
+            data_change_last_time: Set(now),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?)
+    }
+
+    async fn list_audit_logs(
+        &self,
+        op_name: Option<&str>,
+        operator: Option<&str>,
+        trace_id: Option<&str>,
+        query: Option<&str>,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit_log::Model>, u64)> {
+        let mut all = apollo_audit_log::Entity::find()
+            .filter(apollo_audit_log::Column::IsDeleted.eq(false))
+            .order_by_desc(apollo_audit_log::Column::DataChangeCreatedTime)
+            .all(&self.db)
+            .await?;
+        if let Some(value) = op_name {
+            all.retain(|m| m.op_name == value);
+        }
+        if let Some(value) = operator {
+            all.retain(|m| m.operator == value);
+        }
+        if let Some(value) = trace_id {
+            all.retain(|m| m.trace_id == value);
+        }
+        if let Some(value) = query {
+            let needle = value.to_lowercase();
+            all.retain(|m| {
+                m.operator.to_lowercase().contains(&needle)
+                    || m.op_name.to_lowercase().contains(&needle)
+                    || m.description
+                        .as_deref()
+                        .is_some_and(|d| d.to_lowercase().contains(&needle))
+            });
+        }
+        let total = all.len() as u64;
+        let page = if page == 0 { 1 } else { page };
+        let size = if size == 0 { 1 } else { size };
+        let start = ((page - 1) * size) as usize;
+        let page_items = if start >= all.len() {
+            Vec::new()
+        } else {
+            all.into_iter().skip(start).take(size as usize).collect()
+        };
+        Ok((page_items, total))
+    }
+
+    async fn list_influences(
+        &self,
+        span_ids: &[String],
+    ) -> anyhow::Result<Vec<apollo_audit_log_data_influence::Model>> {
+        Ok(apollo_audit_log_data_influence::Entity::find()
+            .filter(apollo_audit_log_data_influence::Column::IsDeleted.eq(false))
+            .filter(apollo_audit_log_data_influence::Column::SpanId.is_in(span_ids.to_vec()))
+            .order_by_desc(apollo_audit_log_data_influence::Column::DataChangeCreatedTime)
+            .all(&self.db)
+            .await?)
+    }
+}
+
+#[async_trait]
+impl ConsumerAuditPersistence for SqlApolloPersistence {
+    async fn create_consumer_audit(
+        &self,
+        dto: NewConsumerAudit,
+    ) -> anyhow::Result<apollo_consumer_audit::Model> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        let created_by = if dto.op_by.is_empty() {
+            "system".to_string()
+        } else {
+            dto.op_by.clone()
+        };
+        Ok(apollo_consumer_audit::ActiveModel {
+            consumer_id: Set(dto.consumer_id),
+            op_name: Set(dto.op_name),
+            op_time: Set(now),
+            op_by: Set(dto.op_by),
+            data_change_created_by: Set(created_by),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set(None),
+            data_change_last_time: Set(Some(now)),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?)
+    }
+
+    async fn list_consumer_audits(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_audit::Model>> {
+        Ok(apollo_consumer_audit::Entity::find()
+            .filter(apollo_consumer_audit::Column::ConsumerId.eq(consumer_id))
+            .order_by_desc(apollo_consumer_audit::Column::OpTime)
+            .all(&self.db)
+            .await?)
+    }
+}
+
+#[async_trait]
+impl UserTokenAuditPersistence for SqlApolloPersistence {
+    async fn create_user_token_audit(
+        &self,
+        dto: NewUserTokenAudit,
+    ) -> anyhow::Result<apollo_user_token_audit::Model> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        Ok(apollo_user_token_audit::ActiveModel {
+            token_id: Set(dto.token_id),
+            user_id: Set(dto.user_id),
+            uri: Set(dto.uri),
+            method: Set(dto.method),
+            data_change_created_time: Set(now),
+            data_change_last_time: Set(now),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?)
+    }
+
+    async fn list_user_token_audits(
+        &self,
+        token_id: i64,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>> {
+        Ok(apollo_user_token_audit::Entity::find()
+            .filter(apollo_user_token_audit::Column::TokenId.eq(token_id))
+            .order_by_desc(apollo_user_token_audit::Column::DataChangeCreatedTime)
+            .all(&self.db)
+            .await?)
+    }
+
+    async fn list_user_token_audits_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>> {
+        Ok(apollo_user_token_audit::Entity::find()
+            .filter(apollo_user_token_audit::Column::UserId.eq(user_id))
+            .order_by_desc(apollo_user_token_audit::Column::DataChangeCreatedTime)
+            .all(&self.db)
+            .await?)
     }
 }

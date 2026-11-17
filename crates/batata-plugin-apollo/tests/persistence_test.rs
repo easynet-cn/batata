@@ -317,6 +317,7 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
         "prefix1234567890123456789012345678",
         "hashabcdef",
         None,
+        0,
         expires,
         "tester",
     )

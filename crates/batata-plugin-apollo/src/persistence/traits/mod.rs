@@ -28,10 +28,11 @@ pub use item::ItemPersistence;
 pub use namespace::NamespacePersistence;
 pub use namespace_lock::NamespaceLockPersistence;
 pub use portal::{
-    AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
+    AppNamespacePersistence, AuditLogPersistence, AuditPersistence, AuthorityPersistence,
+    ConsumerAuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
     ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence,
     PermissionPersistence, ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence,
-    UserPersistence, UserTokenPersistence,
+    UserPersistence, UserTokenAuditPersistence, UserTokenPersistence,
 };
 pub use release::ReleasePersistence;
 pub use release_message::ReleaseMessagePersistence;
@@ -67,6 +68,10 @@ pub trait ApolloPersistenceService:
     + ConsumerRolePersistence
     + UserPersistence
     + UserTokenPersistence
+    + AuthorityPersistence
+    + AuditLogPersistence
+    + UserTokenAuditPersistence
+    + ConsumerAuditPersistence
     + ServiceRegistryPersistence
     + Send
     + Sync
@@ -533,6 +538,7 @@ impl<T: ApolloPersistenceService + ?Sized> UserTokenPersistence for Arc<T> {
         token_prefix: &str,
         token_hash: &str,
         scopes: Option<&str>,
+        rate_limit: i32,
         expires: chrono::DateTime<chrono::Utc>,
         created_by: &str,
     ) -> anyhow::Result<crate::entity::apollo_user_token::Model> {
@@ -543,8 +549,27 @@ impl<T: ApolloPersistenceService + ?Sized> UserTokenPersistence for Arc<T> {
             token_prefix,
             token_hash,
             scopes,
+            rate_limit,
             expires,
             created_by,
+        )
+        .await
+    }
+    async fn touch_user_token(
+        &self,
+        id: i64,
+        last_used_time: chrono::NaiveDateTime,
+        last_used_ip: Option<&str>,
+        last_used_user_agent: Option<&str>,
+        operator: &str,
+    ) -> anyhow::Result<()> {
+        UserTokenPersistence::touch_user_token(
+            &**self,
+            id,
+            last_used_time,
+            last_used_ip,
+            last_used_user_agent,
+            operator,
         )
         .await
     }

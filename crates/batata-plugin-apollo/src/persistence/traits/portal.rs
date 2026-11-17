@@ -16,12 +16,15 @@ use crate::persistence::traits::ApolloPersistenceService;
 
 use crate::api::dto::{
     AppNamespaceDTO, AuditDTO, ConsumerDTO, ConsumerRoleDTO, FavoriteDTO, InstanceConfigDTO,
-    RoleDTO, ServerConfigDTO, UserDTO,
+    NewAuditLog, NewAuditLogDataInfluence, NewConsumerAudit, NewUserTokenAudit, RoleDTO,
+    ServerConfigDTO, UserDTO,
 };
 use crate::entity::{
-    apollo_app_namespace, apollo_audit, apollo_consumer, apollo_consumer_role,
+    apollo_app_namespace, apollo_audit, apollo_audit_log, apollo_audit_log_data_influence,
+    apollo_authorities, apollo_consumer, apollo_consumer_audit, apollo_consumer_role,
     apollo_consumer_token, apollo_favorite, apollo_instance_config, apollo_permission,
-    apollo_release_history, apollo_role, apollo_server_config, apollo_users,
+    apollo_release_history, apollo_role, apollo_server_config, apollo_user_token_audit,
+    apollo_users,
 };
 
 #[async_trait]
@@ -74,6 +77,50 @@ pub trait AuditPersistence {
 }
 
 #[async_trait]
+/// Spring Security authorities attached to a portal account.
+pub trait AuthorityPersistence {
+    /// Lists all authority names granted to an account.
+    async fn list_authorities(&self, username: &str) -> anyhow::Result<Vec<String>>;
+    /// Whether an account holds an authority.
+    async fn has_authority(&self, username: &str, authority: &str) -> anyhow::Result<bool>;
+    /// Grants an authority to an account.
+    async fn assign_authority(
+        &self,
+        username: &str,
+        authority: &str,
+    ) -> anyhow::Result<apollo_authorities::Model>;
+    /// Revokes an authority from an account.
+    async fn remove_authority(&self, username: &str, authority: &str) -> anyhow::Result<()>;
+}
+
+#[async_trait]
+/// Distributed audit-log entries and their data influences.
+pub trait AuditLogPersistence {
+    /// Creates a trace/span audit-log entry.
+    async fn create_audit_log(&self, dto: NewAuditLog) -> anyhow::Result<apollo_audit_log::Model>;
+    /// Creates a data-influence row linked by span id.
+    async fn create_data_influence(
+        &self,
+        dto: NewAuditLogDataInfluence,
+    ) -> anyhow::Result<apollo_audit_log_data_influence::Model>;
+    /// Lists audit-log rows matching the optional filters.
+    async fn list_audit_logs(
+        &self,
+        op_name: Option<&str>,
+        operator: Option<&str>,
+        trace_id: Option<&str>,
+        query: Option<&str>,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit_log::Model>, u64)>;
+    /// Lists every data influence belonging to one of the span ids.
+    async fn list_influences(
+        &self,
+        span_ids: &[String],
+    ) -> anyhow::Result<Vec<apollo_audit_log_data_influence::Model>>;
+}
+
+#[async_trait]
 /// Defines the `ConsumerPersistence` trait.
 pub trait ConsumerPersistence {
     /// Creates a new resource.
@@ -110,6 +157,21 @@ pub trait ConsumerTokenPersistence: Send + Sync {
         &self,
         token: &str,
     ) -> anyhow::Result<Option<apollo_consumer_token::Model>>;
+}
+
+#[async_trait]
+/// Audit trail for open-platform consumer management.
+pub trait ConsumerAuditPersistence {
+    /// Records a consumer operation.
+    async fn create_consumer_audit(
+        &self,
+        dto: NewConsumerAudit,
+    ) -> anyhow::Result<apollo_consumer_audit::Model>;
+    /// Lists audit records for a consumer, newest first.
+    async fn list_consumer_audits(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_audit::Model>>;
 }
 
 #[async_trait]
@@ -150,9 +212,19 @@ pub trait UserTokenPersistence {
         token_prefix: &str,
         token_hash: &str,
         scopes: Option<&str>,
+        rate_limit: i32,
         expires: chrono::DateTime<chrono::Utc>,
         created_by: &str,
     ) -> anyhow::Result<apollo_user_token::Model>;
+    /// Records the latest successful authentication of a token.
+    async fn touch_user_token(
+        &self,
+        id: i64,
+        last_used_time: chrono::NaiveDateTime,
+        last_used_ip: Option<&str>,
+        last_used_user_agent: Option<&str>,
+        operator: &str,
+    ) -> anyhow::Result<()>;
     /// Looks up a token by its prefix (the first 32 chars of the plaintext).
     async fn get_user_token_by_prefix(
         &self,
@@ -165,6 +237,26 @@ pub trait UserTokenPersistence {
     ) -> anyhow::Result<Vec<apollo_user_token::Model>>;
     /// Soft-deletes a token by id.
     async fn delete_user_token(&self, id: i64) -> anyhow::Result<()>;
+}
+
+#[async_trait]
+/// Request audit trail for portal user tokens.
+pub trait UserTokenAuditPersistence {
+    /// Records one authenticated request.
+    async fn create_user_token_audit(
+        &self,
+        dto: NewUserTokenAudit,
+    ) -> anyhow::Result<apollo_user_token_audit::Model>;
+    /// Lists requests made with a token, newest first.
+    async fn list_user_token_audits(
+        &self,
+        token_id: i64,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>>;
+    /// Lists requests attributed to an account, newest first.
+    async fn list_user_token_audits_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>>;
 }
 
 #[async_trait]
@@ -838,5 +930,96 @@ impl<T: ApolloPersistenceService + ?Sized> ReleaseHistoryPersistence for Arc<T> 
             operator,
         )
         .await
+    }
+}
+
+#[async_trait]
+impl<T: ApolloPersistenceService + ?Sized> AuthorityPersistence for Arc<T> {
+    async fn list_authorities(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        AuthorityPersistence::list_authorities(&**self, username).await
+    }
+    async fn has_authority(&self, username: &str, authority: &str) -> anyhow::Result<bool> {
+        AuthorityPersistence::has_authority(&**self, username, authority).await
+    }
+    async fn assign_authority(
+        &self,
+        username: &str,
+        authority: &str,
+    ) -> anyhow::Result<apollo_authorities::Model> {
+        AuthorityPersistence::assign_authority(&**self, username, authority).await
+    }
+    async fn remove_authority(&self, username: &str, authority: &str) -> anyhow::Result<()> {
+        AuthorityPersistence::remove_authority(&**self, username, authority).await
+    }
+}
+
+#[async_trait]
+impl<T: ApolloPersistenceService + ?Sized> AuditLogPersistence for Arc<T> {
+    async fn create_audit_log(&self, dto: NewAuditLog) -> anyhow::Result<apollo_audit_log::Model> {
+        AuditLogPersistence::create_audit_log(&**self, dto).await
+    }
+    async fn create_data_influence(
+        &self,
+        dto: NewAuditLogDataInfluence,
+    ) -> anyhow::Result<apollo_audit_log_data_influence::Model> {
+        AuditLogPersistence::create_data_influence(&**self, dto).await
+    }
+    async fn list_audit_logs(
+        &self,
+        op_name: Option<&str>,
+        operator: Option<&str>,
+        trace_id: Option<&str>,
+        query: Option<&str>,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit_log::Model>, u64)> {
+        AuditLogPersistence::list_audit_logs(
+            &**self, op_name, operator, trace_id, query, page, size,
+        )
+        .await
+    }
+    async fn list_influences(
+        &self,
+        span_ids: &[String],
+    ) -> anyhow::Result<Vec<apollo_audit_log_data_influence::Model>> {
+        AuditLogPersistence::list_influences(&**self, span_ids).await
+    }
+}
+
+#[async_trait]
+impl<T: ApolloPersistenceService + ?Sized> ConsumerAuditPersistence for Arc<T> {
+    async fn create_consumer_audit(
+        &self,
+        dto: NewConsumerAudit,
+    ) -> anyhow::Result<apollo_consumer_audit::Model> {
+        ConsumerAuditPersistence::create_consumer_audit(&**self, dto).await
+    }
+    async fn list_consumer_audits(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_audit::Model>> {
+        ConsumerAuditPersistence::list_consumer_audits(&**self, consumer_id).await
+    }
+}
+
+#[async_trait]
+impl<T: ApolloPersistenceService + ?Sized> UserTokenAuditPersistence for Arc<T> {
+    async fn create_user_token_audit(
+        &self,
+        dto: NewUserTokenAudit,
+    ) -> anyhow::Result<apollo_user_token_audit::Model> {
+        UserTokenAuditPersistence::create_user_token_audit(&**self, dto).await
+    }
+    async fn list_user_token_audits(
+        &self,
+        token_id: i64,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>> {
+        UserTokenAuditPersistence::list_user_token_audits(&**self, token_id).await
+    }
+    async fn list_user_token_audits_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_token_audit::Model>> {
+        UserTokenAuditPersistence::list_user_token_audits_by_user(&**self, user_id).await
     }
 }

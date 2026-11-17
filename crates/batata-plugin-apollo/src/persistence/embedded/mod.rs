@@ -181,6 +181,11 @@ impl EmbeddedApolloPersistence {
             sm::CF_APOLLO_SERVER_CONFIG,
             sm::CF_APOLLO_INSTANCE_CONFIG,
             sm::CF_APOLLO_RELEASE_HISTORY,
+            sm::CF_APOLLO_USER_TOKEN,
+            sm::CF_APOLLO_AUTHORITIES,
+            sm::CF_APOLLO_USER_TOKEN_AUDIT,
+            sm::CF_APOLLO_AUDIT_LOG,
+            sm::CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE,
         ];
         let mut max: Option<i64> = None;
         for cf_name in PORTAL_CFS {
@@ -838,6 +843,11 @@ impl ApolloPersistenceService for EmbeddedApolloPersistence {
             CF_APOLLO_FAVORITE,
             CF_APOLLO_SERVER_CONFIG,
             CF_APOLLO_INSTANCE_CONFIG,
+            CF_APOLLO_USER_TOKEN,
+            CF_APOLLO_AUTHORITIES,
+            CF_APOLLO_USER_TOKEN_AUDIT,
+            CF_APOLLO_AUDIT_LOG,
+            CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE,
         ];
         for cf_name in cfs {
             self.db

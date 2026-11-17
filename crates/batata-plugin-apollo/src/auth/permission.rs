@@ -8,7 +8,11 @@
 
 use std::sync::Arc;
 
+use actix_web::HttpMessage;
+
 use crate::api::dto::UserDTO;
+use crate::auth::token_scope::TokenScope;
+use crate::entity::apollo_user_token;
 use crate::persistence::traits::{
     ApolloPersistenceService, ConsumerRolePersistence, RolePersistence,
 };
@@ -18,14 +22,18 @@ use crate::persistence::traits::{
 /// The upstream enum also carries a `description`; only the wire values are
 /// reproduced here because that is what `@PreAuthorize` expressions match on.
 pub mod permission_type {
-    /// Create an application.
+    /// Create an application (system level).
     pub const CREATE_APPLICATION: &str = "CreateApplication";
+    /// Manage portal users (system level).
+    pub const MANAGE_USERS: &str = "ManageUsers";
+    /// Backwards compatible spelling used by older batata call sites.
+    pub const MANAGE_USER: &str = MANAGE_USERS;
+    /// Manage application masters (application level).
+    pub const MANAGE_APP_MASTER: &str = "ManageAppMaster";
     /// Create a cluster.
     pub const CREATE_CLUSTER: &str = "CreateCluster";
     /// Create a namespace.
     pub const CREATE_NAMESPACE: &str = "CreateNamespace";
-    /// Modify a namespace.
-    pub const MODIFY_NAMESPACE: &str = "ModifyNamespace";
     /// Delete a namespace.
     pub const DELETE_NAMESPACE: &str = "DeleteNamespace";
     /// Create a gray release branch.
@@ -40,10 +48,109 @@ pub mod permission_type {
     pub const DELETE_APPLICATION: &str = "DeleteApplication";
     /// Assign a role to another user.
     pub const ASSIGN_ROLE: &str = "AssignRole";
-    /// Manage users.
-    pub const MANAGE_USER: &str = "ManageUser";
     /// Manage the open platform consumers.
     pub const MANAGE_CONSUMER: &str = "ManageConsumer";
+    /// Modify one namespace.
+    pub const MODIFY_NAMESPACE: &str = "ModifyNamespace";
+    /// Release one namespace.
+    pub const RELEASE_NAMESPACE: &str = "ReleaseNamespace";
+    /// Modify every namespace in one cluster.
+    pub const MODIFY_NAMESPACES_IN_CLUSTER: &str = "ModifyNamespacesInCluster";
+    /// Release every namespace in one cluster.
+    pub const RELEASE_NAMESPACES_IN_CLUSTER: &str = "ReleaseNamespacesInCluster";
+}
+
+/// Numeric ids used by batata's `apollo_permission.permission_type` column.
+///
+/// Upstream stores the string directly; batata stores a stable id and maps it
+/// here, so every wire/application comparison goes through these helpers.
+pub mod permission_type_ids {
+    /// Create an application.
+    pub const CREATE_APPLICATION: i32 = 1;
+    /// Manage portal users.
+    pub const MANAGE_USERS: i32 = 2;
+    /// Manage application masters.
+    pub const MANAGE_APP_MASTER: i32 = 3;
+    /// Create a namespace.
+    pub const CREATE_NAMESPACE: i32 = 4;
+    /// Create a cluster.
+    pub const CREATE_CLUSTER: i32 = 5;
+    /// Assign a role.
+    pub const ASSIGN_ROLE: i32 = 6;
+    /// Modify one namespace.
+    pub const MODIFY_NAMESPACE: i32 = 7;
+    /// Release one namespace.
+    pub const RELEASE_NAMESPACE: i32 = 8;
+    /// Modify every namespace in a cluster.
+    pub const MODIFY_NAMESPACES_IN_CLUSTER: i32 = 9;
+    /// Release every namespace in a cluster.
+    pub const RELEASE_NAMESPACES_IN_CLUSTER: i32 = 10;
+    /// Delete a namespace.
+    pub const DELETE_NAMESPACE: i32 = 11;
+    /// Delete a cluster.
+    pub const DELETE_CLUSTER: i32 = 12;
+    /// Delete an application.
+    pub const DELETE_APPLICATION: i32 = 13;
+    /// Create a gray release branch.
+    pub const CREATE_GRAY_RELEASE: i32 = 14;
+    /// Merge a gray release branch.
+    pub const MERGE_GRAY_RELEASE: i32 = 15;
+    /// Delete a gray release branch.
+    pub const DELETE_GRAY_RELEASE: i32 = 16;
+    /// Manage open-platform consumers.
+    pub const MANAGE_CONSUMER: i32 = 17;
+}
+
+/// Maps an upstream permission name to its batata numeric id.
+pub fn permission_type_id(name: &str) -> Option<i32> {
+    use permission_type as p;
+    use permission_type_ids as id;
+    Some(match name {
+        p::CREATE_APPLICATION => id::CREATE_APPLICATION,
+        p::MANAGE_USERS => id::MANAGE_USERS,
+        p::MANAGE_APP_MASTER => id::MANAGE_APP_MASTER,
+        p::CREATE_NAMESPACE => id::CREATE_NAMESPACE,
+        p::CREATE_CLUSTER => id::CREATE_CLUSTER,
+        p::ASSIGN_ROLE => id::ASSIGN_ROLE,
+        p::MODIFY_NAMESPACE => id::MODIFY_NAMESPACE,
+        p::RELEASE_NAMESPACE => id::RELEASE_NAMESPACE,
+        p::MODIFY_NAMESPACES_IN_CLUSTER => id::MODIFY_NAMESPACES_IN_CLUSTER,
+        p::RELEASE_NAMESPACES_IN_CLUSTER => id::RELEASE_NAMESPACES_IN_CLUSTER,
+        p::DELETE_NAMESPACE => id::DELETE_NAMESPACE,
+        p::DELETE_CLUSTER => id::DELETE_CLUSTER,
+        p::DELETE_APPLICATION => id::DELETE_APPLICATION,
+        p::CREATE_GRAY_RELEASE => id::CREATE_GRAY_RELEASE,
+        p::MERGE_GRAY_RELEASE => id::MERGE_GRAY_RELEASE,
+        p::DELETE_GRAY_RELEASE => id::DELETE_GRAY_RELEASE,
+        p::MANAGE_CONSUMER => id::MANAGE_CONSUMER,
+        _ => return None,
+    })
+}
+
+/// Maps a batata numeric permission id back to its upstream name.
+pub fn permission_type_name(id: i32) -> Option<&'static str> {
+    use permission_type as p;
+    use permission_type_ids as type_id;
+    Some(match id {
+        type_id::CREATE_APPLICATION => p::CREATE_APPLICATION,
+        type_id::MANAGE_USERS => p::MANAGE_USERS,
+        type_id::MANAGE_APP_MASTER => p::MANAGE_APP_MASTER,
+        type_id::CREATE_NAMESPACE => p::CREATE_NAMESPACE,
+        type_id::CREATE_CLUSTER => p::CREATE_CLUSTER,
+        type_id::ASSIGN_ROLE => p::ASSIGN_ROLE,
+        type_id::MODIFY_NAMESPACE => p::MODIFY_NAMESPACE,
+        type_id::RELEASE_NAMESPACE => p::RELEASE_NAMESPACE,
+        type_id::MODIFY_NAMESPACES_IN_CLUSTER => p::MODIFY_NAMESPACES_IN_CLUSTER,
+        type_id::RELEASE_NAMESPACES_IN_CLUSTER => p::RELEASE_NAMESPACES_IN_CLUSTER,
+        type_id::DELETE_NAMESPACE => p::DELETE_NAMESPACE,
+        type_id::DELETE_CLUSTER => p::DELETE_CLUSTER,
+        type_id::DELETE_APPLICATION => p::DELETE_APPLICATION,
+        type_id::CREATE_GRAY_RELEASE => p::CREATE_GRAY_RELEASE,
+        type_id::MERGE_GRAY_RELEASE => p::MERGE_GRAY_RELEASE,
+        type_id::DELETE_GRAY_RELEASE => p::DELETE_GRAY_RELEASE,
+        type_id::MANAGE_CONSUMER => p::MANAGE_CONSUMER,
+        _ => return None,
+    })
 }
 
 /// The principal a request runs as.
@@ -82,6 +189,28 @@ impl Identity {
             _ => None,
         }
     }
+}
+
+/// Reads the authenticated principal inserted by `OpenApiAuthMiddleware`.
+///
+/// Handlers fall back to `Anonymous` when a route is mounted without the
+/// middleware, which keeps direct unit tests deterministic and fails closed.
+pub fn current_identity(req: &actix_web::HttpRequest) -> Identity {
+    req.extensions()
+        .get::<Identity>()
+        .cloned()
+        .unwrap_or(Identity::Anonymous)
+}
+
+/// Reads the PAT scope attached by [`crate::middleware::auth::OpenApiAuthMiddleware`].
+///
+/// Requests without a PAT (consumer token, or legacy openapi auth disabled)
+/// keep the unrestricted scope so existing callers are unaffected.
+pub fn current_token_scope(req: &actix_web::HttpRequest) -> TokenScope {
+    req.extensions()
+        .get::<apollo_user_token::Model>()
+        .map(|model| TokenScope::parse(model.scopes.as_deref()))
+        .unwrap_or_else(TokenScope::allow_all)
 }
 
 /// Resolves an [`Identity`] into permissions.
@@ -156,7 +285,7 @@ impl PermissionResolver {
                     continue;
                 };
 
-                if permission.permission_type.to_string() == permission_type {
+                if permission_type_name(permission.permission_type) != Some(permission_type) {
                     continue;
                 }
 
@@ -174,7 +303,7 @@ impl PermissionResolver {
 ///
 /// Target ids are `{appId}`, `{appId}+{namespaceName}` or
 /// `{appId}+{env}+{clusterName}`, so the first segment is always the app id.
-fn extract_app_id(target_id: &str) -> String {
+pub fn extract_app_id(target_id: &str) -> String {
     target_id
         .split(crate::auth::role::ROLE_NAME_SEPARATOR)
         .next()

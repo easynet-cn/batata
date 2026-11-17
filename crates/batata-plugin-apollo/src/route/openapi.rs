@@ -3,19 +3,23 @@ use crate::api::dto::{
     ErrorResponse, GrayReleaseRuleDTO, ItemChangeSets, ItemDTO, NamespaceDTO, RoleDTO,
     ServerConfigDTO,
 };
+use crate::auth::permission::{current_identity, permission_type};
 use crate::auth::role::{build_cluster_role_name, build_cluster_target_id};
+use crate::auth::token_scope::TokenScope;
+use crate::entity::apollo_user_token;
 use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::{
-    ApolloPersistenceService, NamespacePersistence, ReleasePersistence, RolePersistence,
-    UserPersistence,
+    ApolloPersistenceService, AuthorityPersistence, ConsumerRolePersistence,
+    ConsumerTokenPersistence, NamespacePersistence, ReleasePersistence, RolePersistence,
 };
+use crate::route::user_management as um;
 use crate::service::{
     AccessKeyService, AppNamespaceService, AppService, AuditService, ClusterService, CommitService,
-    ConsumerService, ConsumerTokenService, FavoriteService, GrayReleaseRuleService,
-    InstanceService, ItemService, ItemSetService, NamespaceService, ReleaseService, RoleService,
-    SearchService, ServerConfigService, UserTokenService,
+    ConsumerAuditService, ConsumerService, ConsumerTokenService, FavoriteService,
+    GrayReleaseRuleService, InstanceService, ItemService, ItemSetService, NamespaceService,
+    ReleaseService, RoleService, SearchService, ServerConfigService, UserService, UserTokenService,
 };
-use actix_web::{HttpResponse, Responder, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, web};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1835,21 +1839,45 @@ async fn openapi_audit_properties(
     ]))
 }
 
+fn query_str<'a>(query: &'a Value, key: &str) -> Option<&'a str> {
+    query
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty())
+}
+
+async fn audit_log_page(
+    data: &web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: &Value,
+    default_size: u64,
+) -> anyhow::Result<serde_json::Value> {
+    let page = query.get("page").and_then(Value::as_u64).unwrap_or(0);
+    let size = query
+        .get("size")
+        .and_then(Value::as_u64)
+        .unwrap_or(default_size);
+    let (logs, total) = crate::service::AuditLogService::new(data.get_ref().clone())
+        .list(
+            query_str(query, "opName"),
+            query_str(query, "operator"),
+            query_str(query, "traceId"),
+            query_str(query, "query"),
+            page,
+            size,
+        )
+        .await?;
+    Ok(serde_json::json!({
+        "content": logs, "total": total, "page": page, "size": size,
+    }))
+}
+
 async fn openapi_audit_logs(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
-    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
-    let service = AuditService::new(data.get_ref().clone());
-    match service.list(page, size).await {
-        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
-            "content": audits, "total": total, "page": page, "size": size,
-        })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+    match audit_log_page(&data, &query, 20).await {
+        Ok(page) => HttpResponse::Ok().json(page),
+        Err(e) => management_error(e),
     }
 }
 
@@ -1857,31 +1885,19 @@ async fn openapi_audit_logs_op_name(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
-    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
-    let service = AuditService::new(data.get_ref().clone());
-    match service.list(page, size).await {
-        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
-            "content": audits, "total": total, "page": page, "size": size,
-        })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+    match audit_log_page(&data, &query, 20).await {
+        Ok(page) => HttpResponse::Ok().json(page),
+        Err(e) => management_error(e),
     }
 }
 
 async fn openapi_audit_trace(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _query: web::Query<Value>,
+    query: web::Query<Value>,
 ) -> impl Responder {
-    let service = AuditService::new(data.get_ref().clone());
-    match service.list(0, 100).await {
-        Ok((audits, _)) => HttpResponse::Ok().json(audits),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+    match audit_log_page(&data, &query, 100).await {
+        Ok(page) => HttpResponse::Ok().json(page["content"].clone()),
+        Err(e) => management_error(e),
     }
 }
 
@@ -1889,17 +1905,26 @@ async fn openapi_audit_logs_field(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
-    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
-    let service = AuditService::new(data.get_ref().clone());
-    match service.list(page, size).await {
-        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
-            "content": audits, "total": total, "page": page, "size": size,
-        })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+    match audit_log_page(&data, &query, 20).await {
+        Ok(mut page) => {
+            if let (Some(entity), Some(name)) = (
+                query_str(&query, "entityName"),
+                query_str(&query, "fieldName"),
+            ) && let Some(content) = page.get_mut("content").and_then(Value::as_array_mut)
+            {
+                content.retain(|row| {
+                    let influences = row.get("dataInfluences").and_then(Value::as_array);
+                    influences.is_some_and(|rows| {
+                        rows.iter().any(|influence| {
+                            influence.get("entityName").and_then(Value::as_str) == Some(entity)
+                                && influence.get("fieldName").and_then(Value::as_str) == Some(name)
+                        })
+                    })
+                });
+            }
+            HttpResponse::Ok().json(page)
+        }
+        Err(e) => management_error(e),
     }
 }
 
@@ -1907,17 +1932,9 @@ async fn openapi_audit_logs_search(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
-    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
-    let service = AuditService::new(data.get_ref().clone());
-    match service.list(page, size).await {
-        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
-            "content": audits, "total": total, "page": page, "size": size,
-        })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+    match audit_log_page(&data, &query, 20).await {
+        Ok(page) => HttpResponse::Ok().json(page),
+        Err(e) => management_error(e),
     }
 }
 
@@ -1967,14 +1984,185 @@ async fn openapi_consumer_tokens_by_app(
 }
 
 async fn openapi_assign_consumer_role(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<String>,
-    _body: web::Json<Value>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<String>,
+    query: web::Query<Value>,
+    body: web::Json<Value>,
 ) -> impl Responder {
+    let identity = current_identity(&req);
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_CONSUMER,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage consumer permission required");
+    }
+    let token_value = path.into_inner();
+    let token =
+        match ConsumerTokenPersistence::get_consumer_token_by_token(data.get_ref(), &token_value)
+            .await
+        {
+            Ok(Some(token)) => token,
+            Ok(None) => {
+                return HttpResponse::NotFound().json(ErrorResponse {
+                    status: 404,
+                    message: "consumer token not found".to_string(),
+                });
+            }
+            Err(e) => return management_error(e),
+        };
+    let _consumer = match ConsumerService::new(data.get_ref().clone())
+        .get(token.consumer_id)
+        .await
+    {
+        Ok(Some(consumer)) => consumer,
+        Ok(None) => {
+            return HttpResponse::NotFound().json(ErrorResponse {
+                status: 404,
+                message: "consumer not found".to_string(),
+            });
+        }
+        Err(e) => return management_error(e),
+    };
+    let role_type = query_str(&query, "type")
+        .or_else(|| body.get("type").and_then(Value::as_str))
+        .unwrap_or(permission_type::MANAGE_CONSUMER);
+    let operator = match um::resolve_operator(
+        data.get_ref(),
+        &identity,
+        query_str(&query, "operator"),
+    )
+    .await
+    {
+        Ok(operator) => operator,
+        Err(e) => return management_error(e),
+    };
+    let role_name = um::role_name(role_type, &[um::SYSTEM_TARGET]);
+    let role_id =
+        match um::find_or_create_role(data.get_ref(), &role_name, um::SYSTEM_TARGET, &operator)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => return management_error(e),
+        };
+    if let Err(e) = ConsumerRolePersistence::assign_role_to_consumer(
+        data.get_ref(),
+        token.consumer_id,
+        role_id,
+        &operator,
+    )
+    .await
+    {
+        return management_error(e);
+    }
+    if let Err(e) = ConsumerAuditService::new(data.get_ref().clone())
+        .record(crate::api::dto::NewConsumerAudit {
+            consumer_id: token.consumer_id,
+            op_name: "AssignRole".to_string(),
+            op_by: operator,
+        })
+        .await
+    {
+        return management_error(e);
+    }
     HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
 }
 
-// ===== User token endpoints =====
+// ===== Portal login (no session) and user token endpoints =====
+
+/// Exchanges portal user credentials for a personal access token.
+///
+/// Upstream Apollo only issues user tokens after a Portal session login.
+/// batata deliberately has no session endpoint, so this route is the API-only
+/// bootstrap: it validates against `apollo_users` and returns a PAT that the
+/// UI sends back in `X-Apollo-Token`. It is intentionally public; every other
+/// openapi route still validates the presented token.
+async fn openapi_user_login(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let username = body
+        .get("username")
+        .or_else(|| body.get("userId"))
+        .or_else(|| body.get("user"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    let password = body
+        .get("password")
+        .or_else(|| body.get("passwd"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if username.is_empty() || password.is_empty() {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "Username and password can not be empty".to_string(),
+        });
+    }
+
+    let persistence = data.get_ref().clone();
+    let user = match UserService::new(persistence.clone())
+        .authenticate(username, password)
+        .await
+    {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return HttpResponse::Unauthorized().json(ErrorResponse {
+                status: 401,
+                message: "Invalid username or password".to_string(),
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
+    };
+
+    let service = UserTokenService::new(persistence.clone());
+    let (token, model) = match service
+        .create(&user.username, "portal-login", &user.username, None)
+        .await
+    {
+        Ok(issued) => issued,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
+    };
+    let mut response = user_token_created(&token, &model);
+    response["userId"] = Value::String(user.username.clone());
+    response["username"] = Value::String(user.username.clone());
+    response["authType"] = Value::String("USER_TOKEN".to_string());
+    let authorities = AuthorityPersistence::list_authorities(&*persistence, &user.username)
+        .await
+        .unwrap_or_default();
+    response["authorities"] = serde_json::json!(authorities);
+    um::record_management_audit(
+        &req,
+        &persistence,
+        "Login",
+        "IssueUserToken",
+        &user.username,
+        "User",
+        None,
+        Some(&model.token_prefix),
+    )
+    .await;
+    HttpResponse::Ok().json(response)
+}
 
 /// Builds the upstream `OpenUserTokenInfo` / `OpenCreateUserTokenResponse`
 /// shape. The sea-orm model must never be serialized directly: it contains the
@@ -2014,7 +2202,9 @@ fn user_token_view(
 
 /// Upstream `UserTokenCreateRequest.name` plus the optional `expires` field.
 /// `description` is accepted as a legacy alias for batata's older clients.
-fn user_token_request(body: &Value) -> (String, Option<chrono::DateTime<chrono::Utc>>) {
+fn user_token_request(
+    body: &Value,
+) -> (String, Option<chrono::DateTime<chrono::Utc>>, String, i32) {
     let name = body
         .get("name")
         .and_then(|v| v.as_str())
@@ -2034,13 +2224,65 @@ fn user_token_request(body: &Value) -> (String, Option<chrono::DateTime<chrono::
                 .and_then(|d| d.and_hms_opt(23, 59, 59))
                 .map(|naive| chrono::Utc.from_utc_datetime(&naive))
         });
-    (name, expires)
+    let scopes = body.get("scopes").and_then(Value::as_str).unwrap_or("{}");
+    let rate_limit = body
+        .get("rateLimit")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .clamp(0, i32::MAX as i64) as i32;
+    (name, expires, scopes.to_string(), rate_limit)
 }
 
 fn user_token_created(token: &str, model: &crate::entity::apollo_user_token::Model) -> Value {
     let mut body = user_token_view(model, Some(token));
     body["model"] = user_token_view(model, None);
     body
+}
+
+fn format_token_time(value: Option<chrono::NaiveDateTime>) -> Value {
+    value
+        .map(|time| Value::String(time.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()))
+        .unwrap_or(Value::Null)
+}
+
+fn current_user_token(req: &HttpRequest) -> Option<apollo_user_token::Model> {
+    req.extensions().get::<apollo_user_token::Model>().cloned()
+}
+
+/// Upstream `OpenUserTokenCurrentCapability`.
+fn current_token_capability(model: &apollo_user_token::Model) -> Value {
+    let scope = TokenScope::parse(model.scopes.as_deref());
+    serde_json::json!({
+        "authType": "USER_TOKEN",
+        "userId": model.user_id,
+        "tokenId": model.id,
+        "tokenName": model.name,
+        "tokenPrefix": model.token_prefix,
+        "rateLimit": model.rate_limit,
+        "expires": format_token_time(Some(model.expires)),
+        "lastUsedTime": format_token_time(model.last_used_time),
+        "dataChangeCreatedTime": format_token_time(Some(model.data_change_created_time)),
+        "denyAll": scope.deny_all,
+        "allOperations": !scope.deny_all && scope.operations.is_empty(),
+        "operations": scope.operations,
+        "allApps": !scope.deny_all && scope.app_ids.is_empty(),
+        "appIds": scope.app_ids,
+        "allEnvs": !scope.deny_all && scope.envs.is_empty(),
+        "envs": scope.envs,
+        "allNamespaces": !scope.deny_all && scope.namespaces.is_empty(),
+        "namespaces": scope.namespaces,
+    })
+}
+
+/// `GET /openapi/v1/user-tokens/current` and its two upstream aliases.
+async fn openapi_current_user_token(req: HttpRequest) -> impl Responder {
+    match current_user_token(&req) {
+        Some(model) => HttpResponse::Ok().json(current_token_capability(&model)),
+        None => HttpResponse::Forbidden().json(ErrorResponse {
+            status: 403,
+            message: "A user token is required".to_string(),
+        }),
+    }
 }
 
 async fn openapi_list_user_tokens(
@@ -2063,12 +2305,29 @@ async fn openapi_list_user_tokens(
 
 async fn openapi_create_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     body: web::Json<Value>,
 ) -> impl Responder {
-    let (name, expires) = user_token_request(&body);
+    let (name, expires, scopes, rate_limit) = user_token_request(&body);
     let service = UserTokenService::new(data.get_ref().clone());
-    match service.create("apollo", &name, "apollo", expires).await {
-        Ok((token, model)) => HttpResponse::Ok().json(user_token_created(&token, &model)),
+    match service
+        .create_with_options("apollo", &name, "apollo", expires, &scopes, rate_limit)
+        .await
+    {
+        Ok((token, model)) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUserToken",
+                "CreateUserToken",
+                &model.user_id,
+                "UserToken",
+                None,
+                Some(&model.token_prefix),
+            )
+            .await;
+            HttpResponse::Ok().json(user_token_created(&token, &model))
+        }
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
             message: e.to_string(),
@@ -2078,12 +2337,26 @@ async fn openapi_create_user_token(
 
 async fn openapi_revoke_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<i64>,
 ) -> impl Responder {
     let id = path.into_inner();
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUserToken",
+                "RevokeUserToken",
+                &id.to_string(),
+                "UserToken",
+                Some("ACTIVE"),
+                Some("REVOKED"),
+            )
+            .await;
+            HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+        }
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
             message: e.to_string(),
@@ -2093,6 +2366,7 @@ async fn openapi_revoke_user_token(
 
 async fn openapi_rotate_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<i64>,
 ) -> impl Responder {
     let id = path.into_inner();
@@ -2114,7 +2388,20 @@ async fn openapi_rotate_user_token(
     };
     match service.revoke(id).await {
         Ok(_) => match service.create("apollo", &name, "apollo", None).await {
-            Ok((token, model)) => HttpResponse::Ok().json(user_token_created(&token, &model)),
+            Ok((token, model)) => {
+                um::record_management_audit(
+                    &req,
+                    data.get_ref(),
+                    "ManageUserToken",
+                    "RotateUserToken",
+                    &id.to_string(),
+                    "UserToken",
+                    None,
+                    Some(&model.token_prefix),
+                )
+                .await;
+                HttpResponse::Ok().json(user_token_created(&token, &model))
+            }
             Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
                 status: 400,
                 message: e.to_string(),
@@ -2129,12 +2416,26 @@ async fn openapi_rotate_user_token(
 
 async fn openapi_delete_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<i64>,
 ) -> impl Responder {
     let id = path.into_inner();
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
-        Ok(_) => HttpResponse::Ok().finish(),
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUserToken",
+                "DeleteUserToken",
+                &id.to_string(),
+                "UserToken",
+                Some("ACTIVE"),
+                None,
+            )
+            .await;
+            HttpResponse::Ok().finish()
+        }
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
             message: e.to_string(),
@@ -2171,16 +2472,33 @@ async fn openapi_list_admin_user_tokens(
 
 async fn openapi_create_admin_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     body: web::Json<Value>,
 ) -> impl Responder {
     let user_id = body
         .get("userId")
         .and_then(|v| v.as_str())
         .unwrap_or("apollo");
-    let (name, expires) = user_token_request(&body);
+    let (name, expires, scopes, rate_limit) = user_token_request(&body);
     let service = UserTokenService::new(data.get_ref().clone());
-    match service.create(user_id, &name, "apollo", expires).await {
-        Ok((token, model)) => HttpResponse::Ok().json(user_token_created(&token, &model)),
+    match service
+        .create_with_options(user_id, &name, "apollo", expires, &scopes, rate_limit)
+        .await
+    {
+        Ok((token, model)) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUserToken",
+                "AdminCreateUserToken",
+                &model.user_id,
+                "UserToken",
+                None,
+                Some(&model.token_prefix),
+            )
+            .await;
+            HttpResponse::Ok().json(user_token_created(&token, &model))
+        }
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
             message: e.to_string(),
@@ -2190,12 +2508,26 @@ async fn openapi_create_admin_user_token(
 
 async fn openapi_revoke_admin_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, i64)>,
 ) -> impl Responder {
-    let (_username, id) = path.into_inner();
+    let (username, id) = path.into_inner();
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUserToken",
+                "AdminRevokeUserToken",
+                &username,
+                "UserToken",
+                Some("ACTIVE"),
+                Some("REVOKED"),
+            )
+            .await;
+            HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+        }
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
             message: e.to_string(),
@@ -2205,12 +2537,26 @@ async fn openapi_revoke_admin_user_token(
 
 async fn openapi_delete_admin_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, i64)>,
 ) -> impl Responder {
-    let (_username, id) = path.into_inner();
+    let (username, id) = path.into_inner();
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
-        Ok(_) => HttpResponse::Ok().finish(),
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUserToken",
+                "AdminDeleteUserToken",
+                &username,
+                "UserToken",
+                Some("ACTIVE"),
+                None,
+            )
+            .await;
+            HttpResponse::Ok().finish()
+        }
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
             message: e.to_string(),
@@ -2856,7 +3202,7 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/usage").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_namespace_usage)),
     )
-    // PMISC-007: current user is super admin (single-tenant: always true)
+    // PMISC-007: current user is super admin (ROLE_SUPER_ADMIN + token scope)
     .service(
         web::resource("/openapi/v1/permissions/root").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_permissions_root)),
@@ -2956,7 +3302,7 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         web::resource("/openapi/v1/organizations").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_organizations)),
     )
-    // PMISC-011: current user (single-tenant: fixed admin)
+    // PMISC-011: current user (from the authenticated identity)
     .service(
         web::resource("/openapi/v1/user").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_current_user)),
@@ -3015,7 +3361,25 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         web::resource("/openapi/v1/logs/by-name-or-type-or-operator").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_audit_logs_search)),
     )
-    // ===== User token endpoints =====
+    // ===== Portal login and user token endpoints =====
+    .service(
+        // Public: exchanges credentials for a PAT. The returned token is
+        // validated by every subsequent request.
+        web::resource("/openapi/v1/user/login")
+            .route(web::post().to(openapi_user_login)),
+    )
+    .service(
+        web::resource("/openapi/v1/user-tokens/current").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_current_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/user-tokens/current/capabilities").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_current_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/user-tokens/whoami").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_current_user_token)),
+    )
     .service(
         web::resource("/openapi/v1/user-tokens").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_list_user_tokens))
@@ -4259,200 +4623,629 @@ async fn openapi_delete_favorite(
     }
 }
 
+fn forbidden(message: &str) -> HttpResponse {
+    HttpResponse::Forbidden().json(ErrorResponse {
+        status: 403,
+        message: message.to_string(),
+    })
+}
+
+fn management_error(e: anyhow::Error) -> HttpResponse {
+    HttpResponse::InternalServerError().json(ErrorResponse {
+        status: 500,
+        message: e.to_string(),
+    })
+}
+
 // ===========================================================================
-// PMISC-007~013 / 016: single-tenant degraded permission / user / system
+// PMISC-007~013 / 016: portal user, role and permission management
 // ===========================================================================
 
 /// PMISC-007 — whether the current user is a super admin.
 ///
-/// Upstream `UserInfoHolder.isSuperAdmin()` gated by `@PreAuthorize
-/// hasRootPermission`. batata is single-tenant with no auth system, so every
-/// caller is treated as having root permission.
+/// Upstream `UserInfoHolder.isSuperAdmin()` is gated by `@PreAuthorize
+/// hasRootPermission`. batata resolves this from `ROLE_SUPER_ADMIN` /
+/// `superAdmin` server config, ANDed with the token's `system:admin` scope.
 async fn openapi_permissions_root(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
 ) -> impl Responder {
-    // Upstream returns a boolean `hasRootPermission`.
-    HttpResponse::Ok().json(serde_json::json!({ "hasRootPermission": true }))
+    match um::request_is_super_admin(&req, data.get_ref()).await {
+        Ok(has_root) => HttpResponse::Ok().json(serde_json::json!({
+            "hasRootPermission": has_root,
+        })),
+        Err(e) => management_error(e),
+    }
 }
 
 /// PMISC-008 — whether the current user has `permissionType` on `appId`.
 ///
 /// Upstream `PermissionController.isAppRolePermission` returns a
-/// `PermissionDTO` with `hasPermission`. batata degrades to "allowed".
+/// `PermissionDTO` with `hasPermission`, now resolved from real RBAC plus the
+/// token scope.
 async fn openapi_permissions_app(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String)>,
 ) -> impl Responder {
-    let (app_id, permission_type) = path.into_inner();
-    // Single-tenant: every permission type on every app is granted.
-    HttpResponse::Ok().json(serde_json::json!({
-        "hasPermission": true,
-        "permissionType": permission_type,
-        "appId": app_id,
-        "targetId": app_id,
-    }))
+    let (app_id, permission) = path.into_inner();
+    match um::request_has_permission(&req, data.get_ref(), &permission, &app_id).await {
+        Ok(has_permission) => HttpResponse::Ok().json(serde_json::json!({
+            "hasPermission": has_permission,
+            "permissionType": permission,
+            "appId": app_id,
+            "targetId": app_id,
+        })),
+        Err(e) => management_error(e),
+    }
 }
 
 /// PMISC-009 — members of an app role type.
 ///
 /// Upstream `RoleController.listAppRoles` returns `RoleDTO` per role type with
-/// its `users`. batata has no role store populated, so we return a single role
-/// with no members for the requested type.
+/// its `users`, read from the persisted user-role assignments.
 async fn openapi_roles(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String)>,
 ) -> impl Responder {
     let (app_id, role_type) = path.into_inner();
-    let role_name = format!("{}-{}", role_type.to_uppercase(), app_id);
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": role_name,
-        "users": [],
-    }))
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &app_id,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let role_name = um::role_name(&role_type, &[&app_id]);
+    match um::role_users(
+        data.get_ref(),
+        RolePersistence::get_role_by_name(data.get_ref(), &role_name)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.id),
+    )
+    .await
+    {
+        Ok(users) => HttpResponse::Ok().json(serde_json::json!({
+            "roleName": role_name,
+            "users": users,
+        })),
+        Err(e) => management_error(e),
+    }
 }
 
-/// POST .../permission-init — initialize permissions for a namespace.
-/// Single-tenant: no-op, always succeeds.
+/// POST .../permission-init — initialize permissions and permissions of a
+/// namespace role from `apollo_role` / `apollo_permission`.
 async fn openapi_permission_init(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<(String, String)>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+    let (app_id, namespace_name) = path.into_inner();
+    let identity = current_identity(&req);
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &app_id,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let target = crate::auth::role::build_namespace_target_id(&app_id, &namespace_name, None);
+    let role = um::role_name("Master", &[&app_id]);
+    let operator = identity.user_id().unwrap_or("system").to_string();
+    let role_id = match um::find_or_create_role(data.get_ref(), &role, &target, &operator).await {
+        Ok(id) => id,
+        Err(e) => return management_error(e),
+    };
+    match um::init_role_permissions(
+        data.get_ref(),
+        role_id,
+        &target,
+        um::NAMESPACE_PERMISSIONS,
+        &operator,
+    )
+    .await
+    {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Err(e) => management_error(e),
+    }
 }
 
 async fn openapi_permission_init_cluster(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<(String, String, String)>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+    let (app_id, env, cluster_name) = path.into_inner();
+    let identity = current_identity(&req);
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &app_id,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let target = build_cluster_target_id(&app_id, &env, &cluster_name);
+    let role = um::role_name("Master", &[&app_id]);
+    let operator = identity.user_id().unwrap_or("system").to_string();
+    let role_id = match um::find_or_create_role(data.get_ref(), &role, &target, &operator).await {
+        Ok(id) => id,
+        Err(e) => return management_error(e),
+    };
+    match um::init_role_permissions(
+        data.get_ref(),
+        role_id,
+        &target,
+        um::CLUSTER_PERMISSIONS,
+        &operator,
+    )
+    .await
+    {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Err(e) => management_error(e),
+    }
 }
 
 /// GET namespace-level permission check.
 async fn openapi_permissions_namespace(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String)>,
 ) -> impl Responder {
-    let (app_id, namespace_name, permission_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "hasPermission": true,
-        "permissionType": permission_type,
-        "appId": app_id,
-        "targetId": namespace_name,
-    }))
+    let (app_id, namespace_name, permission) = path.into_inner();
+    let target = crate::auth::role::build_namespace_target_id(&app_id, &namespace_name, None);
+    match um::request_has_permission(&req, data.get_ref(), &permission, &target).await {
+        Ok(has_permission) => HttpResponse::Ok().json(serde_json::json!({
+            "hasPermission": has_permission,
+            "permissionType": permission,
+            "appId": app_id,
+            "targetId": target,
+        })),
+        Err(e) => management_error(e),
+    }
 }
 
 async fn openapi_permissions_namespace_env(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String, String)>,
 ) -> impl Responder {
-    let (app_id, _env, namespace_name, permission_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "hasPermission": true,
-        "permissionType": permission_type,
-        "appId": app_id,
-        "targetId": namespace_name,
-    }))
+    let (app_id, env, namespace_name, permission) = path.into_inner();
+    let target = crate::auth::role::build_namespace_target_id(&app_id, &namespace_name, Some(&env));
+    match um::request_has_permission(&req, data.get_ref(), &permission, &target).await {
+        Ok(has_permission) => HttpResponse::Ok().json(serde_json::json!({
+            "hasPermission": has_permission,
+            "permissionType": permission,
+            "appId": app_id,
+            "targetId": target,
+        })),
+        Err(e) => management_error(e),
+    }
 }
 
 async fn openapi_permissions_cluster(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String, String)>,
 ) -> impl Responder {
-    let (app_id, _env, cluster_name, permission_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "hasPermission": true,
-        "permissionType": permission_type,
-        "appId": app_id,
-        "targetId": cluster_name,
-    }))
+    let (app_id, env, cluster_name, permission) = path.into_inner();
+    let target = build_cluster_target_id(&app_id, &env, &cluster_name);
+    match um::request_has_permission(&req, data.get_ref(), &permission, &target).await {
+        Ok(has_permission) => HttpResponse::Ok().json(serde_json::json!({
+            "hasPermission": has_permission,
+            "permissionType": permission,
+            "appId": app_id,
+            "targetId": target,
+        })),
+        Err(e) => management_error(e),
+    }
 }
 
-/// GET role-users — returns the fixed admin as the role member.
+/// GET role-users — members of a role from `apollo_user_role`.
 async fn openapi_role_users(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<(String, String)>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!([
-        { "userId": "apollo", "name": "Apollo" }
-    ]))
+    let (app_id, _env) = path.into_inner();
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &app_id,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let name = um::role_name("Master", &[&app_id]);
+    match um::role_users(
+        data.get_ref(),
+        RolePersistence::get_role_by_name(data.get_ref(), &name)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.id),
+    )
+    .await
+    {
+        Ok(users) => HttpResponse::Ok().json(users),
+        Err(e) => management_error(e),
+    }
 }
 
 async fn openapi_role_users_env(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<(String, String, String)>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!([
-        { "userId": "apollo", "name": "Apollo" }
-    ]))
+    let (app_id, env, namespace_name) = path.into_inner();
+    let target = crate::auth::role::build_namespace_target_id(&app_id, &namespace_name, Some(&env));
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &target,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let name = um::role_name("Master", &[&app_id, &namespace_name, &env]);
+    match um::role_users(
+        data.get_ref(),
+        RolePersistence::get_role_by_name(data.get_ref(), &name)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.id),
+    )
+    .await
+    {
+        Ok(users) => HttpResponse::Ok().json(users),
+        Err(e) => management_error(e),
+    }
 }
 
 async fn openapi_role_users_cluster(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<(String, String, String)>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!([
-        { "userId": "apollo", "name": "Apollo" }
-    ]))
+    let (app_id, cluster_name, _namespace) = path.into_inner();
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &app_id,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let name = um::role_name("Master", &[&app_id, &cluster_name]);
+    match um::role_users(
+        data.get_ref(),
+        RolePersistence::get_role_by_name(data.get_ref(), &name)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.id),
+    )
+    .await
+    {
+        Ok(users) => HttpResponse::Ok().json(users),
+        Err(e) => management_error(e),
+    }
 }
 
 /// GET/POST/DELETE namespace-level roles.
 async fn openapi_namespace_roles_get(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String)>,
 ) -> impl Responder {
-    let (_app_id, _namespace_name, role_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": role_type.to_uppercase(),
-        "users": [],
-    }))
+    let (app_id, namespace_name, role_type) = path.into_inner();
+    namespace_role_get(data, req, app_id, namespace_name, None, role_type).await
 }
 
 async fn openapi_namespace_roles_post(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String)>,
-    _body: web::Json<Value>,
+    body: web::Json<Value>,
 ) -> impl Responder {
-    let (_app_id, _namespace_name, role_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": role_type.to_uppercase(),
-        "users": [],
-    }))
+    let (app_id, namespace_name, role_type) = path.into_inner();
+    namespace_role_post(data, req, app_id, namespace_name, None, role_type, body).await
 }
 
 async fn openapi_namespace_roles_delete(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
 ) -> impl Responder {
-    HttpResponse::Ok().finish()
+    let (app_id, namespace_name, role_type) = path.into_inner();
+    namespace_role_delete(data, req, app_id, namespace_name, None, role_type, query).await
 }
 
 async fn openapi_namespace_roles_env_get(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String, String)>,
 ) -> impl Responder {
-    let (_app_id, _env, _namespace_name, role_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": role_type.to_uppercase(),
-        "users": [],
-    }))
+    let (app_id, env, namespace_name, role_type) = path.into_inner();
+    namespace_role_get(data, req, app_id, namespace_name, Some(env), role_type).await
 }
 
 async fn openapi_namespace_roles_env_post(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String, String)>,
-    _body: web::Json<Value>,
+    body: web::Json<Value>,
 ) -> impl Responder {
-    let (_app_id, _env, _namespace_name, role_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": role_type.to_uppercase(),
-        "users": [],
-    }))
+    let (app_id, env, namespace_name, role_type) = path.into_inner();
+    namespace_role_post(
+        data,
+        req,
+        app_id,
+        namespace_name,
+        Some(env),
+        role_type,
+        body,
+    )
+    .await
 }
 
 async fn openapi_namespace_roles_env_delete(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String, String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    path: web::Path<(String, String, String, String)>,
+    query: web::Query<Value>,
 ) -> impl Responder {
-    HttpResponse::Ok().finish()
+    let (app_id, env, namespace_name, role_type) = path.into_inner();
+    namespace_role_delete(
+        data,
+        req,
+        app_id,
+        namespace_name,
+        Some(env),
+        role_type,
+        query,
+    )
+    .await
+}
+
+async fn namespace_role_id(
+    data: &web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: &str,
+    namespace_name: &str,
+    env: Option<&str>,
+    role_type: &str,
+    create: bool,
+    operator: &str,
+) -> anyhow::Result<Option<i64>> {
+    let role = um::role_name(role_type, &[app_id, namespace_name, env.unwrap_or("")]);
+    let target = crate::auth::role::build_namespace_target_id(app_id, namespace_name, env);
+    if let Some(existing) = RolePersistence::get_role_by_name(data.get_ref(), &role).await? {
+        return Ok(Some(existing.id));
+    }
+    if !create {
+        return Ok(None);
+    }
+    Ok(Some(
+        um::find_or_create_role(data.get_ref(), &role, &target, operator).await?,
+    ))
+}
+
+async fn namespace_role_get(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    app_id: String,
+    namespace_name: String,
+    env: Option<String>,
+    role_type: String,
+) -> HttpResponse {
+    let target =
+        crate::auth::role::build_namespace_target_id(&app_id, &namespace_name, env.as_deref());
+    let identity = current_identity(&req);
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &target,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let role_id = match namespace_role_id(
+        &data,
+        &app_id,
+        &namespace_name,
+        env.as_deref(),
+        &role_type,
+        false,
+        identity.user_id().unwrap_or("system"),
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => return management_error(e),
+    };
+    match um::role_users(data.get_ref(), role_id).await {
+        Ok(users) => HttpResponse::Ok().json(users),
+        Err(e) => management_error(e),
+    }
+}
+
+async fn namespace_role_post(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    app_id: String,
+    namespace_name: String,
+    env: Option<String>,
+    role_type: String,
+    body: web::Json<Value>,
+) -> HttpResponse {
+    let target =
+        crate::auth::role::build_namespace_target_id(&app_id, &namespace_name, env.as_deref());
+    let identity = current_identity(&req);
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &target,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let Some(user) = um::user_from_body(&body) else {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "user can not be empty".to_string(),
+        });
+    };
+    let operator = match um::resolve_operator(data.get_ref(), &identity, None).await {
+        Ok(operator) => operator,
+        Err(e) => return management_error(e),
+    };
+    let role_id = match namespace_role_id(
+        &data,
+        &app_id,
+        &namespace_name,
+        env.as_deref(),
+        &role_type,
+        true,
+        &operator,
+    )
+    .await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => return management_error(anyhow::anyhow!("role was not created")),
+        Err(e) => return management_error(e),
+    };
+    match RoleService::new(data.get_ref().clone())
+        .assign_role_to_user(&user, role_id, &operator)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn namespace_role_delete(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    app_id: String,
+    namespace_name: String,
+    env: Option<String>,
+    role_type: String,
+    query: web::Query<Value>,
+) -> HttpResponse {
+    let target =
+        crate::auth::role::build_namespace_target_id(&app_id, &namespace_name, env.as_deref());
+    let identity = current_identity(&req);
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::ASSIGN_ROLE,
+        &target,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("assign role permission required");
+    }
+    let Some(user) = query
+        .get("user")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+    else {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "user can not be empty".to_string(),
+        });
+    };
+    let role_id = match namespace_role_id(
+        &data,
+        &app_id,
+        &namespace_name,
+        env.as_deref(),
+        &role_type,
+        false,
+        identity.user_id().unwrap_or("system"),
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => return management_error(e),
+    };
+    let Some(role_id) = role_id else {
+        return HttpResponse::Ok().finish();
+    };
+    match RoleService::new(data.get_ref().clone())
+        .remove_role_from_user(&user, role_id)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
 }
 
 /// Resolves the upstream cluster role name (`{roleType}+{appId}+{env}+{cluster}`)
@@ -4603,97 +5396,180 @@ async fn openapi_cluster_roles_delete(
     }
 }
 
+async fn system_role_view(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    role: &str,
+) -> HttpResponse {
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_USERS,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage users permission required");
+    }
+    let name = um::role_name(role, &[um::SYSTEM_TARGET]);
+    let role_id = match RolePersistence::get_role_by_name(data.get_ref(), &name).await {
+        Ok(role) => role.map(|role| role.id),
+        Err(e) => return management_error(e),
+    };
+    match um::role_users(data.get_ref(), role_id).await {
+        Ok(users) => HttpResponse::Ok().json(serde_json::json!({
+            "roleName": role,
+            "users": users,
+        })),
+        Err(e) => management_error(e),
+    }
+}
+
 /// System roles: create-application.
 async fn openapi_system_roles_create_application(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": "CreateApplication",
-        "users": [{ "userId": "apollo", "name": "Apollo" }],
-    }))
+    system_role_view(data, req, permission_type::CREATE_APPLICATION).await
 }
 
 async fn openapi_system_roles_create_application_post(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _body: web::Json<Value>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+    body: web::Json<Value>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": "CreateApplication",
-        "users": [],
-    }))
+    let (data, req) = (data, req);
+    let identity = current_identity(&req);
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_USERS,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage users permission required");
+    }
+    let Some(user) = um::user_from_body(&body) else {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "user can not be empty".to_string(),
+        });
+    };
+    let name = um::role_name(permission_type::CREATE_APPLICATION, &[um::SYSTEM_TARGET]);
+    let operator = match um::resolve_operator(data.get_ref(), &identity, None).await {
+        Ok(operator) => operator,
+        Err(e) => return management_error(e),
+    };
+    let role_id =
+        match um::find_or_create_role(data.get_ref(), &name, um::SYSTEM_TARGET, &operator).await {
+            Ok(id) => id,
+            Err(e) => return management_error(e),
+        };
+    match RoleService::new(data.get_ref().clone())
+        .assign_role_to_user(&user, role_id, &operator)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
 }
 
 async fn openapi_system_role_users(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!([
-        { "userId": "apollo", "name": "Apollo" }
-    ]))
+    system_role_view(data, req, permission_type::MANAGE_USERS).await
 }
 
 async fn openapi_system_role_manage_app_master(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": "ManageAppMaster",
-        "users": [{ "userId": "apollo", "name": "Apollo" }],
-    }))
+    system_role_view(data, req, permission_type::MANAGE_APP_MASTER).await
 }
 
 /// PMISC-010 — the organization list.
-///
-/// Upstream `OrganizationController.findAllOrganizations` returns
-/// `List<OrganizationDTO>`. batata is single-tenant; we return a fixed default
-/// organization so portal UI can render without a user directory.
 async fn openapi_organizations(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!([{ "orgId": "1", "orgName": "default" }]))
+    match um::request_is_super_admin(&req, data.get_ref()).await {
+        Ok(true) => {
+            HttpResponse::Ok().json(serde_json::json!([{ "orgId": "1", "orgName": "default" }]))
+        }
+        Ok(false) => forbidden("super admin permission required"),
+        Err(e) => management_error(e),
+    }
 }
 
-/// PMISC-011 — the current user.
-///
-/// Upstream `UserInfoController.currentUser`. batata is single-tenant, so the
-/// fixed admin user is returned.
+/// PMISC-011 — the current authenticated user.
 async fn openapi_current_user(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({
-        "username": "apollo",
-        "email": "apollo@localhost",
-        "realName": "Apollo",
-        "roles": ["ROLE_ADMIN"],
-    }))
+    let identity = current_identity(&req);
+    let Some(username) = identity.user_id() else {
+        return HttpResponse::Unauthorized().json(ErrorResponse {
+            status: 401,
+            message: "authentication required".to_string(),
+        });
+    };
+    match um::user_view(data.get_ref(), username).await {
+        Ok(Some(user)) => HttpResponse::Ok().json(user),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("User not found: {}", username),
+        }),
+        Err(e) => management_error(e),
+    }
 }
 
 /// PMISC-012 — list users.
-async fn openapi_list_users(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl Responder {
-    // Single-tenant: always include the fixed admin. The persistence layer may
-    // be empty, so we synthesize the admin entry directly.
-    let mut users = vec![serde_json::json!({
-        "username": "apollo",
-        "name": "Apollo",
-        "email": "apollo@localhost",
-        "realName": "Apollo",
-        "enabled": true,
-        "roles": ["ROLE_ADMIN"],
-    })];
-    if let Ok(persisted) = data.list_users().await {
-        for u in persisted {
-            if u.username == "apollo" {
-                continue;
-            }
-            users.push(serde_json::json!({
-                "username": u.username,
-                "name": u.username,
-                "email": u.email,
-                "realName": u.username,
-                "enabled": u.enabled,
-                "roles": [],
-            }));
-        }
+async fn openapi_list_users(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+) -> impl Responder {
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_USERS,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage users permission required");
     }
-    HttpResponse::Ok().json(users)
+    let service = crate::service::UserService::new(data.get_ref().clone());
+    match service.list().await {
+        Ok(users) => {
+            let mut views = Vec::with_capacity(users.len());
+            for user in users {
+                match um::user_view(data.get_ref(), &user.username).await {
+                    Ok(Some(view)) => views.push(view),
+                    Ok(None) => {}
+                    Err(e) => return management_error(e),
+                }
+            }
+            HttpResponse::Ok().json(views)
+        }
+        Err(e) => management_error(e),
+    }
 }
 
 /// Upstream `UserController.createOrUpdateUser(OpenUserDTO, Boolean isCreate,
@@ -4708,9 +5584,24 @@ struct CreateUserQuery {
 /// PMISC-012 — create (or update) a user.
 async fn openapi_create_user(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     query: web::Query<CreateUserQuery>,
     body: web::Json<crate::api::dto::UserDTO>,
 ) -> impl Responder {
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_USERS,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage users permission required");
+    }
     let dto = body.into_inner();
     if dto.username.trim().is_empty() || dto.password.trim().is_empty() {
         return HttpResponse::BadRequest().json(ErrorResponse {
@@ -4718,14 +5609,37 @@ async fn openapi_create_user(
             message: "Username and password can not be empty".to_string(),
         });
     }
-    let username = dto.username.clone();
+    let service = crate::service::UserService::new(data.get_ref().clone());
+    let audit_username = dto.username.clone();
     let result = if query.is_create {
-        data.create_user(dto).await
+        service.create(dto).await
     } else {
-        data.update_user(&username, dto).await
+        let username = dto.username.clone();
+        match service.get(&username).await {
+            Ok(Some(_)) => service.create_or_update(dto).await,
+            Ok(None) => Err(anyhow::anyhow!("User not found: {}", username)),
+            Err(e) => Err(e),
+        }
     };
     match result {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUser",
+                if query.is_create {
+                    "CreateUser"
+                } else {
+                    "UpdateUser"
+                },
+                &audit_username,
+                "User",
+                None,
+                None,
+            )
+            .await;
+            HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+        }
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
             message: e.to_string(),
@@ -4736,13 +5650,45 @@ async fn openapi_create_user(
 /// PMISC-012 — update a user.
 async fn openapi_update_user(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<String>,
     body: web::Json<crate::api::dto::UserDTO>,
 ) -> impl Responder {
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_USERS,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage users permission required");
+    }
     let username = path.into_inner();
-    let dto = body.into_inner();
-    match data.update_user(&username, dto).await {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+    let mut dto = body.into_inner();
+    dto.username = username.clone();
+    match crate::service::UserService::new(data.get_ref().clone())
+        .create_or_update(dto)
+        .await
+    {
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUser",
+                "UpdateUser",
+                &username,
+                "User",
+                None,
+                None,
+            )
+            .await;
+            HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+        }
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
             message: e.to_string(),
@@ -4753,11 +5699,42 @@ async fn openapi_update_user(
 /// PMISC-012 — delete a user.
 async fn openapi_delete_user(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<String>,
 ) -> impl Responder {
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_USERS,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage users permission required");
+    }
     let username = path.into_inner();
-    match data.delete_user(&username).await {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+    match crate::service::UserService::new(data.get_ref().clone())
+        .delete(&username)
+        .await
+    {
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUser",
+                "DeleteUser",
+                &username,
+                "User",
+                Some("ACTIVE"),
+                None,
+            )
+            .await;
+            HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+        }
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
             message: e.to_string(),
@@ -4803,41 +5780,54 @@ async fn openapi_system_info_health(
 /// Enable/disable a user (PUT /users/enabled).
 async fn openapi_change_user_enabled(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     body: web::Json<Value>,
 ) -> impl Responder {
-    use crate::persistence::traits::UserPersistence;
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::MANAGE_USERS,
+        um::SYSTEM_TARGET,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("manage users permission required");
+    }
     let username = body.get("username").and_then(|v| v.as_str()).unwrap_or("");
     let enabled = body
         .get("enabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-
-    match UserPersistence::get_user(data.get_ref(), username).await {
-        Ok(Some(mut user)) => {
-            user.enabled = enabled;
-            let dto = crate::api::dto::UserDTO {
-                id: Some(user.id),
-                username: user.username.clone(),
-                password: String::new(),
-                email: Some(user.email.clone()),
-                enabled: user.enabled,
-                data_change_created_by: None,
-                data_change_created_time: None,
-            };
-            match UserPersistence::update_user(data.get_ref(), username, dto).await {
-                Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
-                Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
-                    status: 400,
-                    message: e.to_string(),
-                }),
-            }
+    match crate::service::UserService::new(data.get_ref().clone())
+        .set_enabled(username, enabled)
+        .await
+    {
+        Ok(_) => {
+            um::record_management_audit(
+                &req,
+                data.get_ref(),
+                "ManageUser",
+                "ChangeUserEnabled",
+                username,
+                "User",
+                Some(if enabled { "false" } else { "true" }),
+                Some(if enabled { "true" } else { "false" }),
+            )
+            .await;
+            HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
         }
-        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
-            status: 404,
-            message: format!("User not found: {}", username),
-        }),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
+        Err(e) if e.to_string().contains("not found") => {
+            HttpResponse::NotFound().json(ErrorResponse {
+                status: 404,
+                message: e.to_string(),
+            })
+        }
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
             message: e.to_string(),
         }),
     }

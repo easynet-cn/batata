@@ -4,8 +4,12 @@ pub mod access_key_service;
 pub mod app_namespace_service;
 /// Application service.
 pub mod app_service;
+/// Distributed audit-log service.
+pub mod audit_log_service;
 /// Audit service.
 pub mod audit_service;
+/// Portal authority service.
+pub mod authority_service;
 /// Cluster service.
 pub mod cluster_service;
 /// Commit service.
@@ -40,6 +44,10 @@ pub mod namespace_service;
 pub mod notification_hub;
 /// Permission service.
 pub mod permission_service;
+/// Portal audit services.
+pub mod portal_audit_service;
+/// Idempotent portal user-management bootstrap.
+pub mod portal_bootstrap_service;
 /// Release key generation.
 pub mod release_key;
 /// Release message service.
@@ -52,13 +60,17 @@ pub mod role_service;
 pub mod search_service;
 /// Server config service.
 pub mod server_config_service;
+/// User service.
+pub mod user_service;
 /// User token service (portal session / openapi user token).
 pub mod user_token_service;
 
 pub use access_key_service::AccessKeyService;
 pub use app_namespace_service::AppNamespaceService;
 pub use app_service::AppService;
+pub use audit_log_service::AuditLogService;
 pub use audit_service::AuditService;
+pub use authority_service::AuthorityService;
 pub use cluster_service::ClusterService;
 pub use commit_service::CommitService;
 pub use config_sync_service::ConfigSyncService;
@@ -75,9 +87,12 @@ pub use namespace_branch_service::NamespaceBranchService;
 pub use namespace_lock_service::NamespaceLockService;
 pub use namespace_service::NamespaceService;
 pub use permission_service::PermissionService;
+pub use portal_audit_service::{ConsumerAuditService, UserTokenAuditService};
+pub use portal_bootstrap_service::PortalBootstrapService;
 pub use release_message_service::ReleaseMessageService;
 pub use release_service::ReleaseService;
 pub use role_service::RoleService;
 pub use search_service::SearchService;
 pub use server_config_service::ServerConfigService;
+pub use user_service::UserService;
 pub use user_token_service::UserTokenService;

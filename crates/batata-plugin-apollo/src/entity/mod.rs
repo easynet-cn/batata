@@ -11,6 +11,12 @@ pub mod apollo_app;
 pub mod apollo_app_namespace;
 /// Audit entity.
 pub mod apollo_audit;
+/// Distributed audit-log entity.
+pub mod apollo_audit_log;
+/// Audit-log data-influence entity.
+pub mod apollo_audit_log_data_influence;
+/// Spring Security authority entity.
+pub mod apollo_authorities;
 /// Cluster entity.
 pub mod apollo_cluster;
 /// Commit entity.
@@ -57,5 +63,7 @@ pub mod apollo_service_registry;
 pub mod apollo_user_role;
 /// User token entity (portal session / openapi user token).
 pub mod apollo_user_token;
+/// User-token request audit entity.
+pub mod apollo_user_token_audit;
 /// Users entity.
 pub mod apollo_users;

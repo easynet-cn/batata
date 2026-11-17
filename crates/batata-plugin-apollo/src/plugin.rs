@@ -92,6 +92,11 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             CF_APOLLO_FAVORITE.to_string(),
             CF_APOLLO_SERVER_CONFIG.to_string(),
             CF_APOLLO_INSTANCE_CONFIG.to_string(),
+            CF_APOLLO_USER_TOKEN.to_string(),
+            CF_APOLLO_AUTHORITIES.to_string(),
+            CF_APOLLO_USER_TOKEN_AUDIT.to_string(),
+            CF_APOLLO_AUDIT_LOG.to_string(),
+            CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE.to_string(),
         ]
     }
 
@@ -141,6 +146,11 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
                 Arc::new(embedded)
             }
         };
+
+        crate::service::PortalBootstrapService::new(persistence.clone())
+            .ensure_initialized()
+            .await
+            .map_err(|e| anyhow::anyhow!("seed Apollo portal user management: {}", e))?;
 
         let inner = ApolloPluginInner {
             persistence: persistence.clone(),
