@@ -505,11 +505,13 @@ batata.config.encryption.reload.interval.ms: 0
 #   nacos.core.protocol.raft.data.read_index_type       -> (batata uses heartbeat confirmation)
 
 # Election timeout (ms). Follower starts election if no heartbeat within this period.
-# Increase for WAN clusters or high-latency networks. Must be > 3 * heartbeat_interval.
-#batata.raft.election_timeout_ms: 5000
+# Must be > 3 * heartbeat_interval. Kept close to openraft's own 150-300ms range
+# (not Nacos JRaft's 5000ms) so a fresh 3-node cluster elects a leader in ~1-2s
+# instead of 5-10s; a long timeout stalls first election and delays write forwarding.
+#batata.raft.election_timeout_ms: 1000
 
 # Heartbeat interval (ms). Leader sends heartbeats at this rate.
-#batata.raft.heartbeat_interval_ms: 1000
+#batata.raft.heartbeat_interval_ms: 200
 
 # RPC request timeout (ms) for individual Raft RPCs (AppendEntries, Vote).
 #batata.raft.rpc_timeout_ms: 5000

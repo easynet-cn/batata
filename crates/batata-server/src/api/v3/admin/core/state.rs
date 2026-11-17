@@ -24,6 +24,27 @@ struct OverrideStateBody {
     overridden_server_status: Option<String>,
 }
 
+/// Build the additive raft runtime fields for `/state`.
+///
+/// `None` means there is no raft node at all (standalone / external DB), which needs no
+/// election and must report ready so a single-node readiness wait never stalls. `Some`
+/// carries the live `(ready, reason, leader)` triple from `RaftNode`.
+fn raft_state_fields(raft: Option<(bool, Option<String>, Option<u64>)>) -> Vec<(String, String)> {
+    let (ready, state, leader) = match raft {
+        Some((ready, reason, leader)) => (
+            ready,
+            reason.unwrap_or_default(),
+            leader.map(|id| id.to_string()).unwrap_or_default(),
+        ),
+        None => (true, "no-raft".to_string(), String::new()),
+    };
+    vec![
+        ("raftReady".to_string(), ready.to_string()),
+        ("raftLeader".to_string(), leader),
+        ("raftState".to_string(), state),
+    ]
+}
+
 /// GET /v3/admin/core/state
 ///
 /// Returns server state information as a key-value map.
@@ -63,6 +84,18 @@ async fn get_state(data: web::Data<AppState>) -> impl Responder {
         "overriddenServerStatus".to_string(),
         Some(overridden.map(|s| s.to_string()).unwrap_or_default()),
     );
+
+    // Raft runtime state (additive, mirrors Nacos's composed ModuleState model).
+    // Upstream Nacos exposes raft *config* through ModuleStateHolder; batata also
+    // surfaces live readiness so cluster fixtures can wait for a real leader instead
+    // of sleeping through the election window.
+    let raft = data.raft_node.as_ref().map(|raft| {
+        let (ready, reason) = raft.is_ready();
+        (ready, reason, raft.leader_id())
+    });
+    for (key, value) in raft_state_fields(raft) {
+        state.insert(key, Some(value));
+    }
 
     Result::<HashMap<String, Option<String>>>::http_success(state)
 }
@@ -179,4 +212,46 @@ pub fn routes() -> actix_web::Scope {
         .service(liveness)
         .service(readiness)
         .service(servers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
+        fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("<missing>")
+    }
+
+    #[test]
+    fn raft_state_fields_report_leader_when_ready() {
+        let fields = raft_state_fields(Some((true, None, Some(2))));
+        assert_eq!(field(&fields, "raftReady"), "true");
+        assert_eq!(field(&fields, "raftLeader"), "2");
+        assert_eq!(field(&fields, "raftState"), "");
+    }
+
+    #[test]
+    fn raft_state_fields_report_leaderless_window() {
+        let fields = raft_state_fields(Some((
+            false,
+            Some("raft leader not elected".to_string()),
+            None,
+        )));
+        assert_eq!(field(&fields, "raftReady"), "false");
+        assert_eq!(field(&fields, "raftLeader"), "");
+        assert_eq!(field(&fields, "raftState"), "raft leader not elected");
+    }
+
+    #[test]
+    fn raft_state_fields_without_raft_node_are_ready() {
+        // Standalone / external-DB has no election; readiness waits must not stall.
+        let fields = raft_state_fields(None);
+        assert_eq!(field(&fields, "raftReady"), "true");
+        assert_eq!(field(&fields, "raftLeader"), "");
+        assert_eq!(field(&fields, "raftState"), "no-raft");
+    }
 }

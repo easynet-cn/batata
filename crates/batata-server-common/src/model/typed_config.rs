@@ -330,10 +330,10 @@ fn default_mesh_xds_default_listener_port() -> i64 {
     15_001
 }
 fn default_raft_election_timeout_ms() -> i64 {
-    5000
+    1000
 }
 fn default_raft_heartbeat_interval_ms() -> i64 {
-    1000
+    200
 }
 fn default_raft_rpc_timeout_ms() -> i64 {
     5000

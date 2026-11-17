@@ -570,6 +570,30 @@ cmd_sdk_matrix() {
         return 1
     }
 
+    # Wait until the Raft leader is elected and known to EVERY cluster node.
+    # A fixed `sleep 8` raced with the election timeout: SDK writes landing in the
+    # leaderless window were forwarded with `has to forward request to: None` and
+    # failed with code=30000. Poll the additive raftReady field on /admin/core/state
+    # instead, so suites only start once writes can actually be forwarded.
+    sdk_wait_for_raft_ready() { # timeout_secs
+        local timeout="${1:-60}" waited=0 port body ok
+        while [ "$waited" -lt "$timeout" ]; do
+            ok=1
+            for port in "${CLUSTER_NODE_PORTS[@]}"; do
+                body=$(curl -s --noproxy '*' --max-time 2 \
+                    "http://127.0.0.1:${port}/nacos/v3/admin/core/state" 2>/dev/null || echo '')
+                # Result wrapper: {"code":0,...,"data":{"raftReady":"true",...}}
+                if ! printf '%s' "$body" | grep -q '"raftReady":"true"'; then
+                    ok=0
+                    break
+                fi
+            done
+            [ "$ok" = "1" ] && return 0
+            sleep 2; waited=$((waited+2))
+        done
+        return 1
+    }
+
     stop_servers() {
         for pid in "${SERVER_PIDS[@]:-}"; do
             kill "$pid" 2>/dev/null || true
@@ -735,8 +759,13 @@ cmd_sdk_matrix() {
         ok "${combo}: node1 (8848) 就绪"
 
         if [ "$mode" = "cluster" ]; then
-            sleep 8
-            ok "${combo}: cluster 形成"
+            if ! sdk_wait_for_raft_ready 60; then
+                fail "${combo}: Raft leader 未在 60s 内就绪，日志如下"
+                tail -40 "${ROOT}/logs/sdk-node1/stdout.log"
+                stop_servers
+                return 1
+            fi
+            ok "${combo}: cluster 形成 (raft leader 就绪)"
         fi
 
         # 8848 liveness only proves the main listener is up. Confirm the

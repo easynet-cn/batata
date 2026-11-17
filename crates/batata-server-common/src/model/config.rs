@@ -3167,8 +3167,8 @@ mod tests {
     #[test]
     fn test_typed_raft_defaults() {
         let cfg = build_config(vec![]);
-        assert_eq!(cfg.raft_election_timeout_ms(), 5000);
-        assert_eq!(cfg.raft_heartbeat_interval_ms(), 1000);
+        assert_eq!(cfg.raft_election_timeout_ms(), 1000);
+        assert_eq!(cfg.raft_heartbeat_interval_ms(), 200);
         assert_eq!(cfg.raft_rpc_timeout_ms(), 5000);
         assert_eq!(cfg.raft_snapshot_threshold(), 10000);
         assert_eq!(cfg.raft_snapshot_transfer_timeout_ms(), 30000);
