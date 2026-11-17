@@ -2721,4 +2721,15 @@ With `APOLLO_OPENAPI_AUTH_ENABLED=false`, the SDK still sends `Authorization: ad
 * 3/3 new mutants killed (bare-hex verification, 64-char seed width, placeholder-token fallback); every mutated file byte-restored.
 * `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 F / 1040 T-ID), Apollo suites and `cargo test --workspace --exclude batata-integration-tests` = **4115 passed / 0 failed / 33 ignored** — all clean.
 * Generated `sdk-tests/*/TEST_REPORT.md` from the failed run were restored with `git restore`.
-* Fixes are pending commit; a clean `--full` must be rerun afterwards. The `origin` push also needs retrying once the local proxy recovers.
+* Fixes were committed as `8e428e76` and pushed to both remotes. Follow-up full runs are recorded in §32.
+
+## 32. Bootstrap idempotency follow-up: SQL dialect and no-op semantics
+
+The clean full on `8e428e76` (`reports/regression/20261117-182706`, blockers=19) still failed because concurrent cluster nodes raced while seeding RBAC rows: PostgreSQL aborted nodes 2/3 with `duplicate key value violates unique constraint "uk_apollo_role_permission_roleid_permissionid_deletedat"`. Missing nodes surfaced downstream as watch failures and missing SDK case counts. Commit `27583a13` made the seeds conflict-tolerant and added repeat/concurrent bootstrap tests, but the next clean full (`reports/regression/20261117-194216`, blockers=25) exposed two defects in that first implementation:
+
+* `OnConflict::columns(...).do_nothing()` emits the invalid MySQL clause `ON DUPLICATE KEY IGNORE` (error 1064 near `IGNORE`), so standalone/cluster MySQL never became ready.
+* SeaORM 2 reports a no-op conflict insert as `DbErr::RecordNotInserted`. Calling plain `exec()` made nodes 2/3 exit with `seed Apollo portal user management: None of the records are inserted` on PostgreSQL, collapsing cluster formation, watch tests and Nacos Java coverage.
+
+Fix: a single `insert_if_absent` helper in `persistence/sql/portal.rs` now uses SeaORM 2's `on_conflict_do_nothing_on`, which emits `ON DUPLICATE KEY UPDATE id = id` on MySQL and `ON CONFLICT (...) DO NOTHING` on PostgreSQL, and dispatches through `TryInsert` so a conflict is a normal outcome. All six seeded-entity upserts go through the helper. A backend SQL-shape unit test covers both dialects; the invalid-SQL mutant is killed.
+
+Validation: Apollo unit/integration suites green; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 F / 1040 T-ID) and `cargo test --workspace --exclude batata-integration-tests` = **4117 passed / 0 failed / 33 ignored** all clean. A clean `--full` on the fix commit is required before closing this item.

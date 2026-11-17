@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use sea_orm::sea_query::{ExprTrait, OnConflict};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    TryInsert,
 };
 
 use crate::api::dto::{NewAuditLog, NewAuditLogDataInfluence, NewConsumerAudit, NewUserTokenAudit};
@@ -27,6 +28,19 @@ use crate::persistence::traits::{
     UserPersistence, UserTokenAuditPersistence, UserTokenPersistence,
 };
 use chrono::Utc;
+
+/// Inserts a bootstrap row, treating a unique-key conflict as a normal no-op.
+///
+/// SeaORM 2 maps `ON CONFLICT DO NOTHING` to a MySQL polyfill with `id = id`;
+/// using `OnConflict::do_nothing()` with explicit columns would emit the
+/// invalid `ON DUPLICATE KEY IGNORE` instead.
+fn insert_if_absent<A, I>(active_model: A, columns: I) -> TryInsert<A>
+where
+    A: ActiveModelTrait,
+    I: IntoIterator<Item = <A::Entity as EntityTrait>::Column>,
+{
+    <A::Entity as EntityTrait>::insert(active_model).on_conflict_do_nothing_on(columns)
+}
 
 #[async_trait]
 impl AppNamespacePersistence for SqlApolloPersistence {
@@ -285,17 +299,17 @@ impl PermissionPersistence for SqlApolloPersistence {
         };
         // Cluster nodes bootstrap concurrently against one SQL schema. The
         // unique index decides the winner; the loser simply re-reads it.
-        apollo_permission::Entity::insert(active_model)
-            .on_conflict(
-                OnConflict::columns([
-                    apollo_permission::Column::TargetId,
-                    apollo_permission::Column::PermissionType,
-                ])
-                .do_nothing()
-                .to_owned(),
-            )
-            .exec(db)
-            .await?;
+        // `on_conflict_do_nothing_on` keeps the MySQL polyfill valid and
+        // treats "no row inserted" as a normal outcome instead of an error.
+        let _ = insert_if_absent(
+            active_model,
+            [
+                apollo_permission::Column::TargetId,
+                apollo_permission::Column::PermissionType,
+            ],
+        )
+        .exec(db)
+        .await?;
         self.list_permission_by_target(target_id)
             .await?
             .into_iter()
@@ -383,17 +397,15 @@ impl RolePersistence for SqlApolloPersistence {
             data_change_last_time: Set(Some(now)),
             ..Default::default()
         };
-        apollo_role::Entity::insert(active_model)
-            .on_conflict(
-                OnConflict::columns([
-                    apollo_role::Column::RoleName,
-                    apollo_role::Column::DeletedAt,
-                ])
-                .do_nothing()
-                .to_owned(),
-            )
-            .exec(db)
-            .await?;
+        let _ = insert_if_absent(
+            active_model,
+            [
+                apollo_role::Column::RoleName,
+                apollo_role::Column::DeletedAt,
+            ],
+        )
+        .exec(db)
+        .await?;
         self.get_role_by_name(&role_name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("role not found after upsert: {}", role_name))
@@ -483,17 +495,15 @@ impl RolePersistence for SqlApolloPersistence {
             data_change_last_time: Set(Some(now)),
             ..Default::default()
         };
-        apollo_role_permission::Entity::insert(active_model)
-            .on_conflict(
-                OnConflict::columns([
-                    apollo_role_permission::Column::RoleId,
-                    apollo_role_permission::Column::PermissionId,
-                ])
-                .do_nothing()
-                .to_owned(),
-            )
-            .exec(db)
-            .await?;
+        let _ = insert_if_absent(
+            active_model,
+            [
+                apollo_role_permission::Column::RoleId,
+                apollo_role_permission::Column::PermissionId,
+            ],
+        )
+        .exec(db)
+        .await?;
         Ok(())
     }
 
@@ -554,17 +564,15 @@ impl RolePersistence for SqlApolloPersistence {
             data_change_last_time: Set(Some(now)),
             ..Default::default()
         };
-        apollo_user_role::Entity::insert(active_model)
-            .on_conflict(
-                OnConflict::columns([
-                    apollo_user_role::Column::UserId,
-                    apollo_user_role::Column::RoleId,
-                ])
-                .do_nothing()
-                .to_owned(),
-            )
-            .exec(db)
-            .await?;
+        let _ = insert_if_absent(
+            active_model,
+            [
+                apollo_user_role::Column::UserId,
+                apollo_user_role::Column::RoleId,
+            ],
+        )
+        .exec(db)
+        .await?;
         Ok(())
     }
 
@@ -672,12 +680,7 @@ impl UserPersistence for SqlApolloPersistence {
             data_change_last_time: Set(Some(now)),
             ..Default::default()
         };
-        apollo_users::Entity::insert(active_model)
-            .on_conflict(
-                OnConflict::column(apollo_users::Column::Username)
-                    .do_nothing()
-                    .to_owned(),
-            )
+        let _ = insert_if_absent(active_model, [apollo_users::Column::Username])
             .exec(db)
             .await?;
         self.get_user(&username)
@@ -1625,5 +1628,56 @@ impl UserTokenAuditPersistence for SqlApolloPersistence {
             .order_by_desc(apollo_user_token_audit::Column::DataChangeCreatedTime)
             .all(&self.db)
             .await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DbBackend, QueryTrait};
+
+    #[test]
+    fn insert_if_absent_emits_valid_no_op_sql_on_both_backends() {
+        let active_model = apollo_role_permission::ActiveModel {
+            role_id: Set(1),
+            permission_id: Set(2),
+            ..Default::default()
+        };
+        let statement = insert_if_absent(
+            active_model,
+            [
+                apollo_role_permission::Column::RoleId,
+                apollo_role_permission::Column::PermissionId,
+            ],
+        )
+        .build(DbBackend::MySql)
+        .to_string();
+        assert!(
+            statement.contains("ON DUPLICATE KEY UPDATE `id` = `id`"),
+            "unexpected MySQL bootstrap upsert: {statement}"
+        );
+        assert!(
+            !statement.contains("ON DUPLICATE KEY IGNORE"),
+            "invalid MySQL no-op upsert: {statement}"
+        );
+
+        let active_model = apollo_role_permission::ActiveModel {
+            role_id: Set(1),
+            permission_id: Set(2),
+            ..Default::default()
+        };
+        let statement = insert_if_absent(
+            active_model,
+            [
+                apollo_role_permission::Column::RoleId,
+                apollo_role_permission::Column::PermissionId,
+            ],
+        )
+        .build(DbBackend::Postgres)
+        .to_string();
+        assert!(
+            statement.contains("ON CONFLICT (\"role_id\", \"permission_id\") DO NOTHING"),
+            "unexpected Postgres bootstrap upsert: {statement}"
+        );
     }
 }
