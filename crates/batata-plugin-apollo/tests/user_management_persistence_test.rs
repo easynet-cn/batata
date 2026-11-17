@@ -207,6 +207,50 @@ async fn bootstrap_seeds_admin_identity_and_rbac() {
     // A second call must be a no-op, not a duplicate-row failure.
     bootstrap.ensure_initialized().await.unwrap();
 
+    // Idempotent means no duplicate links either, not merely "no error".
+    assert_eq!(UserPersistence::list_users(&p).await.unwrap().len(), 1);
+    assert_eq!(
+        PermissionPersistence::list_permission_by_target(&p, "SystemRole")
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+    let roles = RolePersistence::list_role_by_target(&p, "SystemRole")
+        .await
+        .unwrap();
+    assert_eq!(roles.len(), 4);
+    for role in &roles {
+        assert_eq!(
+            RolePersistence::list_role_permissions(&p, role.id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    assert_eq!(
+        RolePersistence::list_user_roles(&p, "apollo")
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        RolePersistence::list_user_role_links(&p, "apollo")
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        AuthorityPersistence::list_authorities(&p, "apollo")
+            .await
+            .unwrap()
+            .len(),
+        3
+    );
+
     let resolver = PermissionResolver::new(p);
     let identity = Identity::User(UserDTO {
         id: None,
@@ -232,6 +276,58 @@ async fn bootstrap_seeds_admin_identity_and_rbac() {
     assert_eq!(
         permission_type_id(permission_type::MANAGE_USERS),
         Some(permission_type_ids::MANAGE_USERS)
+    );
+}
+
+#[tokio::test]
+async fn sql_bootstrap_survives_concurrent_node_startup() {
+    let Some(p) = common::make_sql_persistence().await else {
+        return;
+    };
+    let first = PortalBootstrapService::new(p.clone());
+    let second = PortalBootstrapService::new(p.clone());
+    let (first, second) = tokio::join!(first.ensure_initialized(), second.ensure_initialized());
+    first.unwrap();
+    second.unwrap();
+    // A later restart must still be a no-op on the shared SQL schema.
+    PortalBootstrapService::new(p.clone())
+        .ensure_initialized()
+        .await
+        .unwrap();
+
+    let roles = RolePersistence::list_role_by_target(&p, "SystemRole")
+        .await
+        .unwrap();
+    assert_eq!(roles.len(), 4);
+    for role in &roles {
+        assert_eq!(
+            RolePersistence::list_role_permissions(&p, role.id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    assert_eq!(
+        RolePersistence::list_user_roles(&p, "apollo")
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        RolePersistence::list_user_role_links(&p, "apollo")
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        AuthorityPersistence::list_authorities(&p, "apollo")
+            .await
+            .unwrap()
+            .len(),
+        3
     );
 }
 

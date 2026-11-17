@@ -474,6 +474,18 @@ impl RolePersistence for EmbeddedApolloPersistence {
             .filter(|m| !m.is_deleted && role_ids.contains(&m.id))
             .collect())
     }
+
+    async fn list_user_role_links(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_role::Model>> {
+        let store = self.store(CF_APOLLO_USER_ROLE);
+        Ok(store
+            .scan_all::<apollo_user_role::Model>()?
+            .into_iter()
+            .filter(|link| link.user_id == user_id)
+            .collect())
+    }
 }
 
 #[async_trait]

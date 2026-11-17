@@ -5,7 +5,7 @@
 //! conversions. Mirrors the embedded (RocksDB) behavior in `embedded/portal.rs`.
 
 use async_trait::async_trait;
-use sea_orm::sea_query::ExprTrait;
+use sea_orm::sea_query::{ExprTrait, OnConflict};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
@@ -266,6 +266,43 @@ impl PermissionPersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
+    async fn ensure_permission(
+        &self,
+        permission_type: i32,
+        target_id: &str,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_permission::Model> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        let active_model = apollo_permission::ActiveModel {
+            permission_type: Set(permission_type),
+            target_id: Set(target_id.to_string()),
+            data_change_created_by: Set(created_by.to_string()),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set(None),
+            data_change_last_time: Set(Some(now)),
+            ..Default::default()
+        };
+        // Cluster nodes bootstrap concurrently against one SQL schema. The
+        // unique index decides the winner; the loser simply re-reads it.
+        apollo_permission::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::columns([
+                    apollo_permission::Column::TargetId,
+                    apollo_permission::Column::PermissionType,
+                ])
+                .do_nothing()
+                .to_owned(),
+            )
+            .exec(db)
+            .await?;
+        self.list_permission_by_target(target_id)
+            .await?
+            .into_iter()
+            .find(|row| row.permission_type == permission_type)
+            .ok_or_else(|| anyhow::anyhow!("permission not found after upsert: {}", target_id))
+    }
+
     async fn list_permission_by_target(
         &self,
         target_id: &str,
@@ -321,6 +358,45 @@ impl RolePersistence for SqlApolloPersistence {
             ..Default::default()
         };
         Ok(active_model.insert(db).await?)
+    }
+
+    async fn ensure_role(
+        &self,
+        dto: crate::api::dto::RoleDTO,
+    ) -> anyhow::Result<apollo_role::Model> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "admin".to_string());
+        let role_name = dto.role_name.clone();
+        let active_model = apollo_role::ActiveModel {
+            role_name: Set(dto.role_name),
+            role_type: Set(dto.role_type),
+            target_id: Set(dto.target_id),
+            is_deleted: Set(false),
+            deleted_at: Set(0),
+            data_change_created_by: Set(created_by),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set(None),
+            data_change_last_time: Set(Some(now)),
+            ..Default::default()
+        };
+        apollo_role::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::columns([
+                    apollo_role::Column::RoleName,
+                    apollo_role::Column::DeletedAt,
+                ])
+                .do_nothing()
+                .to_owned(),
+            )
+            .exec(db)
+            .await?;
+        self.get_role_by_name(&role_name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("role not found after upsert: {}", role_name))
     }
 
     async fn get_role(&self, id: i64) -> anyhow::Result<Option<apollo_role::Model>> {
@@ -390,6 +466,37 @@ impl RolePersistence for SqlApolloPersistence {
         Ok(())
     }
 
+    async fn ensure_role_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        let active_model = apollo_role_permission::ActiveModel {
+            role_id: Set(role_id),
+            permission_id: Set(permission_id),
+            data_change_created_by: Set(created_by.to_string()),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set(None),
+            data_change_last_time: Set(Some(now)),
+            ..Default::default()
+        };
+        apollo_role_permission::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::columns([
+                    apollo_role_permission::Column::RoleId,
+                    apollo_role_permission::Column::PermissionId,
+                ])
+                .do_nothing()
+                .to_owned(),
+            )
+            .exec(db)
+            .await?;
+        Ok(())
+    }
+
     async fn remove_role_permission(&self, role_id: i64, permission_id: i64) -> anyhow::Result<()> {
         apollo_role_permission::Entity::delete_many()
             .filter(apollo_role_permission::Column::RoleId.eq(role_id))
@@ -425,6 +532,37 @@ impl RolePersistence for SqlApolloPersistence {
             ..Default::default()
         };
         apollo_user_role::Entity::insert(active_model)
+            .exec(db)
+            .await?;
+        Ok(())
+    }
+
+    async fn ensure_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
+        let db = &self.db;
+        let now = Utc::now().naive_utc();
+        let active_model = apollo_user_role::ActiveModel {
+            user_id: Set(user_id.to_string()),
+            role_id: Set(role_id),
+            data_change_created_by: Set(created_by.to_string()),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set(None),
+            data_change_last_time: Set(Some(now)),
+            ..Default::default()
+        };
+        apollo_user_role::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::columns([
+                    apollo_user_role::Column::UserId,
+                    apollo_user_role::Column::RoleId,
+                ])
+                .do_nothing()
+                .to_owned(),
+            )
             .exec(db)
             .await?;
         Ok(())
@@ -466,6 +604,16 @@ impl RolePersistence for SqlApolloPersistence {
             .all(db)
             .await?)
     }
+
+    async fn list_user_role_links(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_role::Model>> {
+        Ok(apollo_user_role::Entity::find()
+            .filter(apollo_user_role::Column::UserId.eq(user_id))
+            .all(&self.db)
+            .await?)
+    }
 }
 
 #[async_trait]
@@ -500,6 +648,41 @@ impl UserPersistence for SqlApolloPersistence {
             ..Default::default()
         };
         Ok(active_model.insert(db).await?)
+    }
+
+    async fn ensure_user(
+        &self,
+        dto: crate::api::dto::UserDTO,
+    ) -> anyhow::Result<apollo_users::Model> {
+        let db = &self.db;
+        let username = dto.username.clone();
+        let now = Utc::now().naive_utc();
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| username.clone());
+        let active_model = apollo_users::ActiveModel {
+            username: Set(dto.username),
+            password: Set(dto.password),
+            email: Set(dto.email.unwrap_or_default()),
+            enabled: Set(dto.enabled),
+            data_change_created_by: Set(created_by),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set(None),
+            data_change_last_time: Set(Some(now)),
+            ..Default::default()
+        };
+        apollo_users::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::column(apollo_users::Column::Username)
+                    .do_nothing()
+                    .to_owned(),
+            )
+            .exec(db)
+            .await?;
+        self.get_user(&username)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("user not found after upsert: {}", username))
     }
 
     async fn get_user(&self, username: &str) -> anyhow::Result<Option<apollo_users::Model>> {
@@ -790,30 +973,38 @@ impl ServerConfigPersistence for SqlApolloPersistence {
         dto: crate::api::dto::ServerConfigDTO,
     ) -> anyhow::Result<apollo_server_config::Model> {
         let db = &self.db;
-        let existing = apollo_server_config::Entity::find()
-            .filter(apollo_server_config::Column::Key.eq(&dto.key))
-            .one(db)
-            .await?;
         let now = Utc::now().naive_utc();
         let operator = dto.data_change_created_by.clone().unwrap_or_default();
-        if let Some(model) = existing {
-            let mut active_model: apollo_server_config::ActiveModel = model.into();
-            active_model.value = Set(dto.value);
-            active_model.comment = Set(dto.comment);
-            active_model.data_change_last_modified_by = Set(Some(operator));
-            active_model.data_change_last_time = Set(Some(now));
-            Ok(active_model.update(db).await?)
-        } else {
-            let active_model = apollo_server_config::ActiveModel {
-                key: Set(dto.key),
-                value: Set(dto.value),
-                comment: Set(dto.comment),
-                data_change_created_by: Set(operator),
-                data_change_created_time: Set(now),
-                ..Default::default()
-            };
-            Ok(active_model.insert(db).await?)
-        }
+        let key = dto.key.clone();
+        let active_model = apollo_server_config::ActiveModel {
+            key: Set(key.clone()),
+            value: Set(dto.value),
+            comment: Set(dto.comment),
+            data_change_created_by: Set(operator.clone()),
+            data_change_created_time: Set(now),
+            data_change_last_modified_by: Set(Some(operator)),
+            data_change_last_time: Set(Some(now)),
+            ..Default::default()
+        };
+        // The name promises create-or-update; make the write itself atomic so
+        // simultaneous bootstrap nodes cannot both observe "missing" and race
+        // on the unique key.
+        apollo_server_config::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::column(apollo_server_config::Column::Key)
+                    .update_columns([
+                        apollo_server_config::Column::Value,
+                        apollo_server_config::Column::Comment,
+                        apollo_server_config::Column::DataChangeLastModifiedBy,
+                        apollo_server_config::Column::DataChangeLastTime,
+                    ])
+                    .to_owned(),
+            )
+            .exec(db)
+            .await?;
+        self.get_server_config(&key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("server config not found after upsert: {}", key))
     }
 }
 

@@ -23,8 +23,8 @@ use crate::entity::{
     apollo_app_namespace, apollo_audit, apollo_audit_log, apollo_audit_log_data_influence,
     apollo_authorities, apollo_consumer, apollo_consumer_audit, apollo_consumer_role,
     apollo_consumer_token, apollo_favorite, apollo_instance_config, apollo_permission,
-    apollo_release_history, apollo_role, apollo_server_config, apollo_user_token_audit,
-    apollo_users,
+    apollo_release_history, apollo_role, apollo_server_config, apollo_user_role,
+    apollo_user_token_audit, apollo_users,
 };
 
 #[async_trait]
@@ -182,6 +182,16 @@ pub trait ConsumerAuditPersistence {
 pub trait UserPersistence {
     /// Creates a new user and returns the stored row.
     async fn create_user(&self, dto: UserDTO) -> anyhow::Result<apollo_users::Model>;
+    /// Returns the existing account or creates it once.
+    ///
+    /// The SQL backend overrides this with an atomic upsert; the default is
+    /// sufficient for the single-writer embedded store.
+    async fn ensure_user(&self, dto: UserDTO) -> anyhow::Result<apollo_users::Model> {
+        if let Some(user) = self.get_user(&dto.username).await? {
+            return Ok(user);
+        }
+        self.create_user(dto).await
+    }
     /// Looks a user up by account name.
     async fn get_user(&self, username: &str) -> anyhow::Result<Option<apollo_users::Model>>;
     /// Lists every user.
@@ -300,6 +310,28 @@ pub trait PermissionPersistence {
         target_id: &str,
         created_by: &str,
     ) -> anyhow::Result<apollo_permission::Model>;
+    /// Returns an existing permission for `(target_id, permission_type)` or creates it.
+    ///
+    /// Concurrent cluster nodes share one SQL schema; the SQL override uses an
+    /// upsert so the loser of a create race re-reads the winner instead of
+    /// failing on the unique index.
+    async fn ensure_permission(
+        &self,
+        permission_type: i32,
+        target_id: &str,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_permission::Model> {
+        if let Some(permission) = self
+            .list_permission_by_target(target_id)
+            .await?
+            .into_iter()
+            .find(|row| row.permission_type == permission_type)
+        {
+            return Ok(permission);
+        }
+        self.create_permission(permission_type, target_id, created_by)
+            .await
+    }
     /// Returns the requested value.
     async fn list_permission_by_target(
         &self,
@@ -322,6 +354,16 @@ pub trait PermissionPersistence {
 pub trait RolePersistence {
     /// Creates a new resource.
     async fn create_role(&self, dto: RoleDTO) -> anyhow::Result<apollo_role::Model>;
+    /// Returns the named role, creating it when absent.
+    ///
+    /// SQL overrides this with an atomic upsert so concurrent bootstrap calls
+    /// cannot trip the `role_name` unique index.
+    async fn ensure_role(&self, dto: RoleDTO) -> anyhow::Result<apollo_role::Model> {
+        if let Some(role) = self.get_role_by_name(&dto.role_name).await? {
+            return Ok(role);
+        }
+        self.create_role(dto).await
+    }
     /// Returns the requested value.
     async fn get_role(&self, id: i64) -> anyhow::Result<Option<apollo_role::Model>>;
     /// Returns the requested value.
@@ -342,6 +384,26 @@ pub trait RolePersistence {
         permission_id: i64,
         created_by: &str,
     ) -> anyhow::Result<()>;
+    /// Links a permission to a role only when the link is absent.
+    ///
+    /// This is the idempotent form used by bootstrap; the SQL backend uses a
+    /// conflict-tolerant insert for cross-node startup races.
+    async fn ensure_role_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
+        if self
+            .list_role_permissions(role_id)
+            .await?
+            .contains(&permission_id)
+        {
+            return Ok(());
+        }
+        self.assign_role_permission(role_id, permission_id, created_by)
+            .await
+    }
     /// Deletes the specified resource.
     async fn remove_role_permission(&self, role_id: i64, permission_id: i64) -> anyhow::Result<()>;
     /// Returns the requested value.
@@ -353,10 +415,37 @@ pub trait RolePersistence {
         role_id: i64,
         created_by: &str,
     ) -> anyhow::Result<()>;
+    /// Grants a role to a user only when the link is absent.
+    ///
+    /// Same cross-node rationale as [`RolePersistence::ensure_role_permission`].
+    async fn ensure_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
+        if self
+            .list_user_role_links(user_id)
+            .await?
+            .iter()
+            .any(|link| link.role_id == role_id)
+        {
+            return Ok(());
+        }
+        self.assign_role_to_user(user_id, role_id, created_by).await
+    }
     /// Deletes the specified resource.
     async fn remove_role_from_user(&self, user_id: &str, role_id: i64) -> anyhow::Result<()>;
     /// Returns the requested value.
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>>;
+    /// Lists raw user-role rows for an account, including duplicates.
+    ///
+    /// Bootstrap needs the unreduced row count to prove repeat startup did not
+    /// insert another link; `list_user_roles` intentionally deduplicates.
+    async fn list_user_role_links(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_role::Model>>;
     /// Lists the ids of the users holding a role.
     ///
     /// Upstream `RolePermissionService.queryUsersWithRole(roleName)` resolves
@@ -604,6 +693,9 @@ impl<T: ApolloPersistenceService + ?Sized> UserPersistence for Arc<T> {
     async fn create_user(&self, dto: UserDTO) -> anyhow::Result<apollo_users::Model> {
         UserPersistence::create_user(&**self, dto).await
     }
+    async fn ensure_user(&self, dto: UserDTO) -> anyhow::Result<apollo_users::Model> {
+        UserPersistence::ensure_user(&**self, dto).await
+    }
     async fn get_user(&self, username: &str) -> anyhow::Result<Option<apollo_users::Model>> {
         UserPersistence::get_user(&**self, username).await
     }
@@ -668,6 +760,15 @@ impl<T: ApolloPersistenceService + ?Sized> PermissionPersistence for Arc<T> {
         PermissionPersistence::create_permission(&**self, permission_type, target_id, created_by)
             .await
     }
+    async fn ensure_permission(
+        &self,
+        permission_type: i32,
+        target_id: &str,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_permission::Model> {
+        PermissionPersistence::ensure_permission(&**self, permission_type, target_id, created_by)
+            .await
+    }
     async fn list_permission_by_target(
         &self,
         target_id: &str,
@@ -692,6 +793,9 @@ impl<T: ApolloPersistenceService + ?Sized> PermissionPersistence for Arc<T> {
 impl<T: ApolloPersistenceService + ?Sized> RolePersistence for Arc<T> {
     async fn create_role(&self, dto: RoleDTO) -> anyhow::Result<apollo_role::Model> {
         RolePersistence::create_role(&**self, dto).await
+    }
+    async fn ensure_role(&self, dto: RoleDTO) -> anyhow::Result<apollo_role::Model> {
+        RolePersistence::ensure_role(&**self, dto).await
     }
     async fn get_role(&self, id: i64) -> anyhow::Result<Option<apollo_role::Model>> {
         RolePersistence::get_role(&**self, id).await
@@ -719,6 +823,14 @@ impl<T: ApolloPersistenceService + ?Sized> RolePersistence for Arc<T> {
     ) -> anyhow::Result<()> {
         RolePersistence::assign_role_permission(&**self, role_id, permission_id, created_by).await
     }
+    async fn ensure_role_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
+        RolePersistence::ensure_role_permission(&**self, role_id, permission_id, created_by).await
+    }
     async fn remove_role_permission(&self, role_id: i64, permission_id: i64) -> anyhow::Result<()> {
         RolePersistence::remove_role_permission(&**self, role_id, permission_id).await
     }
@@ -733,11 +845,25 @@ impl<T: ApolloPersistenceService + ?Sized> RolePersistence for Arc<T> {
     ) -> anyhow::Result<()> {
         RolePersistence::assign_role_to_user(&**self, user_id, role_id, created_by).await
     }
+    async fn ensure_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
+        RolePersistence::ensure_role_to_user(&**self, user_id, role_id, created_by).await
+    }
     async fn remove_role_from_user(&self, user_id: &str, role_id: i64) -> anyhow::Result<()> {
         RolePersistence::remove_role_from_user(&**self, user_id, role_id).await
     }
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
         RolePersistence::list_user_roles(&**self, user_id).await
+    }
+    async fn list_user_role_links(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_role::Model>> {
+        RolePersistence::list_user_role_links(&**self, user_id).await
     }
     async fn list_role_users(&self, role_id: i64) -> anyhow::Result<Vec<String>> {
         RolePersistence::list_role_users(&**self, role_id).await

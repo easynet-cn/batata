@@ -83,33 +83,28 @@ impl PortalBootstrapService {
     }
 
     async fn seed_user(&self) -> anyhow::Result<()> {
-        if UserPersistence::get_user(&self.persistence, DEFAULT_ADMIN_USER)
-            .await?
-            .is_none()
-        {
-            // `apollo_users.password` is varchar(64), so store the bare
-            // 64-char hex digest (upstream Apollo's SHA-256 representation).
-            // A "sha256:" prefix would make this 71 chars and break SQL
-            // backends on startup.
-            let digest = Sha256::digest(DEFAULT_ADMIN_USER.as_bytes());
-            let password = digest
-                .iter()
-                .map(|byte| format!("{:02x}", byte))
-                .collect::<String>();
-            UserPersistence::create_user(
-                &self.persistence,
-                UserDTO {
-                    id: None,
-                    username: DEFAULT_ADMIN_USER.to_string(),
-                    password,
-                    email: Some("apollo@localhost".to_string()),
-                    enabled: true,
-                    data_change_created_by: Some("system".to_string()),
-                    data_change_created_time: None,
-                },
-            )
-            .await?;
-        }
+        // `apollo_users.password` is varchar(64), so store the bare
+        // 64-char hex digest (upstream Apollo's SHA-256 representation).
+        // A "sha256:" prefix would make this 71 chars and break SQL
+        // backends on startup.
+        let digest = Sha256::digest(DEFAULT_ADMIN_USER.as_bytes());
+        let password = digest
+            .iter()
+            .map(|byte| format!("{:02x}", byte))
+            .collect::<String>();
+        UserPersistence::ensure_user(
+            &self.persistence,
+            UserDTO {
+                id: None,
+                username: DEFAULT_ADMIN_USER.to_string(),
+                password,
+                email: Some("apollo@localhost".to_string()),
+                enabled: true,
+                data_change_created_by: Some("system".to_string()),
+                data_change_created_time: None,
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -163,53 +158,35 @@ impl PortalBootstrapService {
 
         for (role_name, permission_id) in definitions {
             let role_name = role_name.replace('|', crate::auth::role::ROLE_NAME_SEPARATOR);
-            let role =
-                match RolePersistence::get_role_by_name(&self.persistence, &role_name).await? {
-                    Some(role) => role,
-                    None => {
-                        RolePersistence::create_role(
-                            &self.persistence,
-                            crate::api::dto::RoleDTO {
-                                id: None,
-                                role_name: role_name.clone(),
-                                role_type: 0,
-                                target_id: SYSTEM_PERMISSION_TARGET_ID.to_string(),
-                                data_change_created_by: Some("system".to_string()),
-                                data_change_created_time: None,
-                            },
-                        )
-                        .await?
-                    }
-                };
-
-            let permission = PermissionPersistence::list_permission_by_target(
+            let role = RolePersistence::ensure_role(
                 &self.persistence,
-                SYSTEM_PERMISSION_TARGET_ID,
+                crate::api::dto::RoleDTO {
+                    id: None,
+                    role_name: role_name.clone(),
+                    role_type: 0,
+                    target_id: SYSTEM_PERMISSION_TARGET_ID.to_string(),
+                    data_change_created_by: Some("system".to_string()),
+                    data_change_created_time: None,
+                },
             )
-            .await?
-            .into_iter()
-            .find(|row| row.permission_type == permission_id);
-            let permission = match permission {
-                Some(permission) => permission,
-                None => {
-                    PermissionPersistence::create_permission(
-                        &self.persistence,
-                        permission_id,
-                        SYSTEM_PERMISSION_TARGET_ID,
-                        "system",
-                    )
-                    .await?
-                }
-            };
+            .await?;
 
-            RolePersistence::assign_role_permission(
+            let permission = PermissionPersistence::ensure_permission(
+                &self.persistence,
+                permission_id,
+                SYSTEM_PERMISSION_TARGET_ID,
+                "system",
+            )
+            .await?;
+
+            RolePersistence::ensure_role_permission(
                 &self.persistence,
                 role.id,
                 permission.id,
                 "system",
             )
             .await?;
-            RolePersistence::assign_role_to_user(
+            RolePersistence::ensure_role_to_user(
                 &self.persistence,
                 DEFAULT_ADMIN_USER,
                 role.id,
