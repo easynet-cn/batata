@@ -9,7 +9,7 @@ use batata_naming::service::NamingService;
 #[cfg(test)]
 use wiremock;
 
-use crate::acl::AclService;
+use crate::acl::{ACL_REDACTED_SECRET, AclService, AclToken};
 use crate::agent::ConsulAgentService;
 use crate::catalog::ConsulCatalogService;
 use crate::config_entry::ConsulConfigEntryService;
@@ -18,6 +18,7 @@ use crate::connect_ca::ConsulConnectCAService;
 use crate::event::ConsulEventService;
 use crate::health::ConsulHealthService;
 use crate::kv::ConsulKVService;
+use crate::oidc::test_support::{jwt_auth_method_config, signed_test_jwt};
 use crate::operator::ConsulOperatorService;
 use crate::query::ConsulQueryService;
 use crate::session::ConsulSessionService;
@@ -96,9 +97,24 @@ impl ClusterManager for TestClusterManager {
     }
 }
 
-/// Create a test app with all in-memory services configured.
-/// Uses `crate::api::v1::routes()` for route registration.
+/// Create a test app with ACLs disabled (the default compatibility posture).
 fn test_app() -> actix_web::App<
+    impl actix_web::dev::ServiceFactory<
+        actix_web::dev::ServiceRequest,
+        Config = (),
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+        InitError = (),
+    >,
+> {
+    test_app_with_acl(AclService::disabled())
+}
+
+/// Create a test app with a caller-supplied ACL service.
+/// Uses `crate::api::v1::routes()` for route registration.
+fn test_app_with_acl(
+    acl_service: AclService,
+) -> actix_web::App<
     impl actix_web::dev::ServiceFactory<
         actix_web::dev::ServiceRequest,
         Config = (),
@@ -117,7 +133,6 @@ fn test_app() -> actix_web::App<
     let health_service = ConsulHealthService::new(registry.clone(), check_index.clone());
     let naming_store = Arc::new(crate::naming_store::ConsulNamingStore::new());
     let agent_service = ConsulAgentService::new(naming_store.clone(), registry, check_index);
-    let acl_service = AclService::disabled();
     let index_provider = crate::index_provider::ConsulIndexProvider::new();
     let event_service = ConsulEventService::new(index_provider.clone());
     let snapshot_service = ConsulSnapshotService::new();
@@ -175,6 +190,16 @@ async fn create_test_app() -> impl actix_web::dev::Service<
     Error = actix_web::Error,
 > {
     test::init_service(test_app()).await
+}
+
+async fn create_test_app_with_acl(
+    acl_service: AclService,
+) -> impl actix_web::dev::Service<
+    actix_http::Request,
+    Response = actix_web::dev::ServiceResponse,
+    Error = actix_web::Error,
+> {
+    test::init_service(test_app_with_acl(acl_service)).await
 }
 
 // ========================================================================
@@ -4270,6 +4295,221 @@ async fn test_http_acl_login_nonexistent_auth_method() {
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 404);
+}
+
+fn bootstrap_secret(service: &AclService) -> String {
+    service
+        .find_bootstrap_token()
+        .and_then(|token| token.secret_id)
+        .expect("bootstrap token should exist")
+}
+
+async fn read_only_acl_token(service: &AclService) -> AclToken {
+    let policy = service
+        .create_policy("acl-reader-policy", "", "acl = \"read\"", None)
+        .await
+        .expect("create read-only ACL policy");
+    service
+        .create_token("reader", vec![policy.name], vec![], false, None)
+        .await
+}
+
+/// ACL control-plane reads require `acl:read`; the bootstrap token has it.
+#[actix_web::test]
+async fn test_http_acl_admin_guard_requires_acl_read() {
+    let service = AclService::new();
+    let management_secret = bootstrap_secret(&service);
+    let app = create_test_app_with_acl(service).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/policies")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        403,
+        "anonymous ACL admin read must be denied"
+    );
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/policies")
+        .insert_header(("X-Consul-Token", management_secret))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200, "management token should be allowed");
+}
+
+/// SecretID is hidden from `acl:read`-only callers and shown to `acl:write`.
+#[actix_web::test]
+async fn test_http_acl_token_secret_redaction() {
+    let service = AclService::new();
+    let management_secret = bootstrap_secret(&service);
+    let reader = read_only_acl_token(&service).await;
+    let reader_secret = reader.secret_id.clone().expect("reader secret");
+    let reader_accessor = reader.accessor_id.clone();
+    let app = create_test_app_with_acl(service).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/tokens")
+        .insert_header(("X-Consul-Token", reader_secret.clone()))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let token = body
+        .as_array()
+        .expect("token list")
+        .iter()
+        .find(|item| item["AccessorID"].as_str() == Some(reader_accessor.as_str()))
+        .expect("reader token in list");
+    assert_eq!(token["SecretID"].as_str(), Some(ACL_REDACTED_SECRET));
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/tokens")
+        .insert_header(("X-Consul-Token", management_secret))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let token = body
+        .as_array()
+        .expect("token list")
+        .iter()
+        .find(|item| item["AccessorID"].as_str() == Some(reader_accessor.as_str()))
+        .expect("reader token in list");
+    assert_eq!(token["SecretID"].as_str(), Some(reader_secret.as_str()));
+}
+
+/// OIDC client secrets are redacted on auth-method reads without `acl:write`.
+#[actix_web::test]
+async fn test_http_acl_auth_method_secret_redaction() {
+    let service = AclService::new();
+    let management_secret = bootstrap_secret(&service);
+    let reader_secret = read_only_acl_token(&service)
+        .await
+        .secret_id
+        .expect("reader secret");
+    let mut config = std::collections::HashMap::new();
+    config.insert(
+        "OIDCClientSecret".to_string(),
+        serde_json::json!("super-secret"),
+    );
+    service
+        .create_auth_method(
+            "redacted-oidc",
+            "oidc",
+            None,
+            None,
+            None,
+            None,
+            Some(config),
+        )
+        .await;
+    let app = create_test_app_with_acl(service).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/auth-method/redacted-oidc")
+        .insert_header(("X-Consul-Token", reader_secret))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(
+        body["Config"]["OIDCClientSecret"].as_str(),
+        Some(ACL_REDACTED_SECRET)
+    );
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/auth-method/redacted-oidc")
+        .insert_header(("X-Consul-Token", management_secret))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(
+        body["Config"]["OIDCClientSecret"].as_str(),
+        Some("super-secret")
+    );
+}
+
+/// An expired token is rejected on every ACL authorization path.
+#[actix_web::test]
+async fn test_http_expired_acl_token_is_denied() {
+    let service = AclService::new();
+    let expired_secret = "expired-acl-token";
+    let now = chrono::Utc::now();
+    let management_policy = service
+        .get_policy("global-management")
+        .expect("bootstrap management policy");
+    let expired = AclToken {
+        accessor_id: uuid::Uuid::new_v4().to_string(),
+        secret_id: Some(expired_secret.to_string()),
+        description: "expired".to_string(),
+        policies: vec![crate::acl::PolicyLink {
+            id: management_policy.id,
+            name: management_policy.name,
+        }],
+        expiration_time: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+        create_time: now.to_rfc3339(),
+        modify_time: now.to_rfc3339(),
+        ..Default::default()
+    };
+    service.store().put_token(expired_secret, &expired);
+    let app = create_test_app_with_acl(service).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/policies")
+        .insert_header(("X-Consul-Token", expired_secret))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 403, "expired token must fail closed");
+}
+
+/// Login with ACLs enabled verifies the bearer JWT before minting a token.
+#[actix_web::test]
+async fn test_http_acl_login_validates_bearer_when_acl_enabled() {
+    let service = AclService::new();
+    let management_secret = bootstrap_secret(&service);
+    let app = create_test_app_with_acl(service).await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/acl/auth-method")
+        .insert_header(("X-Consul-Token", management_secret))
+        .set_json(serde_json::json!({
+            "Name": "jwt-login-am",
+            "Type": "jwt",
+            "Config": serde_json::to_value(jwt_auth_method_config().expect("test config"))
+                .expect("serializable config"),
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200, "create jwt auth method");
+
+    let req = test::TestRequest::post()
+        .uri("/v1/acl/login")
+        .set_json(serde_json::json!({
+            "AuthMethod": "jwt-login-am",
+            "BearerToken": "test-bearer-token",
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        401,
+        "arbitrary bearer token must be rejected"
+    );
+
+    let req = test::TestRequest::post()
+        .uri("/v1/acl/login")
+        .set_json(serde_json::json!({
+            "AuthMethod": "jwt-login-am",
+            "BearerToken": signed_test_jwt(3600),
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200, "signed bearer token should be accepted");
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(body["SecretID"].as_str().is_some_and(|s| !s.is_empty()));
 }
 
 // ========================================================================

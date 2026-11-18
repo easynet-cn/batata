@@ -8,7 +8,13 @@
 // for this module.
 #![allow(missing_docs)]
 
-use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
+use actix_web::body::{BoxBody, MessageBody};
+use actix_web::dev::{ServiceRequest, ServiceResponse};
+use actix_web::http::Method;
+use actix_web::middleware::{Next, from_fn};
+use actix_web::{Error, HttpRequest, HttpResponse, delete, get, post, put, web};
+
+use crate::model::ConsulErrorBody;
 
 use crate::acl::{
     AclService, AuthMethodRequest, BindingRuleRequest, CloneTokenRequest, CreatePolicyRequest,
@@ -81,10 +87,11 @@ async fn acl_authorize(
 
 #[get("/tokens")]
 async fn list_tokens(
+    req: HttpRequest,
     acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::acl::list_tokens(acl_service, index_provider).await
+    crate::acl::list_tokens(req, acl_service, index_provider).await
 }
 
 #[get("/token/self")]
@@ -315,10 +322,11 @@ async fn delete_binding_rule(
 
 #[get("/auth-methods")]
 async fn list_auth_methods(
+    req: HttpRequest,
     acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::acl::list_auth_methods(acl_service, index_provider).await
+    crate::acl::list_auth_methods(req, acl_service, index_provider).await
 }
 
 #[put("/auth-method")]
@@ -332,11 +340,12 @@ async fn create_auth_method(
 
 #[get("/auth-method/{name}")]
 async fn get_auth_method(
+    req: HttpRequest,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::acl::get_auth_method(acl_service, path, index_provider).await
+    crate::acl::get_auth_method(req, acl_service, path, index_provider).await
 }
 
 #[put("/auth-method/{name}")]
@@ -410,9 +419,54 @@ async fn oidc_callback_handler(
 // Scope builder
 // ============================================================================
 
-/// The `routes` function.
-pub fn routes() -> Scope {
+/// Paths under `/v1/acl` that must stay reachable without ACL management
+/// privileges: bootstrap (issue the first management token), login/logout and
+/// the OIDC handshake (authentication itself), token/self (identity probe
+/// used by the UI), and authorize (permission check evaluated with the
+/// caller's own token). All other ACL routes manage ACL objects.
+fn is_public_acl_route(uri_path: &str) -> bool {
+    let tail = uri_path.split("/acl").nth(1).unwrap_or("");
+    matches!(
+        tail,
+        "/bootstrap"
+            | "/login"
+            | "/logout"
+            | "/oidc/auth-url"
+            | "/oidc/callback"
+            | "/token/self"
+            | "/authorize"
+    )
+}
+
+/// Guard for the `/v1/acl` control plane. Reads require `acl:read`, mutations
+/// require `acl:write`. No-ops when ACL is disabled (the matrix posture).
+///
+/// Uses the request's token rather than a blanket middleware secret so that
+/// per-token policies decide management access, matching upstream Consul.
+async fn acl_admin_guard(
+    req: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<ServiceResponse<BoxBody>, Error> {
+    let path = req.path().to_string();
+    let write = !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+
+    if !is_public_acl_route(&path) {
+        if let Some(acl) = req.app_data::<web::Data<AclService>>() {
+            let authz = acl.authorize_acl_admin(req.request(), write);
+            if !authz.allowed {
+                return Ok(req.into_response(HttpResponse::Forbidden().consul_error(&authz.reason)));
+            }
+        }
+    }
+
+    Ok(next.call(req).await?.map_into_boxed_body())
+}
+
+/// The `routes` function. The opaque return type hides the middleware-wrapped
+/// `Scope<T>` while still satisfying `HttpServiceFactory`.
+pub fn routes() -> impl actix_web::dev::HttpServiceFactory {
     web::scope("/acl")
+        .wrap(from_fn(acl_admin_guard))
         // Bootstrap and auth
         .service(acl_bootstrap)
         .service(acl_login)

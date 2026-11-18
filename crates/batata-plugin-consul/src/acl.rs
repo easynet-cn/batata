@@ -28,6 +28,9 @@ pub const X_CONSUL_TOKEN: &str = "X-Consul-Token";
 pub const CONSUL_TOKEN_QUERY: &str = "token";
 /// Well-known accessor ID for the bootstrap management token
 pub const BOOTSTRAP_ACCESSOR_ID: &str = "00000000-0000-0000-0000-000000000001";
+/// Placeholder returned instead of secrets when the caller lacks `acl:write`.
+/// Matches upstream `aclfilter.RedactedToken`.
+pub const ACL_REDACTED_SECRET: &str = "<hidden>";
 
 /// Canonical agent ACL token targets for `PUT /v1/agent/token/{target}`.
 ///
@@ -284,6 +287,9 @@ pub struct ParsedRules {
     pub session_rules: Vec<ResourceRule>,
     /// The `query_rules` field.
     pub query_rules: Vec<ResourceRule>,
+    /// ACL administration rules (`acl = "write"` / `acl = "read"`).
+    /// Guards `/v1/acl/**` control-plane endpoints.
+    pub acl_rules: Vec<ResourceRule>,
 }
 
 /// Single resource rule
@@ -358,6 +364,8 @@ pub enum ResourceType {
     Peering,
     /// The `Mesh` variant.
     Mesh,
+    /// ACL control-plane administration (token/policy/role CRUD).
+    Acl,
 }
 
 /// ACL authorization result
@@ -557,6 +565,7 @@ impl AclService {
             name: "global-management".to_string(),
             description: "Builtin global management policy".to_string(),
             rules: r#"
+acl = "write"
 agent_prefix "" { policy = "write" }
 key_prefix "" { policy = "write" }
 node_prefix "" { policy = "write" }
@@ -652,15 +661,19 @@ query_prefix "" { policy = "write" }
             .cloned()
     }
 
-    /// Validate and get token
+    /// Validate and get token. Expired tokens are treated as absent so every
+    /// authorization path fails closed (upstream `acl_endpoint.go:494,726`).
     pub fn get_token(&self, secret_id: &str) -> Option<AclToken> {
         // Check hot-path cache first
         if let Some(token) = TOKEN_CACHE.get(secret_id) {
-            return Some(token);
+            return (!Self::is_token_expired(&token)).then_some(token);
         }
 
         // Read from store (Memory DashMap or RocksDB)
         let token = self.store.get_token(secret_id)?;
+        if Self::is_token_expired(&token) {
+            return None;
+        }
         TOKEN_CACHE.insert(secret_id.to_string(), token.clone());
         Some(token)
     }
@@ -780,15 +793,12 @@ query_prefix "" { policy = "write" }
     }
 
     /// List all tokens
+    /// List tokens with their stored secret IDs.
+    ///
+    /// Redaction is an HTTP response concern: the handler hides `SecretID` from
+    /// callers without `acl:write`, matching upstream `aclfilter.filterTokens`.
     pub fn list_tokens(&self) -> Vec<AclToken> {
-        self.store
-            .list_tokens()
-            .into_iter()
-            .map(|mut token| {
-                token.secret_id = None; // Don't expose secret_id in list
-                token
-            })
-            .collect()
+        self.store.list_tokens()
     }
 
     /// Create a new ACL policy.
@@ -1206,12 +1216,46 @@ query_prefix "" { policy = "write" }
     pub fn parse_rules(&self, rules: &str) -> ParsedRules {
         let mut parsed = ParsedRules::default();
 
+        // Upstream Consul expresses ACL administration as a bare `acl = "write"`
+        // / `acl = "read"` scalar (see agent/consul/acl_endpoint_test.go), not a
+        // brace block. Parse that form separately before the block scanner.
+        for line in rules.lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("acl") {
+                let value = value.trim_start().strip_prefix('=').map(str::trim_start);
+                if let Some(value) = value {
+                    let policy = value
+                        .trim_matches('"')
+                        .parse::<RulePolicy>()
+                        .unwrap_or(RulePolicy::Deny);
+                    if policy != RulePolicy::Deny {
+                        parsed.acl_rules.push(ResourceRule {
+                            prefix: String::new(),
+                            policy,
+                            exact: true,
+                        });
+                    }
+                }
+            }
+        }
+
         // Strip line comments and collapse to a stream for brace matching.
         let cleaned: String = rules
             .lines()
             .map(|l| {
                 let l = l.trim();
-                if l.starts_with('#') { "" } else { l }
+                // Bare `acl = "write"` scalars were parsed above. Leaving them
+                // in the block stream makes the scanner treat the quote around
+                // the value as a block name and swallow every following block.
+                let is_acl_scalar = l
+                    .strip_prefix("acl")
+                    .and_then(|rest| rest.trim_start().strip_prefix('='))
+                    .is_some();
+                if l.starts_with('#') || is_acl_scalar {
+                    ""
+                } else {
+                    l
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1407,6 +1451,7 @@ query_prefix "" { policy = "write" }
             ResourceType::Namespace | ResourceType::Peering | ResourceType::Mesh => {
                 &all_rules.key_rules
             }
+            ResourceType::Acl => &all_rules.acl_rules,
         };
 
         // Find the best matching rule: exact match takes precedence over prefix match.
@@ -1468,6 +1513,7 @@ query_prefix "" { policy = "write" }
             all_rules.service_rules.extend(parsed.service_rules);
             all_rules.session_rules.extend(parsed.session_rules);
             all_rules.query_rules.extend(parsed.query_rules);
+            all_rules.acl_rules.extend(parsed.acl_rules);
         }
     }
 
@@ -1501,6 +1547,66 @@ query_prefix "" { policy = "write" }
         };
 
         self.authorize(&token, resource_type, resource_name, write)
+    }
+
+    /// Return true when a token has passed its `expiration_time`.
+    ///
+    /// Upstream Consul checks token expiry on every use (`acl_endpoint.go:326,
+    /// 494, 726`) and reaps expired tokens in the background. Batata stored the
+    /// field but never enforced it; this is the shared fail-closed check.
+    /// An unparseable timestamp is treated as expired rather than granting
+    /// access forever.
+    pub fn is_token_expired(token: &AclToken) -> bool {
+        let Some(exp) = token.expiration_time.as_deref() else {
+            return false;
+        };
+        match chrono::DateTime::parse_from_rfc3339(exp) {
+            Ok(exp) => exp.with_timezone(&chrono::Utc) <= chrono::Utc::now(),
+            Err(_) => true,
+        }
+    }
+
+    /// Resolve the token carried by a request, honouring the configured
+    /// `default` agent token fallback. Returns `None` for a missing, unknown,
+    /// or expired token.
+    pub fn resolve_request_token(&self, req: &HttpRequest) -> Option<AclToken> {
+        let secret_id = match Self::extract_token(req) {
+            Some(t) => t,
+            None => match self.agent_token("default") {
+                Some(t) if !t.is_empty() => t,
+                _ => return None,
+            },
+        };
+        let token = self.get_token(&secret_id)?;
+        if Self::is_token_expired(&token) {
+            return None;
+        }
+        Some(token)
+    }
+
+    /// Authorize an ACL control-plane (`/v1/acl/**`) request.
+    ///
+    /// Upstream Consul gates ACL administration behind `acl:read` for reads and
+    /// `acl:write` for writes (`agent/consul/acl_endpoint.go:482,555,599,…`).
+    /// When ACL is disabled every check is allowed, preserving the default
+    /// compatibility posture (upstream returns `aclDisabled`, but batata's
+    /// SDK matrix runs ACL off and depends on these routes being reachable).
+    pub fn authorize_acl_admin(&self, req: &HttpRequest, write: bool) -> AuthzResult {
+        if !self.enabled {
+            return AuthzResult::allowed();
+        }
+        let token = match self.resolve_request_token(req) {
+            Some(t) => t,
+            None => return AuthzResult::denied("ACL token required, not found, or expired"),
+        };
+        self.authorize(&token, ResourceType::Acl, "", write)
+    }
+
+    /// Check whether the caller may see secret fields (`SecretID`,
+    /// `OIDCClientSecret`). Upstream redacts these unless the caller holds
+    /// `acl:write`.
+    pub fn can_reveal_acl_secrets(&self, req: &HttpRequest) -> bool {
+        self.authorize_acl_admin(req, true).allowed
     }
 }
 
@@ -1604,6 +1710,27 @@ impl AclError {
     }
 }
 
+/// Hide token secrets from callers without `acl:write`, matching upstream
+/// `aclfilter.filterToken` (`agent/structs/aclfilter/filter.go:648`).
+fn redact_token_secret(token: &mut AclToken, reveal: bool) {
+    if !reveal && token.secret_id.is_some() {
+        token.secret_id = Some(ACL_REDACTED_SECRET.to_string());
+    }
+}
+
+/// Hide OIDC client secrets from callers without `acl:write`, matching
+/// upstream auth-method response filtering.
+fn redact_auth_method_secret(method: &mut AuthMethod, reveal: bool) {
+    if reveal {
+        return;
+    }
+    if let Some(config) = method.config.as_mut()
+        && let Some(secret) = config.get_mut("OIDCClientSecret")
+    {
+        *secret = serde_json::Value::String(ACL_REDACTED_SECRET.to_string());
+    }
+}
+
 // ============================================================================
 // ACL API Endpoints
 // ============================================================================
@@ -1611,10 +1738,15 @@ impl AclError {
 /// GET /v1/acl/tokens
 /// List all tokens
 pub async fn list_tokens(
+    req: HttpRequest,
     acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let tokens = acl_service.list_tokens();
+    let reveal = acl_service.can_reveal_acl_secrets(&req);
+    let mut tokens = acl_service.list_tokens();
+    for token in &mut tokens {
+        redact_token_secret(token, reveal);
+    }
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(tokens)
 }
@@ -1642,7 +1774,9 @@ pub async fn get_token(
         .map(|(_, t)| t);
 
     match token {
-        Some(t) => {
+        Some(mut t) => {
+            let reveal = acl_service.can_reveal_acl_secrets(&req);
+            redact_token_secret(&mut t, reveal);
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
             if expanded {
                 // Resolve policies and roles for expanded response
@@ -1791,8 +1925,12 @@ pub async fn get_token_self(
     };
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
+    let reveal = acl_service.can_reveal_acl_secrets(&req);
     match acl_service.get_token(&secret_id) {
-        Some(token) => consul_ok(&meta).json(token),
+        Some(mut token) => {
+            redact_token_secret(&mut token, reveal);
+            consul_ok(&meta).json(token)
+        }
         None => HttpResponse::Forbidden().consul_error("ACL token not found or invalid"),
     }
 }
@@ -1884,89 +2022,111 @@ pub async fn acl_login(
         }
     };
 
-    // For now, we implement a simple login that creates a token
-    // In production, this would validate the bearer_token against the auth method's config
-    let now = chrono::Utc::now().to_rfc3339();
-    let accessor_id = uuid::Uuid::new_v4().to_string();
-    let secret_id = uuid::Uuid::new_v4().to_string();
-
-    // Calculate expiration based on max_token_ttl
-    let expiration_time = auth_method.max_token_ttl.as_ref().and_then(|ttl| {
-        // Parse TTL like "1h", "30m", "24h"
-        parse_duration(ttl).map(|dur| {
-            (chrono::Utc::now() + chrono::Duration::from_std(dur).unwrap_or_default()).to_rfc3339()
-        })
-    });
-
-    // Apply binding rules: map auth method's binding rules to policies/roles on the token.
-    let binding_rules = acl_service
-        .list_binding_rules()
-        .into_iter()
-        .filter(|r| r.auth_method == body.auth_method)
-        .collect::<Vec<_>>();
-
-    let mut token_policies: Vec<PolicyLink> = Vec::new();
-    let mut token_roles: Vec<RoleLink> = Vec::new();
-
-    for br in &binding_rules {
-        let bind_name = br.bind_name.clone();
-        match br.bind_type.as_str() {
-            "policy" => {
-                if let Some(policy) = acl_service.get_policy(&bind_name) {
-                    token_policies.push(PolicyLink {
-                        id: policy.id.clone(),
-                        name: policy.name.clone(),
-                    });
-                }
-            }
-            "role" => {
-                if let Some(role) = acl_service.get_role(&bind_name) {
-                    token_roles.push(RoleLink {
-                        id: role.id.clone(),
-                        name: role.name.clone(),
-                    });
-                }
-            }
-            "service" => {
-                // Service identity bind: create a policy granting the service identity.
-                // In Consul this is handled implicitly; here we attach a role-like identity.
-                // For simplicity we resolve to a policy if one named after the service exists.
-                if let Some(policy) = acl_service.get_policy(&bind_name) {
-                    token_policies.push(PolicyLink {
-                        id: policy.id.clone(),
-                        name: policy.name.clone(),
-                    });
-                }
-            }
-            _ => {}
+    // Upstream loads a validator for the auth method and calls ValidateLogin
+    // before minting a token. Keep the ACL-disabled posture permissive so the
+    // default compatibility matrix still works; enforce it whenever ACLs are
+    // actually enabled.
+    let claims = if acl_service.is_enabled() {
+        let method_type = auth_method.method_type.trim().to_ascii_lowercase();
+        if !matches!(method_type.as_str(), "jwt" | "oidc") {
+            return HttpResponse::BadRequest().consul_error(format!(
+                "ACL auth method type '{}' is not supported for login",
+                auth_method.method_type
+            ));
         }
-    }
-
-    let token = AclToken {
-        accessor_id: accessor_id.clone(),
-        secret_id: Some(secret_id.clone()),
-        description: format!("Login token via {}", body.auth_method),
-        policies: token_policies.clone(),
-        roles: token_roles.clone(),
-        local: auth_method.token_locality.as_deref() == Some("local"),
-        expiration_time: expiration_time.clone(),
-        expiration_ttl: None,
-        create_time: now.clone(),
-        modify_time: now.clone(),
+        match crate::oidc::validate_login_jwt(
+            &auth_method.config,
+            body.bearer_token.as_deref().unwrap_or(""),
+        )
+        .await
+        {
+            Ok(claims) => claims,
+            Err(e) => {
+                warn!(
+                    auth_method = %body.auth_method,
+                    error = %e,
+                    "ACL login rejected: bearer token validation failed"
+                );
+                return HttpResponse::Unauthorized()
+                    .consul_error(format!("ACL login failed: {}", e));
+            }
+        }
+    } else {
+        HashMap::new()
     };
 
-    acl_service.store().put_token(&secret_id, &token);
+    // Apply binding rules: map the auth method's rules to policies and roles.
+    // With ACLs on, use the verified claims so selectors are honoured. With
+    // ACLs off, retain the legacy "all binding rules apply" compatibility path.
+    let (policy_identifiers, role_identifiers) = if acl_service.is_enabled() {
+        apply_oidc_binding_rules(acl_service.as_ref(), &body.auth_method, &claims)
+    } else {
+        let mut policies = Vec::new();
+        let mut roles = Vec::new();
+        let binding_rules = acl_service
+            .list_binding_rules()
+            .into_iter()
+            .filter(|r| r.auth_method == body.auth_method);
+        for br in binding_rules {
+            match br.bind_type.as_str() {
+                "policy" => {
+                    if let Some(policy) = acl_service.get_policy(&br.bind_name) {
+                        policies.push(if !policy.id.is_empty() {
+                            policy.id
+                        } else {
+                            policy.name
+                        });
+                    }
+                }
+                "role" => {
+                    if let Some(role) = acl_service.get_role(&br.bind_name) {
+                        roles.push(if !role.id.is_empty() {
+                            role.id
+                        } else {
+                            role.name
+                        });
+                    }
+                }
+                "service" => {
+                    // Legacy compatibility: resolve a service identity to a
+                    // policy with the same name when one exists.
+                    if let Some(policy) = acl_service.get_policy(&br.bind_name) {
+                        policies.push(if !policy.id.is_empty() {
+                            policy.id
+                        } else {
+                            policy.name
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        (policies, roles)
+    };
+
+    // Mint through create_token so cluster mode replicates the token via Raft
+    // and the auth method's max_token_ttl is applied uniformly.
+    let description = format!("Login token via {}", body.auth_method);
+    let token = acl_service
+        .create_token(
+            &description,
+            policy_identifiers,
+            role_identifiers,
+            auth_method.token_locality.as_deref() == Some("local"),
+            auth_method.max_token_ttl.as_deref(),
+        )
+        .await;
 
     let response = LoginResponse {
-        accessor_id,
-        secret_id,
-        description: format!("Login token via {}", body.auth_method),
-        policies: token_policies,
-        roles: token_roles,
-        local: auth_method.token_locality.as_deref() == Some("local"),
+        accessor_id: token.accessor_id.clone(),
+        secret_id: token.secret_id.clone().unwrap_or_default(),
+        description: token.description.clone(),
+        policies: token.policies.clone(),
+        roles: token.roles.clone(),
+        local: token.local,
         auth_method: Some(body.auth_method.clone()),
-        expiration_time,
-        create_time: now,
+        expiration_time: token.expiration_time.clone(),
+        create_time: token.create_time.clone(),
     };
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
@@ -2291,10 +2451,15 @@ pub struct AuthMethodRequest {
 /// GET /v1/acl/auth-methods
 /// List all auth methods
 pub async fn list_auth_methods(
+    req: HttpRequest,
     acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let methods = acl_service.list_auth_methods();
+    let reveal = acl_service.can_reveal_acl_secrets(&req);
+    let mut methods = acl_service.list_auth_methods();
+    for method in &mut methods {
+        redact_auth_method_secret(method, reveal);
+    }
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(methods)
 }
@@ -2325,6 +2490,7 @@ pub async fn create_auth_method(
 /// GET /v1/acl/auth-method/{name}
 /// Get an auth method by name
 pub async fn get_auth_method(
+    req: HttpRequest,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -2332,8 +2498,12 @@ pub async fn get_auth_method(
     let name = path.into_inner();
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
+    let reveal = acl_service.can_reveal_acl_secrets(&req);
     match acl_service.get_auth_method(&name) {
-        Some(method) => consul_ok(&meta).json(method),
+        Some(mut method) => {
+            redact_auth_method_secret(&mut method, reveal);
+            consul_ok(&meta).json(method)
+        }
         None => HttpResponse::NotFound().consul_error("Auth method not found"),
     }
 }
@@ -3747,16 +3917,17 @@ mod tests {
     }
 
     #[test]
-    fn test_list_tokens_hides_secret() {
+    fn test_list_tokens_keeps_secret_for_http_redaction() {
         let service = AclService::new();
         let tokens = service.list_tokens();
         assert!(
             !tokens.is_empty(),
             "Should have at least the bootstrap token"
         );
-        // All tokens in list should have secret_id = None
+        // The HTTP layer redacts based on acl:write; the service returns the
+        // stored value so management callers can see it.
         for t in &tokens {
-            assert!(t.secret_id.is_none());
+            assert!(t.secret_id.is_some());
             assert!(!t.accessor_id.is_empty());
         }
     }
@@ -4174,6 +4345,19 @@ node_prefix "" {
         // node_prefix "" = 1 node rule
         assert_eq!(parsed.node_rules.len(), 1);
         assert!(!parsed.node_rules[0].exact);
+    }
+
+    #[test]
+    fn test_parse_rules_acl_scalar_does_not_swallow_blocks() {
+        let service = AclService::new();
+        let policy = service
+            .get_policy("global-management")
+            .expect("bootstrap policy");
+        let parsed = service.parse_rules(&policy.rules);
+        assert_eq!(parsed.acl_rules.len(), 1);
+        assert!(parsed.acl_rules[0].policy.allows_write());
+        assert!(!parsed.key_rules.is_empty());
+        assert!(!parsed.service_rules.is_empty());
     }
 
     #[test]

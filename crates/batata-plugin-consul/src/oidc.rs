@@ -410,6 +410,12 @@ struct Jwk {
     /// The RSA exponent (base64url-encoded).
     #[serde(skip_serializing_if = "Option::is_none")]
     e: Option<String>,
+    /// The EC x coordinate (base64url-encoded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    x: Option<String>,
+    /// The EC y coordinate (base64url-encoded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    y: Option<String>,
 }
 
 /// The JWKS (JSON Web Key Set) response.
@@ -919,6 +925,304 @@ fn build_authorization_url(
     url.to_string()
 }
 
+/// Validate the bearer token submitted to `POST /v1/acl/login`.
+///
+/// Upstream Consul loads the auth method's validator and always calls
+/// `ValidateLogin` before minting a token (`agent/consul/acl_endpoint.go:2144`).
+/// Batata used to mint a token for any non-empty bearer string. For a `jwt`
+/// auth method this verifies the signature, issuer, audience and lifetime
+/// using exactly one of the upstream key sources: `JWTValidationPubKeys`,
+/// `JWKSURL` or `OIDCDiscoveryURL`.
+pub async fn validate_login_jwt(
+    config: &Option<HashMap<String, serde_json::Value>>,
+    bearer_token: &str,
+) -> Result<HashMap<String, serde_json::Value>, String> {
+    use jsonwebtoken::{Validation, decode, decode_header};
+
+    let token = bearer_token.trim();
+    if token.is_empty() {
+        return Err("Bearer token is required for ACL login".to_string());
+    }
+
+    let config = config.as_ref().ok_or_else(|| {
+        "JWT auth method config must define exactly one of JWTValidationPubKeys, JWKSURL or OIDCDiscoveryURL".to_string()
+    })?;
+
+    let header = decode_header(token).map_err(|e| format!("Failed to decode JWT header: {}", e))?;
+    let alg = header.alg;
+
+    let supported_algs = config_string_vec(config, "JWTSupportedAlgs");
+    if !supported_algs.is_empty() {
+        let alg_name = format!("{:?}", alg);
+        if !supported_algs
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(&alg_name))
+        {
+            return Err(format!(
+                "JWT algorithm {:?} is not in the configured JWTSupportedAlgs",
+                alg
+            ));
+        }
+    }
+
+    let public_keys = config_string_vec(config, "JWTValidationPubKeys");
+    let jwks_url = config_string(config, "JWKSURL");
+    let discovery_url = config_string(config, "OIDCDiscoveryURL");
+    let key_sources = usize::from(!public_keys.is_empty())
+        + usize::from(jwks_url.is_some())
+        + usize::from(discovery_url.is_some());
+    if key_sources != 1 {
+        return Err(
+            "JWT auth method must configure exactly one of JWTValidationPubKeys, JWKSURL or OIDCDiscoveryURL"
+                .to_string(),
+        );
+    }
+
+    let mut decoding_keys = Vec::new();
+    if !public_keys.is_empty() {
+        for pem in &public_keys {
+            decoding_keys.push(decoding_key_from_pem(pem, alg)?);
+        }
+    } else {
+        let jwks_uri = if let Some(url) = jwks_url {
+            url
+        } else {
+            let discovery = fetch_discovery_doc_for_login(
+                discovery_url.as_deref().unwrap_or_default(),
+                config_string(config, "OIDCDiscoveryCACert").as_deref(),
+            )
+            .await?;
+            discovery.jwks_uri
+        };
+        let ca_cert = config_string(config, "JWKSCACert");
+        let jwks = fetch_jwks_for_login(&jwks_uri, ca_cert.as_deref()).await?;
+        decoding_keys = decoding_keys_from_jwks(&jwks, header.kid.as_deref(), alg)?;
+    }
+
+    let bound_issuer = config_string(config, "BoundIssuer");
+    let bound_audiences = config_string_vec(config, "BoundAudiences");
+
+    let mut validation = Validation::new(alg);
+    if let Some(ref issuer) = bound_issuer
+        && !issuer.is_empty()
+    {
+        validation.set_issuer(std::slice::from_ref(issuer));
+    }
+    if !bound_audiences.is_empty() {
+        validation.set_audience(&bound_audiences);
+    }
+    // Upstream defaults to 150s expiration/not-before leeway and 60s for all
+    // other claims. jsonwebtoken defaults to 60s and does not check `nbf`.
+    validation.leeway = 150;
+    validation.validate_nbf = true;
+
+    let mut last_error = "no JWT decoding key matched".to_string();
+    for key in &decoding_keys {
+        match decode::<serde_json::Value>(token, key, &validation) {
+            Ok(data) => {
+                return Ok(apply_login_claim_mappings(&data.claims, config));
+            }
+            Err(e) => last_error = e.to_string(),
+        }
+    }
+    Err(format!("JWT verification failed: {}", last_error))
+}
+
+fn config_string(config: &HashMap<String, serde_json::Value>, key: &str) -> Option<String> {
+    config
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+}
+
+fn config_string_vec(config: &HashMap<String, serde_json::Value>, key: &str) -> Vec<String> {
+    config
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn config_string_map(
+    config: &HashMap<String, serde_json::Value>,
+    key: &str,
+) -> HashMap<String, String> {
+    config
+        .get(key)
+        .and_then(|value| value.as_object())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|(name, value)| value.as_str().map(|v| (name.clone(), v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn decoding_key_from_pem(
+    pem: &str,
+    alg: jsonwebtoken::Algorithm,
+) -> Result<jsonwebtoken::DecodingKey, String> {
+    use jsonwebtoken::{Algorithm, DecodingKey};
+
+    let bytes = pem.as_bytes();
+    let key = match alg {
+        Algorithm::RS256
+        | Algorithm::RS384
+        | Algorithm::RS512
+        | Algorithm::PS256
+        | Algorithm::PS384
+        | Algorithm::PS512 => DecodingKey::from_rsa_pem(bytes),
+        Algorithm::ES256 | Algorithm::ES384 => DecodingKey::from_ec_pem(bytes),
+        Algorithm::EdDSA => DecodingKey::from_ed_pem(bytes),
+        other => return Err(format!("Unsupported JWT signing algorithm: {:?}", other)),
+    };
+    key.map_err(|e| format!("Failed to parse JWT validation public key: {}", e))
+}
+
+fn decoding_keys_from_jwks(
+    jwks: &Jwks,
+    kid: Option<&str>,
+    alg: jsonwebtoken::Algorithm,
+) -> Result<Vec<jsonwebtoken::DecodingKey>, String> {
+    use jsonwebtoken::{Algorithm, DecodingKey};
+
+    let candidates: Vec<&Jwk> = jwks
+        .keys
+        .iter()
+        .filter(|key| kid.is_none_or(|kid| key.kid.as_deref() == Some(kid)))
+        .collect();
+    if candidates.is_empty() {
+        return Err(format!("No JWK found for kid {:?}", kid));
+    }
+
+    let mut keys = Vec::new();
+    for jwk in candidates {
+        let key = match alg {
+            Algorithm::RS256
+            | Algorithm::RS384
+            | Algorithm::RS512
+            | Algorithm::PS256
+            | Algorithm::PS384
+            | Algorithm::PS512 => {
+                let n = jwk.n.as_deref().ok_or("JWK missing 'n' (modulus)")?;
+                let e = jwk.e.as_deref().ok_or("JWK missing 'e' (exponent)")?;
+                DecodingKey::from_rsa_components(n, e)
+            }
+            Algorithm::ES256 | Algorithm::ES384 => {
+                let x = jwk.x.as_deref().ok_or("JWK missing 'x' coordinate")?;
+                let y = jwk.y.as_deref().ok_or("JWK missing 'y' coordinate")?;
+                DecodingKey::from_ec_components(x, y)
+            }
+            Algorithm::EdDSA => {
+                let x = jwk.x.as_deref().ok_or("JWK missing 'x' coordinate")?;
+                DecodingKey::from_ed_components(x)
+            }
+            other => return Err(format!("Unsupported JWT signing algorithm: {:?}", other)),
+        }
+        .map_err(|e| format!("Failed to build decoding key from JWK: {}", e))?;
+        keys.push(key);
+    }
+    Ok(keys)
+}
+
+fn login_http_client(ca_cert: Option<&str>) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(ca_cert) = ca_cert {
+        let cert = reqwest::Certificate::from_pem(ca_cert.as_bytes())
+            .map_err(|e| format!("Failed to parse JWKS CA cert: {}", e))?;
+        builder = builder.add_root_certificate(cert);
+    }
+    builder
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client for JWT validation: {}", e))
+}
+
+async fn fetch_discovery_doc_for_login(
+    discovery_url: &str,
+    ca_cert: Option<&str>,
+) -> Result<OidcDiscoveryDoc, String> {
+    if let Some(entry) = DISCOVERY_CACHE.get(discovery_url) {
+        let (doc, created_at) = entry.value();
+        if created_at.elapsed() < DISCOVERY_CACHE_TTL {
+            return Ok(doc.clone());
+        }
+    }
+
+    let response = login_http_client(ca_cert)?
+        .get(discovery_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch OIDC discovery document: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "OIDC discovery endpoint returned HTTP {}",
+            response.status()
+        ));
+    }
+    let doc: OidcDiscoveryDoc = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse OIDC discovery document: {}", e))?;
+    DISCOVERY_CACHE.insert(discovery_url.to_string(), (doc.clone(), Instant::now()));
+    Ok(doc)
+}
+
+async fn fetch_jwks_for_login(jwks_uri: &str, ca_cert: Option<&str>) -> Result<Jwks, String> {
+    if let Some(entry) = JWKS_CACHE.get(jwks_uri) {
+        let (jwks, created_at) = entry.value();
+        if created_at.elapsed() < JWKS_CACHE_TTL {
+            return Ok(jwks.clone());
+        }
+    }
+
+    let response = login_http_client(ca_cert)?
+        .get(jwks_uri)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch JWKS: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("JWKS endpoint returned HTTP {}", response.status()));
+    }
+    let jwks: Jwks = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse JWKS: {}", e))?;
+    JWKS_CACHE.insert(jwks_uri.to_string(), (jwks.clone(), Instant::now()));
+    Ok(jwks)
+}
+
+fn apply_login_claim_mappings(
+    raw_claims: &serde_json::Value,
+    config: &HashMap<String, serde_json::Value>,
+) -> HashMap<String, serde_json::Value> {
+    let mut result = HashMap::new();
+    for (claim, variable) in config_string_map(config, "ClaimMappings") {
+        if let Some(value) = raw_claims.get(&claim) {
+            result.insert(variable, value.clone());
+        }
+    }
+    for (claim, variable) in config_string_map(config, "ListClaimMappings") {
+        if let Some(value) = raw_claims.get(&claim) {
+            let normalized = match value.as_array() {
+                Some(values) => serde_json::Value::Array(values.to_vec()),
+                None => value.clone(),
+            };
+            result.insert(variable, normalized);
+        }
+    }
+    result
+}
+
 /// Verifies the JWT and extracts the claims.
 ///
 /// Steps:
@@ -1110,11 +1414,72 @@ pub fn invalidate_all_authenticators() {
 }
 
 // ============================================================================
+// Test support shared by ACL and OIDC unit tests.
+// ============================================================================
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use base64::Engine;
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+    /// RSA private key generated only for tests. Never used in production.
+    const TEST_RSA_PRIVATE_DER_B64: &str = "MIIEowIBAAKCAQEAyXsJNXZFplyXWVbk9tmOAMZR4PtrEcsEAeXTlTOyt7Cy+qxcEg6PLPesTkQg22t/EaIKpQlpH1hkKWSKR+qloEEAJJW5VUqXEAgLDkxag/iXpdiSkZJc6tsvHZ6ACSZxnt5oP+nEOe2nlBZM7s4B21rdMcFECB2ArB2qxZkwsG7K4Z78vgjrlBkfXbDQBTzGUjYhLXvXa+NCqRwDwr2RMFauAmnlFezkDE3CcefXEtKbwsQ27o5RVUwDCDyAGbWLK7LejPqQvIYoGYcNCtWdt1Eu7JBXW694xVcEEMZi6vvoQ0Zoj+E/Wc1iJ77p5wXN3t9TQfSQxDyWmW7QK/UQjQIDAQABAoH/do7IUpmOOy9Hae7fT9H9DEMjj0aKArnWONGBMtSU7JYNjZuC7fxbCLHi+qFDrczVNAfDnjjeRvyiGzYOQvsfP97LXh5GTGbMcE03o9Zd1gI3H+nuVVG3QTOEZTg7TScW/QlFE+3Wy4fLXJpGDW2u/15KiQMqLJXAIZS19aq46CvATHEZO7uU7aKiC6QyD75soq75HHD4prWru7Kyi4dNLjDjTmaK3mdSu3Rab6crObKR0Y8vp+JnnoVoAXTggEOzsJcYHZGbIV+N0I1B5SIjBgrXd3dsProOFyNx+1Jc9/5S5bmU2hjuNzqBP4DdIXUnjbjBqDb6aC3VNXvtfy2BAoGBAPvSlDHfXsIXAS5wqD131e4UKVj4MNzR+KhG/LT55u60qVZLt+BPW5MCcaFDudZZOTR7sunm/pHVJTgTUGMp9/IiXqjixmwkEJlRcvTZSNwvYqgDfGk7V6H3TcOrpgSVMWSZtK6/wv8uZiAa92+qqWioSb7sEpPj2sJwyny5BHltAoGBAMzSqysy1QxvISPiU8O63aGFlxlYJTvvu93pcqGOG7MZq08n7zyHbsjPzejkyiXW2M3Ypg5aO61YfncCLyfbzfxKJo/ighd30EsYmUQvZ30+mLJGBXoZNEBvXlt36S7/vEqMKSlMXzKb0Q1i6XMlHMVzO4HIW7N8gPgaHaqhYp+hAoGBAOjQYO5S4tpyRkdXJFPf7Mr1nNyCaTpebZO2PYBb4mMiZ8Q+sLsS40jg44kCgldnmfmpu1mAlC7jbkuPn6xuaqtTl0xwjJ4CIc59fNhd4nye2okW3/iyQmydpSmYEh7+h/HIIUHGTFN75DMee1Cj6Ye2vqdivjI4YFGP0cTJkRdpAoGBAJJKBScdbz0qQik3BUzOsm0i1QCtDCr61ttwWQc6UF5i/w/SHfTFZkLW6OJmRlswUDj1e+TUXbs5cVnenX+CZmTDMTejN/c7A/Ie55jjoq65fqYVjOPgDInZATOjOVDwJrO3184/Vd73myBMfSBYaWw9GUtgpt5TFmodfQLZsW8BAoGBAOmnRnz6mwm8R/3Qd4NPH9lQJc5oS2ID0tmTwf78hvrK9+F5AhwirquRE7fQHHuZ3By9GJAhoQa9tpU/q8h40g8yqJP3G8ok9lC3otH5cbGi6i7L3fKy5/jiNZfWAYCd46Og0H+46w1LxZMdaBBVUljr5z6RCLkuqUErk3NqRn98";
+
+    /// PEM public key matching `TEST_RSA_PRIVATE_DER_B64`.
+    pub(crate) const TEST_RSA_PUBLIC_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyXsJNXZFplyXWVbk9tmO\nAMZR4PtrEcsEAeXTlTOyt7Cy+qxcEg6PLPesTkQg22t/EaIKpQlpH1hkKWSKR+ql\noEEAJJW5VUqXEAgLDkxag/iXpdiSkZJc6tsvHZ6ACSZxnt5oP+nEOe2nlBZM7s4B\n21rdMcFECB2ArB2qxZkwsG7K4Z78vgjrlBkfXbDQBTzGUjYhLXvXa+NCqRwDwr2R\nMFauAmnlFezkDE3CcefXEtKbwsQ27o5RVUwDCDyAGbWLK7LejPqQvIYoGYcNCtWd\nt1Eu7JBXW694xVcEEMZi6vvoQ0Zoj+E/Wc1iJ77p5wXN3t9TQfSQxDyWmW7QK/UQ\njQIDAQAB\n-----END PUBLIC KEY-----";
+
+    /// A minimal upstream-shaped `jwt` auth method config.
+    pub(crate) fn jwt_auth_method_config() -> Option<HashMap<String, serde_json::Value>> {
+        let mut config = HashMap::new();
+        config.insert(
+            "JWTValidationPubKeys".to_string(),
+            serde_json::json!([TEST_RSA_PUBLIC_PEM]),
+        );
+        config.insert("JWTSupportedAlgs".to_string(), serde_json::json!(["RS256"]));
+        config.insert(
+            "BoundIssuer".to_string(),
+            serde_json::json!("https://issuer.example/"),
+        );
+        config.insert(
+            "ClaimMappings".to_string(),
+            serde_json::json!({"team": "team_name"}),
+        );
+        Some(config)
+    }
+
+    /// Sign a test JWT. `exp_delta_seconds` may be negative for expired tokens.
+    pub(crate) fn signed_test_jwt(exp_delta_seconds: i64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let claims = serde_json::json!({
+            "sub": "acl-test-user",
+            "iss": "https://issuer.example/",
+            "team": "platform",
+            "iat": now,
+            "exp": now + exp_delta_seconds,
+        });
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(TEST_RSA_PRIVATE_DER_B64)
+            .expect("valid test RSA key");
+        encode(
+            &Header::new(Algorithm::RS256),
+            &claims,
+            &EncodingKey::from_rsa_der(&der),
+        )
+        .expect("sign test JWT")
+    }
+}
+
+// ============================================================================
 // Unit tests.
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::*;
     use super::*;
     use std::collections::HashMap;
 
@@ -1561,5 +1926,57 @@ mod tests {
 
         // A non-existent claim should not appear in the result.
         assert!(!result.contains_key("missing_var"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_login_jwt_accepts_valid_token_and_maps_claims() {
+        let config = jwt_auth_method_config();
+        let claims = validate_login_jwt(&config, &signed_test_jwt(3600))
+            .await
+            .expect("valid JWT should be accepted");
+        assert_eq!(
+            claims.get("team_name").and_then(|v| v.as_str()),
+            Some("platform")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_login_jwt_rejects_missing_token() {
+        let config = jwt_auth_method_config();
+        let error = validate_login_jwt(&config, "  ")
+            .await
+            .expect_err("empty bearer token must fail");
+        assert!(error.contains("Bearer token is required"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_login_jwt_rejects_expired_token() {
+        let config = jwt_auth_method_config();
+        let error = validate_login_jwt(&config, &signed_test_jwt(-3600))
+            .await
+            .expect_err("expired JWT must fail");
+        assert!(error.contains("JWT verification failed"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_login_jwt_rejects_malformed_token() {
+        let config = jwt_auth_method_config();
+        let error = validate_login_jwt(&config, "not-a-jwt")
+            .await
+            .expect_err("malformed JWT must fail");
+        assert!(error.contains("Failed to decode JWT header"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_login_jwt_rejects_multiple_key_sources() {
+        let mut config = jwt_auth_method_config().expect("test config");
+        config.insert(
+            "JWKSURL".to_string(),
+            serde_json::json!("https://example.com/certs"),
+        );
+        let error = validate_login_jwt(&Some(config), &signed_test_jwt(3600))
+            .await
+            .expect_err("ambiguous key config must fail closed");
+        assert!(error.contains("exactly one"));
     }
 }
