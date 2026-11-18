@@ -33,6 +33,12 @@
 
 SDK_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Nacos Java SDK writes config snapshots and naming caches under ${user.home}/nacos
+# by default. The sandbox blocks the SDK's cache cleanup under that home path,
+# whose stderr made otherwise-green background full runs report as failed.
+# Redirect both trees into a workspace-local, git-ignored directory instead.
+NACOS_SDK_CACHE_DIR="${SDK_PROJECT_ROOT}/data/nacos-sdk-cache"
+
 # Run the Consul Go SDK test suite.
 # Usage: sdk_run_consul [run_filter]
 sdk_run_consul() {
@@ -103,11 +109,13 @@ sdk_run_nacos() {
     # reports 0/0. So quiet has to be opt-in per value, not per non-emptiness.
     local mvn_q=""
     [ "${MVN_QUIET:-0}" = "1" ] && mvn_q="-q"
+    mkdir -p "${NACOS_SDK_CACHE_DIR}"
     ( cd "${SDK_PROJECT_ROOT}/sdk-tests/nacos-java-tests" && \
         mvn ${mvn_q} test \
             -Dnacos.server=127.0.0.1:8848 \
             -Dnacos.username=nacos -Dnacos.password=nacos \
             -Dnacos.cluster.node1=127.0.0.1:8848 \
+            -DJM.SNAPSHOT.PATH="${NACOS_SDK_CACHE_DIR}" \
             ${cluster_peers} \
             $test_flag )
 }

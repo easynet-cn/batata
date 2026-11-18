@@ -36,6 +36,10 @@ target/
 Cargo.lock
 
 /data
+# Nacos Java SDK snapshots + naming cache, redirected via JM.SNAPSHOT.PATH in
+# scripts/sdk_run_lib.sh. Kept inside the workspace so the sandbox does not
+# block the SDK's cache cleanup under the user's home directory.
+/data/nacos-sdk-cache/
 /logs
 
 *.pid
