@@ -30,6 +30,7 @@ use crate::event::ConsulEventService;
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTableIndex};
 use crate::kv::ConsulKVService;
+use crate::lock_delay::ConsulLockDelay;
 use crate::model::{ConsulDatacenterConfig, ConsulPluginConfig};
 use crate::naming_store::ConsulNamingStore;
 use crate::peering::ConsulPeeringService;
@@ -58,6 +59,9 @@ pub struct NamingStoreApplyHook {
     /// change triggers a refresh of follower-side CA material from RocksDB.
     /// Kept optional so standalone/test callers need not construct a CA.
     ca: Option<ConsulConnectCAService>,
+    /// Shared leader-local lock-delay map. Every node records the same
+    /// committed session-destroy delay in its own wall-clock map.
+    lock_delay: ConsulLockDelay,
 }
 
 impl NamingStoreApplyHook {
@@ -67,7 +71,14 @@ impl NamingStoreApplyHook {
             store,
             registry,
             ca: None,
+            lock_delay: ConsulLockDelay::default(),
         }
+    }
+
+    /// Share the leader-local lock-delay map with the apply hook.
+    pub fn with_lock_delay(mut self, lock_delay: ConsulLockDelay) -> Self {
+        self.lock_delay = lock_delay;
+        self
     }
 
     /// Attach the Connect CA service so CA/intention applies refresh the
@@ -132,6 +143,10 @@ impl crate::raft::ConsulApplyHook for NamingStoreApplyHook {
         if let Some(ref ca) = self.ca {
             ca.refresh_from_rocks();
         }
+    }
+
+    fn on_session_lock_delay(&self, keys: &[String], lock_delay_nanos: u64) {
+        self.lock_delay.set_keys(keys, lock_delay_nanos);
     }
 }
 
@@ -267,8 +282,11 @@ impl ConsulPlugin {
         registry: Arc<InstanceCheckRegistry>,
         index_provider: ConsulIndexProvider,
     ) -> ConsulPluginInner {
-        let session = ConsulSessionService::new().with_node_name(self.dc_config.node_name.clone());
-        let kv = ConsulKVService::new();
+        let lock_delay = ConsulLockDelay::default();
+        let session = ConsulSessionService::new()
+            .with_node_name(self.dc_config.node_name.clone())
+            .with_lock_delay(lock_delay.clone());
+        let kv = ConsulKVService::new().with_lock_delay(lock_delay);
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
         let peering = Arc::new(ConsulPeeringService::new());
         let config_entry = ConsulConfigEntryService::new();
@@ -330,11 +348,14 @@ impl ConsulPlugin {
         consul_raft: Arc<ConsulRaftWriter>,
         table_index: ConsulTableIndex,
         connect_ca: ConsulConnectCAService,
+        lock_delay: ConsulLockDelay,
     ) -> ConsulPluginInner {
         let index_provider: ConsulIndexProvider = table_index;
         let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone())
-            .with_node_name(self.dc_config.node_name.clone());
-        let kv = ConsulKVService::with_raft(db.clone(), consul_raft.clone());
+            .with_node_name(self.dc_config.node_name.clone())
+            .with_lock_delay(lock_delay.clone());
+        let kv =
+            ConsulKVService::with_raft(db.clone(), consul_raft.clone()).with_lock_delay(lock_delay);
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
 
         // Restoring here rather than at the call site keeps the recovery
@@ -358,10 +379,15 @@ impl ConsulPlugin {
                 consul_raft.clone(),
             ),
             health: ConsulHealthService::new(registry.clone(), check_index)
-                .with_node_name(self.dc_config.node_name.clone()),
+                .with_node_name(self.dc_config.node_name.clone())
+                .with_raft_sink(consul_raft.clone()),
             kv,
-            catalog: ConsulCatalogService::with_dc_config(naming_store.clone(), &self.dc_config)
-                .with_index_provider(index_provider.clone()),
+            catalog: ConsulCatalogService::with_raft(
+                naming_store.clone(),
+                &self.dc_config,
+                consul_raft.clone(),
+            )
+            .with_index_provider(index_provider.clone()),
             acl: if self.config.acl_enabled {
                 AclService::with_raft_and_token(
                     db.clone(),
@@ -492,6 +518,7 @@ impl ConsulPlugin {
             consul_raft,
             table_index,
             connect_ca,
+            ConsulLockDelay::default(),
         );
         let _ = plugin.inner.set(inner);
         plugin
@@ -753,6 +780,11 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             inner.dc_config.datacenter.clone(),
             inner.raft_node_for_health.clone(),
         );
+        let read_policy: std::sync::Arc<dyn crate::read_consistency::ConsulReadPolicy> =
+            std::sync::Arc::new(crate::read_consistency::RaftReadPolicy::new(
+                inner.raft_writer.clone(),
+                inner.dc_config.node_id.clone(),
+            ));
 
         cfg.app_data(actix_web::web::Data::from(inner.naming_store.clone()))
             .app_data(actix_web::web::Data::new(inner.agent.clone()))
@@ -775,7 +807,10 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .app_data(actix_web::web::Data::new(inner.dc_config.clone()))
             .app_data(actix_web::web::Data::new(inner.index_provider.clone()))
             .app_data(actix_web::web::Data::new(cm))
-            .service(crate::route::routes());
+            .app_data(actix_web::web::Data::new(read_policy))
+            .service(
+                crate::route::routes().wrap(crate::read_consistency::ConsulReadConsistency::new()),
+            );
     }
 
     async fn start_background_tasks(&self) -> anyhow::Result<()> {
@@ -1149,6 +1184,15 @@ impl ConsulPlugin {
         let connect_ca = ConsulConnectCAService::with_raft(db.clone(), consul_writer.clone())
             .with_datacenter(self.dc_config.datacenter.clone());
 
+        // One shared wall-clock map per node: the apply hook records committed
+        // session destroys on every node, and the leader-side write guard
+        // enforces them before accepting a reacquire.
+        let lock_delay = ConsulLockDelay::default();
+        let guard: Arc<dyn batata_consistency::raft::RaftWriteGuard> = Arc::new(
+            crate::lock_delay::ConsulLockDelayGuard::new(lock_delay.clone(), db.clone()),
+        );
+        core_raft.register_write_guard(guard).await;
+
         // Install the apply-back hook: when the state machine applies a
         // `CatalogRegister`/`CatalogDeregister` log entry, update the
         // in-memory `ConsulNamingStore` on ALL nodes (leader + followers).
@@ -1159,7 +1203,8 @@ impl ConsulPlugin {
         {
             let hook: Arc<dyn crate::raft::ConsulApplyHook> = Arc::new(
                 NamingStoreApplyHook::new(consul_naming_store.clone(), consul_registry.clone())
-                    .with_connect_ca(connect_ca.clone()),
+                    .with_connect_ca(connect_ca.clone())
+                    .with_lock_delay(lock_delay.clone()),
             );
             *apply_hook_slot.write().await = Some(hook);
             tracing::info!("Consul apply-back hook installed (NamingStoreApplyHook)");
@@ -1178,6 +1223,7 @@ impl ConsulPlugin {
             consul_writer,
             table_index,
             connect_ca,
+            lock_delay,
         )
     }
 }

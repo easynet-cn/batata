@@ -47,6 +47,7 @@ use rocksdb::{DB, Options};
 use tempfile::TempDir;
 
 use batata_plugin_consul::index_provider::{ConsulTable, ConsulTableIndex};
+use batata_plugin_consul::lock_delay::ConsulLockDelay;
 use batata_plugin_consul::model::AgentServiceRegistration;
 use batata_plugin_consul::naming_store::ConsulNamingStore;
 use batata_plugin_consul::plugin::{
@@ -86,6 +87,8 @@ pub struct ConsulNode {
     pub registry: Arc<InstanceCheckRegistry>,
     pub table_index: ConsulTableIndex,
     pub handler: Arc<ConsulRaftPluginHandler>,
+    /// Leader-local lock-delay map installed in the production apply hook.
+    pub lock_delay: ConsulLockDelay,
     /// Committed state. Only the CFs Consul owns matter here.
     db: Arc<DB>,
     /// Kept alive so the RocksDB directory outlives the test.
@@ -136,8 +139,11 @@ impl ConsulCluster {
         let table_index = ConsulTableIndex::new();
 
         let handler = ConsulRaftPluginHandler::new_arc(table_index.clone());
-        let hook: Arc<dyn batata_plugin_consul::raft::ConsulApplyHook> =
-            Arc::new(NamingStoreApplyHook::new(store.clone(), registry.clone()));
+        let lock_delay = ConsulLockDelay::default();
+        let hook: Arc<dyn batata_plugin_consul::raft::ConsulApplyHook> = Arc::new(
+            NamingStoreApplyHook::new(store.clone(), registry.clone())
+                .with_lock_delay(lock_delay.clone()),
+        );
         // Nothing else holds the slot during construction, so `try_write`
         // cannot fail here.
         handler
@@ -153,6 +159,7 @@ impl ConsulCluster {
             registry,
             table_index,
             handler,
+            lock_delay,
             db,
             _tmp: tmp,
             online: true,
@@ -335,7 +342,8 @@ impl ConsulCluster {
         // against the fresh ones, or the node would keep filling memory that
         // nobody reads any more.
         let hook: Arc<dyn batata_plugin_consul::raft::ConsulApplyHook> = Arc::new(
-            NamingStoreApplyHook::new(node.store.clone(), node.registry.clone()),
+            NamingStoreApplyHook::new(node.store.clone(), node.registry.clone())
+                .with_lock_delay(node.lock_delay.clone()),
         );
         node.handler
             .apply_hook()

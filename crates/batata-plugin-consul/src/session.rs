@@ -62,6 +62,8 @@ pub struct ConsulSessionService {
     _temp_dir: Option<Arc<tempfile::TempDir>>,
     /// Optional Raft writer for cluster-mode replication (via core Raft PluginWrite)
     raft_node: Option<Arc<ConsulRaftWriter>>,
+    /// Shared leader-local lock-delay map, used by standalone session destroy.
+    lock_delay: crate::lock_delay::ConsulLockDelay,
 }
 
 impl ConsulSessionService {
@@ -77,6 +79,7 @@ impl ConsulSessionService {
             node_name,
             _temp_dir: Some(temp_dir),
             raft_node: None,
+            lock_delay: crate::lock_delay::ConsulLockDelay::default(),
         }
     }
 
@@ -143,6 +146,7 @@ impl ConsulSessionService {
             node_name,
             _temp_dir: None,
             raft_node: None,
+            lock_delay: crate::lock_delay::ConsulLockDelay::default(),
         }
     }
 
@@ -180,7 +184,14 @@ impl ConsulSessionService {
             node_name,
             _temp_dir: None,
             raft_node: Some(raft_node),
+            lock_delay: crate::lock_delay::ConsulLockDelay::default(),
         }
+    }
+
+    /// Share the leader-local lock-delay map with the KV service.
+    pub fn with_lock_delay(mut self, lock_delay: crate::lock_delay::ConsulLockDelay) -> Self {
+        self.lock_delay = lock_delay;
+        self
     }
 
     // ========================================================================
@@ -310,17 +321,25 @@ impl ConsulSessionService {
         } else {
             // Preserve the standalone API contract: destroying an unknown
             // session is false. Raft uses upstream's idempotent success.
-            if self.get_stored(session_id).is_none() {
+            let Some(stored) = self.get_stored(session_id) else {
                 return false;
-            }
+            };
             // Standalone uses the same FSM helper as Raft apply so `release`
             // and `delete` behave identically in both deployment modes.
-            crate::raft::plugin_handler::apply_session_destroy(
+            // Capture the delay payload before the helper removes the session
+            // index.
+            let delay_info = crate::raft::plugin_handler::session_delay_info(&self.db, session_id);
+            let success = crate::raft::plugin_handler::apply_session_destroy(
                 &self.db,
                 session_id,
                 current_unix_secs(),
             )
-            .success
+            .success;
+            if success {
+                self.lock_delay
+                    .set_keys(&delay_info.keys, stored.session.lock_delay);
+            }
+            success
         }
     }
 
@@ -867,6 +886,11 @@ pub async fn renew_session(
 mod tests {
     use super::*;
 
+    use std::time::Duration;
+
+    use crate::kv::{ConsulKVService, open_temp_consul_db};
+    use crate::lock_delay::ConsulLockDelay;
+
     #[test]
     fn test_parse_duration() {
         assert_eq!(parse_duration("15s"), Some(15));
@@ -1238,5 +1262,54 @@ mod tests {
         let invalidated = service.invalidate_sessions_for_check("nonexistent-check");
         assert!(invalidated.is_empty());
         assert_eq!(service.list_sessions().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_destroy_session_records_lock_delay_for_standalone_reacquire() {
+        let (db, _dir) = open_temp_consul_db();
+        let delay = ConsulLockDelay::default();
+        let sessions = ConsulSessionService::with_rocks(db.clone()).with_lock_delay(delay.clone());
+        let kv = ConsulKVService::with_rocks(db).with_lock_delay(delay.clone());
+
+        let holder = sessions
+            .create_session(SessionCreateRequest {
+                lock_delay: Some("1s".to_string()),
+                ..Default::default()
+            })
+            .await;
+        let successor = sessions
+            .create_session(SessionCreateRequest::default())
+            .await;
+        kv.put("lock/key".to_string(), "value", None).await;
+        assert!(kv.acquire_session("lock/key", &holder.id).await);
+
+        assert!(sessions.destroy_session(&holder.id).await);
+        assert!(delay.is_active("lock/key"));
+        assert!(!kv.acquire_session("lock/key", &successor.id).await);
+    }
+
+    #[tokio::test]
+    async fn test_lock_delay_allows_acquire_after_expiry() {
+        let (db, _dir) = open_temp_consul_db();
+        let delay = ConsulLockDelay::default();
+        let sessions = ConsulSessionService::with_rocks(db.clone()).with_lock_delay(delay.clone());
+        let kv = ConsulKVService::with_rocks(db).with_lock_delay(delay.clone());
+
+        let holder = sessions
+            .create_session(SessionCreateRequest {
+                lock_delay: Some("100ms".to_string()),
+                ..Default::default()
+            })
+            .await;
+        let successor = sessions
+            .create_session(SessionCreateRequest::default())
+            .await;
+        kv.put("lock/key".to_string(), "value", None).await;
+        assert!(kv.acquire_session("lock/key", &holder.id).await);
+
+        assert!(sessions.destroy_session(&holder.id).await);
+        assert!(delay.is_active("lock/key"));
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(kv.acquire_session("lock/key", &successor.id).await);
     }
 }

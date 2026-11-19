@@ -62,6 +62,18 @@ enum HookDispatch {
     /// hook refreshes its CA service from RocksDB — no per-variant data is
     /// needed because a single refresh picks up every committed CA change.
     CaChange,
+    /// A session was destroyed: every node records the same local wall-time
+    /// lock-delay expiration for the keys that session held.
+    SessionLockDelay(SessionDelayInfo),
+}
+
+/// Keys released by a destroyed session plus the session's configured
+/// `LockDelay` in nanoseconds. Computed before the FSM apply removes the
+/// session index, then handed to the apply hook on every node.
+#[derive(Debug, Default)]
+pub(crate) struct SessionDelayInfo {
+    pub keys: Vec<String>,
+    pub lock_delay_nanos: u64,
 }
 
 /// Represents `ConsulRaftPluginHandler`.
@@ -157,6 +169,12 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
             ConsulRaftRequest::CatalogDeregister { key } => {
                 Some(HookDispatch::CatalogDeregister { key: key.clone() })
             }
+            // Read the session index before the apply removes it. The hook
+            // fires on every node, so lock delay is leader-independent state
+            // recorded from the same committed request.
+            ConsulRaftRequest::SessionDestroy { session_id } => Some(
+                HookDispatch::SessionLockDelay(session_delay_info(db, session_id)),
+            ),
             // All ACL mutations flow through a single hook dispatch —
             // the concrete hook impl invalidates every cached entry on
             // every ACL change, so per-variant discrimination would buy
@@ -222,6 +240,9 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
                     hook.on_health_check_deregister(check_key)
                 }
                 HookDispatch::CaChange => hook.on_ca_change(),
+                HookDispatch::SessionLockDelay(info) => {
+                    hook.on_session_lock_delay(&info.keys, info.lock_delay_nanos)
+                }
             }
         }
 
@@ -395,6 +416,7 @@ fn apply_consul_request(
     // both in one state-store transaction; advance the KVS watch index too
     // so blocking queries see the cascaded release/delete.
     let session_destroy = matches!(&request, ConsulRaftRequest::SessionDestroy { .. });
+    let kv_transaction = matches!(&request, ConsulRaftRequest::KVTransaction { .. });
 
     let resp = match request {
         ConsulRaftRequest::KVPut {
@@ -439,19 +461,7 @@ fn apply_consul_request(
             stored_kv_json,
             expected_modify_index,
         } => apply_kv_cas(db, &key, &stored_kv_json, expected_modify_index, log_index),
-        ConsulRaftRequest::KVTransaction {
-            puts,
-            deletes,
-            session_index_puts,
-            session_index_deletes,
-        } => apply_kv_transaction(
-            db,
-            puts,
-            deletes,
-            session_index_puts,
-            session_index_deletes,
-            log_index,
-        ),
+        ConsulRaftRequest::KVTransaction { ops } => apply_kv_transaction(db, &ops, log_index),
         ConsulRaftRequest::SessionCreate {
             session_id,
             stored_session_json,
@@ -650,8 +660,11 @@ fn apply_consul_request(
         ConsulRaftRequest::Noop => ConsulRaftResponse::success(),
     };
 
-    // Update table index AFTER apply
-    table_index.update(table, log_index);
+    // Update table index AFTER apply. A transaction that rolled back must not
+    // wake blocking queries as if the KV table had changed.
+    if !kv_transaction || resp.success {
+        table_index.update(table, log_index);
+    }
     if session_destroy && resp.success {
         table_index.update(ConsulTable::KVS, log_index);
     }
@@ -906,36 +919,19 @@ fn apply_kv_cas(
     }
 }
 
-fn apply_kv_transaction(
-    db: &DB,
-    puts: Vec<(String, String)>,
-    deletes: Vec<String>,
-    session_index_puts: Vec<String>,
-    session_index_deletes: Vec<String>,
-    log_index: u64,
-) -> ConsulRaftResponse {
-    let cf_k = cf_kv(db);
-    let cf_s = cf_sessions(db);
-    let mut batch = WriteBatch::default();
-
-    for (key, stored_kv_json) in &puts {
-        let json = rewrite_kv_indexes(db, key, stored_kv_json, log_index);
-        batch.put_cf(cf_k, key.as_bytes(), json.as_bytes());
+fn apply_kv_transaction(db: &DB, ops: &[crate::kv::TxnOp], log_index: u64) -> ConsulRaftResponse {
+    match crate::kv::apply_kv_transaction_ops(db, ops, log_index) {
+        Ok(result) => {
+            let success = result.errors.is_none();
+            let data = serde_json::to_vec(&result).ok();
+            ConsulRaftResponse {
+                success,
+                data,
+                message: None,
+            }
+        }
+        Err(e) => ConsulRaftResponse::failure(e),
     }
-
-    for key in &deletes {
-        batch.delete_cf(cf_k, key.as_bytes());
-    }
-
-    for idx_key in &session_index_puts {
-        batch.put_cf(cf_s, idx_key.as_bytes(), b"");
-    }
-
-    for idx_key in &session_index_deletes {
-        batch.delete_cf(cf_s, idx_key.as_bytes());
-    }
-
-    write_batch(db, batch, "KV transaction")
 }
 
 // ============================================================================
@@ -952,6 +948,50 @@ fn apply_session_create(
     match db.put_cf(cf_sessions(db), session_id.as_bytes(), json.as_bytes()) {
         Ok(_) => ConsulRaftResponse::success(),
         Err(e) => ConsulRaftResponse::failure(format!("Session create failed: {}", e)),
+    }
+}
+
+/// Collect the lock-delay payload for a session destroy before the FSM
+/// removes the `kidx:` index. Corrupt or missing state yields an empty
+/// payload; the FSM still owns the authoritative release/delete decision.
+pub(crate) fn session_delay_info(db: &DB, session_id: &str) -> SessionDelayInfo {
+    let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS) else {
+        return SessionDelayInfo::default();
+    };
+    let Ok(Some(bytes)) = db.get_cf(cf, session_id.as_bytes()) else {
+        return SessionDelayInfo::default();
+    };
+    let Ok(stored) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return SessionDelayInfo::default();
+    };
+    let lock_delay_nanos = stored
+        .get("session")
+        .and_then(|session| {
+            session
+                .get("LockDelay")
+                .or_else(|| session.get("lock_delay"))
+        })
+        .and_then(|delay| delay.as_u64())
+        .unwrap_or_default();
+
+    let prefix = format!("kidx:{}:", session_id);
+    let keys = db
+        .iterator_cf(
+            cf,
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
+        )
+        .flatten()
+        .take_while(|(key, _)| key.starts_with(prefix.as_bytes()))
+        .filter_map(|(key, _)| {
+            String::from_utf8(key[prefix.len()..].to_vec())
+                .ok()
+                .filter(|key| !key.is_empty())
+        })
+        .collect();
+
+    SessionDelayInfo {
+        keys,
+        lock_delay_nanos,
     }
 }
 
@@ -1495,7 +1535,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use crate::kv::open_temp_consul_db;
+    use crate::kv::{KVTxnOp, TxnOp, TxnResult, open_temp_consul_db};
 
     fn stored_json(session: Option<&str>, lock_index: u64, create_index: u64) -> String {
         let mut pair = json!({
@@ -1858,5 +1898,111 @@ mod tests {
                 .expect("read session index")
                 .is_none()
         );
+    }
+
+    fn txn_op(
+        verb: &str,
+        key: &str,
+        value: Option<&str>,
+        index: Option<u64>,
+        session: Option<&str>,
+    ) -> TxnOp {
+        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+
+        TxnOp {
+            kv: Some(KVTxnOp {
+                verb: verb.to_string(),
+                key: key.to_string(),
+                value: value.map(|value| BASE64.encode(value.as_bytes())),
+                flags: None,
+                index,
+                session: session.map(str::to_string),
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn txn_stored_json(key: &str, modify_index: u64) -> String {
+        json!({
+            "pair": {
+                "Key": key,
+                "CreateIndex": modify_index,
+                "ModifyIndex": modify_index,
+                "LockIndex": 0u64,
+                "Flags": 0u64,
+            },
+            "created_at": 1i64,
+            "modified_at": 1i64,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn apply_kv_transaction_commits_every_write_with_one_index() {
+        let (db, _dir) = open_temp_consul_db();
+        let ops = vec![
+            txn_op("set", "txn/a", Some("a"), None, None),
+            txn_op("set", "txn/b", Some("b"), None, None),
+        ];
+
+        let response = apply_kv_transaction(&db, &ops, 42);
+
+        assert!(response.success);
+        let result: TxnResult =
+            serde_json::from_slice(response.data.expect("transaction result data").as_slice())
+                .expect("decode transaction result");
+        assert!(result.errors.is_none());
+        assert_eq!(committed_kv(&db, "txn/a")["pair"]["ModifyIndex"], 42);
+        assert_eq!(committed_kv(&db, "txn/b")["pair"]["ModifyIndex"], 42);
+    }
+
+    #[test]
+    fn apply_kv_transaction_rolls_back_the_whole_batch_on_conflict() {
+        let (db, _dir) = open_temp_consul_db();
+        db.put_cf(
+            cf_kv(&db),
+            b"txn/seed",
+            txn_stored_json("txn/seed", 10).as_bytes(),
+        )
+        .expect("seed key");
+        let ops = vec![
+            txn_op("set", "txn/new", Some("value"), None, None),
+            txn_op("delete-cas", "txn/seed", None, Some(9), None),
+        ];
+
+        let response = apply_kv_transaction(&db, &ops, 43);
+
+        assert!(!response.success);
+        let result: TxnResult =
+            serde_json::from_slice(response.data.expect("transaction result data").as_slice())
+                .expect("decode transaction result");
+        assert!(result.errors.is_some());
+        assert!(result.results.is_none());
+        assert!(
+            db.get_cf(cf_kv(&db), b"txn/new")
+                .expect("read new key")
+                .is_none()
+        );
+        assert_eq!(committed_kv(&db, "txn/seed")["pair"]["ModifyIndex"], 10);
+    }
+
+    #[test]
+    fn apply_kv_transaction_advances_watch_index_only_on_success() {
+        let (db, _dir) = open_temp_consul_db();
+        let table_index = ConsulTableIndex::new();
+        let success = ConsulRaftRequest::KVTransaction {
+            ops: vec![txn_op("set", "txn/ok", Some("v"), None, None)],
+        };
+
+        let response = apply_consul_request(&db, &table_index, success, 50);
+        assert!(response.success);
+        assert_eq!(table_index.current_index(ConsulTable::KVS), 50);
+
+        let conflict = ConsulRaftRequest::KVTransaction {
+            ops: vec![txn_op("check-index", "txn/ok", None, Some(999), None)],
+        };
+        let response = apply_consul_request(&db, &table_index, conflict, 51);
+        assert!(!response.success);
+        assert_eq!(table_index.current_index(ConsulTable::KVS), 50);
     }
 }

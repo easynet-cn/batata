@@ -54,6 +54,11 @@ pub trait ConsulApplyHook: Send + Sync {
     /// in-memory CA material from RocksDB so follower-side leaf signing and
     /// SDS state reflect the committed change within the apply latency.
     fn on_ca_change(&self) {}
+
+    /// A `SessionDestroy` was committed. `keys` are the KV keys the session
+    /// held, and `lock_delay_nanos` is its configured `LockDelay`. Each node
+    /// records wall time locally; this must never be part of FSM equality.
+    fn on_session_lock_delay(&self, _keys: &[String], _lock_delay_nanos: u64) {}
 }
 
 /// Shared slot holding the optional hook. Registered once at plugin

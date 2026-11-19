@@ -18,6 +18,7 @@ pub mod snapshot_file;
 pub mod snapshot_format;
 pub mod state_machine;
 pub mod types;
+pub mod write_guard;
 
 // Re-export commonly used types
 pub use config::RaftConfig;
@@ -30,3 +31,4 @@ pub use request::{RaftRequest, RaftResponse};
 pub use snapshot_file::SnapshotFile;
 pub use state_machine::RocksStateMachine;
 pub use types::{NodeId, Raft, RaftMetrics, ServerState, TypeConfig};
+pub use write_guard::{RaftWriteGuard, SharedRaftWriteGuard, new_shared_write_guard};

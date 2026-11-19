@@ -40,6 +40,28 @@ fn forwarded_write_applied_index(
     })
 }
 
+/// Run the optional leader-side guard for one write.
+///
+/// Extracted from `write_with_index` so the leader-only ordering — validate,
+/// then record accepted side effects — has a direct unit-test seam. Followers
+/// skip the guard because only the leader's wall clock is authoritative;
+/// forwarded writes re-enter this function on the leader through gRPC.
+async fn run_write_guard(
+    is_leader: bool,
+    slot: &super::write_guard::SharedRaftWriteGuard,
+    request: &RaftRequest,
+) -> Result<(), String> {
+    if !is_leader {
+        return Ok(());
+    }
+    let Some(guard) = slot.read().await.clone() else {
+        return Ok(());
+    };
+    guard.validate(request).await?;
+    guard.on_accepted(request).await;
+    Ok(())
+}
+
 /// Cached gRPC channel for leader write-forwarding.
 /// Reuses the same HTTP/2 connection across requests to avoid per-write connect overhead.
 /// Channel is cheap to clone (Arc internally) so we store it rather than the client.
@@ -80,6 +102,10 @@ pub struct RaftNode {
     /// `HealthCheckStatusUpdate` Raft entry, every node's apply path calls
     /// this hook to update its `InstanceCheckRegistry` in lock-step.
     health_check_hook: super::health_check_hook::SharedHealthCheckHook,
+
+    /// Optional leader-side pre-commit guard. Consulted only when this node
+    /// is the leader, so wall-clock plugin state never reaches the FSM.
+    write_guard: super::write_guard::SharedRaftWriteGuard,
 
     /// Cached gRPC channel for forwarding writes to the Raft leader.
     /// Avoids creating a new TCP/HTTP2 connection on every forwarded write.
@@ -214,6 +240,7 @@ impl RaftNode {
                 plugin_registry,
                 naming_hook,
                 health_check_hook,
+                write_guard: super::write_guard::new_shared_write_guard(),
                 leader_channel: tokio::sync::Mutex::new(None),
                 stored_voter_ids,
             },
@@ -279,6 +306,13 @@ impl RaftNode {
         hook: Arc<dyn super::health_check_hook::HealthCheckApplyHook>,
     ) {
         super::health_check_hook::install_health_check_hook(&self.health_check_hook, hook).await;
+    }
+
+    /// Install a leader-side pre-commit guard. The slot is single-owner; a
+    /// second registration replaces the first, which is appropriate because
+    /// the leader must apply exactly one plugin's validation policy.
+    pub async fn register_write_guard(&self, guard: Arc<dyn super::write_guard::RaftWriteGuard>) {
+        *self.write_guard.write().await = Some(guard);
     }
 
     /// Replay all persistent instances from RocksDB `CF_INSTANCES` into the
@@ -466,6 +500,14 @@ impl RaftNode {
         request: RaftRequest,
     ) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
         debug!("Writing through Raft: {}", request.op_type());
+
+        // Leader-local wall-clock checks (e.g. Consul lock delay) must happen
+        // before the log entry exists. Followers skip the guard: their copy of
+        // leader-local state is advisory, and forwarded writes run this same
+        // guard on the leader before `client_write`.
+        if let Err(e) = run_write_guard(self.is_leader(), &self.write_guard, &request).await {
+            return Err(e.into());
+        }
 
         // Try local client_write first (succeeds if this node is the leader)
         match self.raft.client_write(request.clone()).await {
@@ -1035,6 +1077,79 @@ impl Default for RaftNodeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use async_trait::async_trait;
+
+    use crate::raft::write_guard::{RaftWriteGuard, new_shared_write_guard};
+
+    #[derive(Default)]
+    struct RecordingGuard {
+        calls: Arc<std::sync::Mutex<Vec<&'static str>>>,
+        reject: bool,
+    }
+
+    #[async_trait]
+    impl RaftWriteGuard for RecordingGuard {
+        async fn validate(&self, _request: &RaftRequest) -> Result<(), String> {
+            self.calls.lock().unwrap().push("validate");
+            if self.reject {
+                Err("rejected".to_string())
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn on_accepted(&self, _request: &RaftRequest) {
+            self.calls.lock().unwrap().push("accepted");
+        }
+    }
+
+    #[tokio::test]
+    async fn leader_guard_records_accepted_after_validation() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let slot = new_shared_write_guard();
+        *slot.write().await = Some(Arc::new(RecordingGuard {
+            calls: calls.clone(),
+            reject: false,
+        }));
+
+        run_write_guard(true, &slot, &RaftRequest::Noop)
+            .await
+            .unwrap();
+        assert_eq!(*calls.lock().unwrap(), vec!["validate", "accepted"]);
+    }
+
+    #[tokio::test]
+    async fn follower_skips_leader_guard() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let slot = new_shared_write_guard();
+        *slot.write().await = Some(Arc::new(RecordingGuard {
+            calls: calls.clone(),
+            reject: false,
+        }));
+
+        run_write_guard(false, &slot, &RaftRequest::Noop)
+            .await
+            .unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejected_guard_does_not_record_accepted() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let slot = new_shared_write_guard();
+        *slot.write().await = Some(Arc::new(RecordingGuard {
+            calls: calls.clone(),
+            reject: true,
+        }));
+
+        assert!(
+            run_write_guard(true, &slot, &RaftRequest::Noop)
+                .await
+                .is_err()
+        );
+        assert_eq!(*calls.lock().unwrap(), vec!["validate"]);
+    }
 
     #[test]
     fn test_builder() {

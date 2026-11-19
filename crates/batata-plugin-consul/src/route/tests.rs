@@ -17,7 +17,7 @@ use crate::connect::ConsulConnectService;
 use crate::connect_ca::ConsulConnectCAService;
 use crate::event::ConsulEventService;
 use crate::health::ConsulHealthService;
-use crate::kv::ConsulKVService;
+use crate::kv::{ConsulKVService, KVTxnOp, TxnOp};
 use crate::oidc::test_support::{jwt_auth_method_config, signed_test_jwt};
 use crate::operator::ConsulOperatorService;
 use crate::query::ConsulQueryService;
@@ -6282,4 +6282,68 @@ async fn test_catalog_register_keeps_node_name() {
         0,
         "deregistering by node name must remove its services: {catalog:?}"
     );
+}
+
+fn route_txn_op(verb: &str, key: &str, index: Option<u64>) -> TxnOp {
+    TxnOp {
+        kv: Some(KVTxnOp {
+            verb: verb.to_string(),
+            key: key.to_string(),
+            value: None,
+            flags: None,
+            index,
+            session: None,
+        }),
+        ..Default::default()
+    }
+}
+
+#[actix_web::test]
+async fn test_http_txn_conflict_rolls_back_all_ops() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/kv/txn-http/seed")
+        .set_payload("original")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 200);
+
+    let ops = vec![
+        route_txn_op("set", "txn-http/new", None),
+        route_txn_op("delete-cas", "txn-http/seed", Some(999_999)),
+    ];
+    let resp = put_json!(&app, "/v1/txn", ops);
+    assert_eq!(resp.status(), 409);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(body["Errors"].is_array());
+    assert!(body["Results"].is_null());
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/v1/kv/txn-http/new")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), 404);
+
+    let (_, body) = get_json!(&app, "/v1/kv/txn-http/seed");
+    assert_eq!(
+        body[0]["Value"],
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "original".as_bytes()
+        )
+    );
+}
+
+#[actix_web::test]
+async fn test_http_txn_rejects_more_than_128_ops() {
+    let app = create_test_app().await;
+    let ops: Vec<TxnOp> = (0..129)
+        .map(|i| route_txn_op("get", &format!("txn-http/op-{i}"), None))
+        .collect();
+
+    let resp = put_json!(&app, "/v1/txn", ops);
+    assert_eq!(resp.status(), 413);
 }

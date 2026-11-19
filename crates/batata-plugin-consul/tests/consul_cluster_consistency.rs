@@ -14,6 +14,7 @@ mod cluster;
 
 use batata_consistency::raft::plugin::RaftPluginHandler;
 use batata_plugin_consul::constants::{CF_CONSUL_KV, CF_CONSUL_SESSIONS};
+use batata_plugin_consul::kv::{KVTxnOp, TxnOp};
 use batata_plugin_consul::naming_store::ConsulNamingStore;
 use batata_plugin_consul::raft::ConsulRaftRequest;
 use serde_json::{Value, json};
@@ -491,16 +492,48 @@ fn cas_delete_checks_committed_index_on_every_node() {
 }
 
 fn session_create_json(behavior: &str) -> String {
+    session_create_json_with_delay(behavior, 0)
+}
+
+fn session_create_json_with_delay(behavior: &str, lock_delay_nanos: u64) -> String {
     json!({
         "session": {
             "ID": "session-1",
             "Behavior": behavior,
+            "LockDelay": lock_delay_nanos,
         },
         "created_at_unix": 1u64,
         "ttl_secs": 0u64,
         "last_renewed_unix": 1u64,
     })
     .to_string()
+}
+
+/// A committed session destroy must record lock delay on every node, not just
+/// the node that handled the HTTP request. The leader-side guard reads this
+/// same map before accepting a reacquire.
+#[test]
+fn session_destroy_lock_delay_replicates_to_every_node() {
+    let mut c = ConsulCluster::three();
+    c.commit(ConsulRaftRequest::SessionCreate {
+        session_id: "session-1".to_string(),
+        stored_session_json: session_create_json_with_delay("release", 1_000_000_000),
+    });
+    c.commit(ConsulRaftRequest::KVPut {
+        key: "lock/key".to_string(),
+        stored_kv_json: acquire_json("session-1", 1),
+        session_index_key: Some("kidx:session-1:lock/key".to_string()),
+    });
+    c.commit(ConsulRaftRequest::SessionDestroy {
+        session_id: "session-1".to_string(),
+    });
+
+    for i in 0..3 {
+        assert!(
+            c.node(i).lock_delay.is_active("lock/key"),
+            "node {i} did not record the committed lock delay"
+        );
+    }
 }
 
 /// `Behavior=delete` must be applied by the FSM, not only by the HTTP node
@@ -546,5 +579,113 @@ fn session_destroy_delete_replicates_kv_deletion_to_every_node() {
             .is_none(),
             "node {i} kept the stale session index"
         );
+    }
+}
+
+fn cluster_txn_op(verb: &str, key: &str, value: Option<&str>, index: Option<u64>) -> TxnOp {
+    use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+
+    TxnOp {
+        kv: Some(KVTxnOp {
+            verb: verb.to_string(),
+            key: key.to_string(),
+            value: value.map(|value| BASE64.encode(value.as_bytes())),
+            flags: None,
+            index,
+            session: None,
+        }),
+        ..Default::default()
+    }
+}
+
+/// `/v1/txn` must be one state-store decision on every node. A stale
+/// `delete-cas` in the middle of the batch has to roll back the earlier `set`
+/// everywhere, while a valid batch commits all of its keys everywhere.
+#[test]
+fn kv_transaction_is_atomic_on_every_node() {
+    let mut c = ConsulCluster::three();
+    let seed_key = "txn/cluster/seed";
+    c.commit(ConsulRaftRequest::KVPut {
+        key: seed_key.to_string(),
+        stored_kv_json: cas_delete_json(seed_key, 1),
+        session_index_key: None,
+    });
+
+    let node0 = c.node(0);
+    let bytes = node0
+        .db()
+        .get_cf(
+            node0.db().cf_handle(CF_CONSUL_KV).unwrap(),
+            seed_key.as_bytes(),
+        )
+        .expect("read seeded KV")
+        .expect("seeded KV exists");
+    let stored: Value = serde_json::from_slice(&bytes).expect("valid stored KV JSON");
+    let seed_index = stored["pair"]["ModifyIndex"]
+        .as_u64()
+        .expect("numeric ModifyIndex");
+
+    let conflict = ConsulRaftRequest::KVTransaction {
+        ops: vec![
+            cluster_txn_op("set", "txn/cluster/new", Some("value"), None),
+            cluster_txn_op("delete-cas", seed_key, None, Some(seed_index + 99)),
+        ],
+    };
+    let conflict_payload = serde_json::to_vec(&conflict).expect("serialize conflict txn");
+    let log_index = c.log_index() + 1;
+    for i in 0..3 {
+        let node = c.node(i);
+        let response = node.handler.apply(
+            node.db().as_ref(),
+            "consul_write",
+            &conflict_payload,
+            log_index,
+        );
+        assert!(!response.success, "node {i} accepted a conflicting txn");
+
+        let db = node.db();
+        let cf = db.cf_handle(CF_CONSUL_KV).unwrap();
+        assert!(
+            db.get_cf(cf, b"txn/cluster/new")
+                .expect("read new key")
+                .is_none(),
+            "node {i} kept a write from a rolled-back txn"
+        );
+        let bytes = db
+            .get_cf(cf, seed_key.as_bytes())
+            .expect("read seed")
+            .expect("seed key must survive rollback");
+        let stored: Value = serde_json::from_slice(&bytes).expect("valid stored KV JSON");
+        assert_eq!(stored["pair"]["ModifyIndex"], seed_index);
+    }
+
+    let valid = ConsulRaftRequest::KVTransaction {
+        ops: vec![
+            cluster_txn_op("set", "txn/cluster/a", Some("a"), None),
+            cluster_txn_op("set", "txn/cluster/b", Some("b"), None),
+        ],
+    };
+    let valid_payload = serde_json::to_vec(&valid).expect("serialize valid txn");
+    let valid_index = log_index + 1;
+    for i in 0..3 {
+        let node = c.node(i);
+        let response = node.handler.apply(
+            node.db().as_ref(),
+            "consul_write",
+            &valid_payload,
+            valid_index,
+        );
+        assert!(response.success, "node {i} rejected a valid txn");
+
+        let db = node.db();
+        let cf = db.cf_handle(CF_CONSUL_KV).unwrap();
+        for key in ["txn/cluster/a", "txn/cluster/b"] {
+            let bytes = db
+                .get_cf(cf, key.as_bytes())
+                .expect("read committed key")
+                .expect("valid txn key is missing");
+            let stored: Value = serde_json::from_slice(&bytes).expect("valid stored KV JSON");
+            assert_eq!(stored["pair"]["ModifyIndex"], valid_index);
+        }
     }
 }

@@ -25,8 +25,26 @@ use crate::model::{
     ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
-use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
+use crate::raft::{ConsulRaftRequest, ConsulRaftResponse, ConsulRaftWriter};
 use batata_plugin::PluginNamingStore;
+
+/// Minimal Raft seam for agent service writes. Production uses
+/// `ConsulRaftWriter`; tests can record the emitted requests without booting
+/// an openraft cluster.
+#[async_trait::async_trait]
+pub trait AgentRaftSink: Send + Sync {
+    /// Propose one Consul request and return the replicated response.
+    async fn write(&self, request: ConsulRaftRequest) -> Result<ConsulRaftResponse, String>;
+}
+
+#[async_trait::async_trait]
+impl AgentRaftSink for ConsulRaftWriter {
+    async fn write(&self, request: ConsulRaftRequest) -> Result<ConsulRaftResponse, String> {
+        ConsulRaftWriter::write(self, request)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
 
 /// Consul Agent service adapter
 ///
@@ -37,8 +55,9 @@ pub struct ConsulAgentService {
     naming_store: Arc<ConsulNamingStore>,
     registry: Arc<InstanceCheckRegistry>,
     check_index: Arc<ConsulCheckIndex>,
-    /// Optional Raft writer for cluster-mode replication
-    raft_node: Option<Arc<ConsulRaftWriter>>,
+    /// Optional Raft sink for cluster-mode replication. When present, service
+    /// registration is authoritative only after the FSM applies it.
+    raft_node: Option<Arc<dyn AgentRaftSink>>,
 }
 
 impl ConsulAgentService {
@@ -69,6 +88,95 @@ impl ConsulAgentService {
             check_index,
             raft_node: Some(raft_node),
         }
+    }
+
+    /// Attach a recording/alt Raft sink directly (used by tests).
+    pub fn with_raft_sink(mut self, sink: Arc<dyn AgentRaftSink>) -> Self {
+        self.raft_node = Some(sink);
+        self
+    }
+
+    /// Propose a Consul request through Raft when in cluster mode, returning
+    /// an error on transport failure or a rejected apply so callers fail
+    /// closed instead of acknowledging a local-only write.
+    async fn write_raft(&self, request: ConsulRaftRequest) -> Result<(), String> {
+        let Some(ref sink) = self.raft_node else {
+            return Ok(());
+        };
+        let response = sink.write(request).await?;
+        if response.success {
+            Ok(())
+        } else {
+            Err(response
+                .message
+                .unwrap_or_else(|| "Raft apply rejected the agent write".to_string()))
+        }
+    }
+
+    /// Upsert one service entry keyed by service ID. Standalone writes the
+    /// local store directly; cluster mode finds the replaced key read-only and
+    /// proposes both the stale deregistration and the new registration through
+    /// Raft, failing closed on transport error or rejected apply.
+    async fn upsert_service_entry(
+        &self,
+        namespace: &str,
+        key: &str,
+        service_id: &str,
+        data: &[u8],
+    ) -> Result<(), String> {
+        if self.raft_node.is_none() {
+            self.naming_store.upsert_by_service_id(
+                namespace,
+                key,
+                service_id,
+                bytes::Bytes::copy_from_slice(data),
+            );
+            return Ok(());
+        }
+        let stale = self
+            .naming_store
+            .find_key_by_service_id(namespace, service_id)
+            .filter(|stale| stale != key);
+        if let Some(stale) = stale {
+            self.write_raft(ConsulRaftRequest::CatalogDeregister { key: stale })
+                .await?;
+        }
+        let registration_json = String::from_utf8_lossy(data).to_string();
+        self.write_raft(ConsulRaftRequest::CatalogRegister {
+            key: key.to_string(),
+            registration_json,
+        })
+        .await
+    }
+
+    /// Remove one service entry. Standalone writes the local store directly;
+    /// cluster mode proposes the deregistration through Raft and fails closed.
+    async fn remove_service_entry(
+        &self,
+        namespace: &str,
+        service_id: &str,
+        key: &str,
+    ) -> Result<(), String> {
+        if self.raft_node.is_none() {
+            self.naming_store
+                .remove_by_service_id(namespace, service_id);
+            return Ok(());
+        }
+        self.write_raft(ConsulRaftRequest::CatalogDeregister {
+            key: key.to_string(),
+        })
+        .await
+    }
+
+    /// Advance the local watch index only in standalone mode. In cluster mode
+    /// the FSM stamps the shared table index with the Raft log index on every
+    /// node, so an origin-only increment would leave followers' blocking
+    /// queries at a different index.
+    fn catalog_index_after_write(&self, index_provider: &ConsulIndexProvider) -> u64 {
+        if self.raft_node.is_none() {
+            index_provider.increment(ConsulTable::Catalog);
+        }
+        index_provider.current_index(ConsulTable::Catalog)
     }
 
     /// Get the consul naming store
@@ -362,42 +470,17 @@ pub async fn register_service(
 
     // Registration is an upsert keyed by service ID, not by (name, ID): a
     // re-registration that renames the service must not leave the old name
-    // behind (upstream: `local/state.go` stores `l.services[id]`).
-    let stale_key = agent.naming_store.upsert_by_service_id(
-        &namespace,
-        &store_key,
-        &service_id,
-        bytes::Bytes::from(reg_data.clone()),
-    );
-
-    // Replicate through Raft in cluster mode
-    if let Some(ref raft) = agent.raft_node {
-        // Followers must drop the replaced entry too, otherwise the renamed
-        // service keeps showing up under its old name on every other node.
-        if let Some(ref stale) = stale_key {
-            let _ = raft
-                .write(ConsulRaftRequest::CatalogDeregister { key: stale.clone() })
-                .await;
-        }
-        let registration_json = String::from_utf8_lossy(&reg_data).to_string();
-        match raft
-            .write(ConsulRaftRequest::CatalogRegister {
-                key: store_key.clone(),
-                registration_json,
-            })
-            .await
-        {
-            Ok(r) if !r.success => {
-                tracing::error!("Raft CatalogRegister rejected: {:?}", r.message);
-            }
-            Err(e) => {
-                tracing::error!("Raft CatalogRegister failed: {}", e);
-            }
-            _ => {}
-        }
+    // behind (upstream: `local/state.go` stores `l.services[id]`). In cluster
+    // mode the FSM applies the entry on every node; no local pre-write.
+    if let Err(e) = agent
+        .upsert_service_entry(&namespace, &store_key, &service_id, &reg_data)
+        .await
+    {
+        return HttpResponse::ServiceUnavailable()
+            .consul_error(ConsulError::new(format!("Raft write failed: {}", e)));
     }
 
-    index_provider.increment(ConsulTable::Catalog);
+    agent.catalog_index_after_write(&index_provider);
 
     // Register the consul_service_id → instance mapping for O(1) lookup
     let instance_key = format!(
@@ -423,6 +506,10 @@ pub async fn register_service(
             .check_id
             .clone()
             .unwrap_or_else(|| "?".to_string());
+        // `register_check` persists the config through the FSM when the health
+        // service has a Raft sink (cluster mode) using the node-qualified
+        // registry key that the apply hook also uses on restore. Keeping the
+        // propose inside the service avoids a second, divergent write here.
         if let Err(e) = health_service.register_check(check_reg).await {
             tracing::warn!(
                 "Failed to register embedded check '{}' for service '{}': {}",
@@ -430,21 +517,6 @@ pub async fn register_service(
                 service_id,
                 e
             );
-        } else if let Some(ref raft) = agent.raft_node {
-            // Persist check config for restart recovery. The persisted key is
-            // the node-qualified one so two nodes that register a check with
-            // the same id do not overwrite each other's config.
-            let persisted_key = health_service.check_key(&check_id);
-            if let Some(config) = agent.registry.get_check_config(&persisted_key)
-                && let Ok(config_json) = serde_json::to_string(&config)
-            {
-                let _ = raft
-                    .write(ConsulRaftRequest::HealthCheckRegister {
-                        check_id: persisted_key,
-                        config_json,
-                    })
-                    .await;
-            }
         }
     }
 
@@ -489,26 +561,12 @@ pub async fn register_service(
         let sidecar_id = sidecar.service_id();
         let sidecar_key = ConsulNamingStore::build_key(&namespace, &sidecar.name, &sidecar_id);
         if let Ok(sidecar_data) = serde_json::to_vec(&sidecar) {
-            let stale_sidecar_key = agent.naming_store.upsert_by_service_id(
-                &namespace,
-                &sidecar_key,
-                &sidecar_id,
-                bytes::Bytes::from(sidecar_data.clone()),
-            );
-
-            if let Some(ref raft) = agent.raft_node {
-                if let Some(ref stale) = stale_sidecar_key {
-                    let _ = raft
-                        .write(ConsulRaftRequest::CatalogDeregister { key: stale.clone() })
-                        .await;
-                }
-                let sidecar_json = String::from_utf8_lossy(&sidecar_data).to_string();
-                let _ = raft
-                    .write(ConsulRaftRequest::CatalogRegister {
-                        key: sidecar_key,
-                        registration_json: sidecar_json,
-                    })
-                    .await;
+            if let Err(e) = agent
+                .upsert_service_entry(&namespace, &sidecar_key, &sidecar_id, &sidecar_data)
+                .await
+            {
+                return HttpResponse::ServiceUnavailable()
+                    .consul_error(ConsulError::new(format!("Raft write failed: {}", e)));
             }
 
             tracing::info!(
@@ -564,62 +622,42 @@ pub async fn deregister_service(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
-    // Find the store key before removal (needed for Raft replication)
+    // Find the store key before removal (read-only; no local pre-write in
+    // cluster mode — the FSM applies the deregistration on every node).
     let store_key = agent
         .naming_store
         .find_key_by_service_id(&namespace, &service_id);
-
-    // Remove from Consul naming store
-    let deregistered = agent
-        .naming_store
-        .remove_by_service_id(&namespace, &service_id);
+    let deregistered = store_key.is_some();
 
     if deregistered {
-        // Clean up registry entries via O(1) lookup
+        let key = store_key.expect("checked above");
+
+        // Remove check configs, replicating every removal through the FSM.
         if let Some((_, instance_key)) = agent.check_index.lookup(&service_id) {
-            // Collect check IDs before deregistering (for Raft persistence)
-            let check_ids: Vec<String> = agent.registry.get_check_keys_for_instance(&instance_key);
-
-            agent.registry.deregister_all_instance_checks(&instance_key);
-
-            // Persist check deregistration via Raft
-            if let Some(ref raft) = agent.raft_node {
-                for cid in check_ids {
-                    let _ = raft
-                        .write(ConsulRaftRequest::HealthCheckDeregister { check_id: cid })
-                        .await;
-                }
+            if let Err(e) = health_service
+                .deregister_instance_checks_replicated(&instance_key)
+                .await
+            {
+                return HttpResponse::ServiceUnavailable()
+                    .consul_error(ConsulError::new(format!("Raft write failed: {}", e)));
             }
         }
         agent.check_index.remove(&service_id);
 
-        // Replicate through Raft in cluster mode
-        if let Some(ref raft) = agent.raft_node
-            && let Some(key) = &store_key
+        // Deregister the service entry through Raft in cluster mode; fail
+        // closed instead of acknowledging a local-only removal.
+        if let Err(e) = agent
+            .remove_service_entry(&namespace, &service_id, &key)
+            .await
         {
-            match raft
-                .write(ConsulRaftRequest::CatalogDeregister { key: key.clone() })
-                .await
-            {
-                Ok(r) if !r.success => {
-                    tracing::error!("Raft CatalogDeregister rejected: {:?}", r.message);
-                }
-                Err(e) => {
-                    tracing::error!("Raft CatalogDeregister failed: {}", e);
-                }
-                _ => {}
-            }
+            return HttpResponse::ServiceUnavailable()
+                .consul_error(ConsulError::new(format!("Raft write failed: {}", e)));
         }
     }
 
     if deregistered {
-        index_provider.increment(ConsulTable::Catalog);
-        // Clean up any associated health checks from old system
-        let service_checks = health_service.get_service_checks(&service_id).await;
-        for check in &service_checks {
-            let _ = health_service.deregister_check(&check.check_id).await;
-        }
-        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+        let idx = agent.catalog_index_after_write(&index_provider);
+        let meta = ConsulResponseMeta::new(idx);
         consul_ok(&meta).finish()
     } else {
         HttpResponse::NotFound().consul_error(ConsulError::new(format!(
@@ -2571,5 +2609,195 @@ mod tests {
             members: vec![member],
         };
         assert_eq!(count_known_datacenters(&cm, "dc1"), 2);
+    }
+
+    // ---- Raft-backed agent service write guards ----
+
+    struct RecordingAgentSink {
+        requests: Mutex<Vec<ConsulRaftRequest>>,
+        mode: Mutex<AgentSinkMode>,
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum AgentSinkMode {
+        Accept,
+        Reject,
+        Fail,
+    }
+
+    impl RecordingAgentSink {
+        fn new() -> Arc<Self> {
+            Self::with_mode(AgentSinkMode::Accept)
+        }
+
+        fn with_mode(mode: AgentSinkMode) -> Arc<Self> {
+            Arc::new(Self {
+                requests: Mutex::new(Vec::new()),
+                mode: Mutex::new(mode),
+            })
+        }
+
+        fn op_types(&self) -> Vec<&'static str> {
+            self.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.op_type())
+                .collect()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRaftSink for RecordingAgentSink {
+        async fn write(&self, request: ConsulRaftRequest) -> Result<ConsulRaftResponse, String> {
+            let mode = *self.mode.lock().unwrap();
+            self.requests.lock().unwrap().push(request);
+            match mode {
+                AgentSinkMode::Accept => Ok(ConsulRaftResponse::success()),
+                AgentSinkMode::Reject => {
+                    Ok(ConsulRaftResponse::failure("apply rejected".to_string()))
+                }
+                AgentSinkMode::Fail => Err("no leader".to_string()),
+            }
+        }
+    }
+
+    fn agent_with_sink(sink: Arc<dyn AgentRaftSink>) -> (ConsulAgentService, ConsulIndexProvider) {
+        let (agent, _store, _registry, _index) = create_test_agent();
+        (agent.with_raft_sink(sink), ConsulIndexProvider::new())
+    }
+
+    #[tokio::test]
+    async fn cluster_register_emits_raft_without_local_prewrite() {
+        let sink = RecordingAgentSink::new();
+        let (agent, index) = agent_with_sink(sink.clone());
+        let data = br#"{"Name":"web","ID":"web-1"}"#;
+
+        agent
+            .upsert_service_entry(
+                "default",
+                &ConsulNamingStore::build_key("default", "web", "web-1"),
+                "web-1",
+                data,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(sink.op_types(), vec!["CatalogRegister"]);
+        // No local pre-write: FSM hook populates the store on every node.
+        assert_eq!(agent.naming_store.len(), 0);
+        agent.catalog_index_after_write(&index);
+        // Cluster mode must not bump the local index (FSM stamps log index).
+        assert_eq!(index.current_index(ConsulTable::Catalog), 1);
+    }
+
+    #[tokio::test]
+    async fn cluster_rename_emits_stale_deregister_before_register() {
+        let sink = RecordingAgentSink::new();
+        let (agent, _index) = agent_with_sink(sink.clone());
+        // Seed a committed entry under the old key (as the FSM hook would).
+        agent
+            .naming_store
+            .register(
+                &ConsulNamingStore::build_key("default", "api", "web-1"),
+                bytes::Bytes::from_static(br#"{"Name":"api","ID":"web-1"}"#),
+            )
+            .unwrap();
+
+        agent
+            .upsert_service_entry(
+                "default",
+                &ConsulNamingStore::build_key("default", "web", "web-1"),
+                "web-1",
+                b"{}",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sink.op_types(),
+            vec!["CatalogDeregister", "CatalogRegister"]
+        );
+    }
+
+    #[tokio::test]
+    async fn cluster_register_fails_closed_on_reject_and_transport_error() {
+        for mode in [AgentSinkMode::Reject, AgentSinkMode::Fail] {
+            let sink = RecordingAgentSink::with_mode(mode);
+            let (agent, _index) = agent_with_sink(sink);
+            assert!(
+                agent
+                    .upsert_service_entry(
+                        "default",
+                        &ConsulNamingStore::build_key("default", "web", "web-1"),
+                        "web-1",
+                        b"{}"
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cluster_deregister_emits_raft_without_local_prewrite() {
+        let sink = RecordingAgentSink::new();
+        let (agent, _index) = agent_with_sink(sink.clone());
+        agent
+            .naming_store
+            .register(
+                &ConsulNamingStore::build_key("default", "web", "web-1"),
+                bytes::Bytes::from_static(br#"{"Name":"web","ID":"web-1"}"#),
+            )
+            .unwrap();
+
+        agent
+            .remove_service_entry(
+                "default",
+                "web-1",
+                &ConsulNamingStore::build_key("default", "web", "web-1"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(sink.op_types(), vec!["CatalogDeregister"]);
+        // Local store still holds the entry; only FSM apply removes it.
+        assert_eq!(agent.naming_store.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn standalone_service_write_stays_local_and_bumps_index() {
+        // No sink -> standalone: the local store is the only store.
+        let (agent, _store, _registry, _index) = create_test_agent();
+        let index = ConsulIndexProvider::new();
+
+        agent
+            .upsert_service_entry(
+                "default",
+                &ConsulNamingStore::build_key("default", "web", "web-1"),
+                "web-1",
+                b"{}",
+            )
+            .await
+            .unwrap();
+        assert_eq!(agent.naming_store.len(), 1);
+        agent.catalog_index_after_write(&index);
+        assert_eq!(index.current_index(ConsulTable::Catalog), 2);
+    }
+
+    #[tokio::test]
+    async fn cluster_deregister_fails_closed_on_rejected_apply() {
+        let sink = RecordingAgentSink::with_mode(AgentSinkMode::Reject);
+        let (agent, _index) = agent_with_sink(sink);
+        assert!(
+            agent
+                .remove_service_entry(
+                    "default",
+                    "web-1",
+                    &ConsulNamingStore::build_key("default", "web", "web-1")
+                )
+                .await
+                .is_err()
+        );
     }
 }

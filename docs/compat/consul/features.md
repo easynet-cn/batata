@@ -28,10 +28,10 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-AGNT-007 | GET `/v1/agent/service/{serviceID}` | | 🟢 | | single local service |
 | F-CON-AGNT-008 | GET `/v1/agent/health/service/name/{service}` | | 🟢 | | aggregated by name |
 | F-CON-AGNT-009 | GET `/v1/agent/health/service/id/{serviceID}` | | 🟢 | | aggregated by id |
-| F-CON-AGNT-010 | PUT `/v1/agent/service/register` | | 🟢 | | **core**: register (query `?replace-existing-checks=`) |
-| F-CON-AGNT-011 | PUT `/v1/agent/service/deregister/{serviceID}` | | 🟢 | | deregister |
-| F-CON-AGNT-012 | PUT `/v1/agent/check/register` | | 🟢 | | register check |
-| F-CON-AGNT-013 | PUT `/v1/agent/check/deregister/{checkID}` | | 🟢 | | deregister check |
+| F-CON-AGNT-010 | PUT `/v1/agent/service/register` | | 🟢 | | **core**: register (query `?replace-existing-checks=`); cluster writes go through Raft FSM with no local pre-write, fail-closed on rejected apply |
+| F-CON-AGNT-011 | PUT `/v1/agent/service/deregister/{serviceID}` | | 🟢 | | deregister; cluster deregistration and check cleanup replicated through Raft, index stamped by FSM |
+| F-CON-AGNT-012 | PUT `/v1/agent/check/register` | | 🟢 | | register check; config replicated through Raft FSM in cluster mode, node-qualified key |
+| F-CON-AGNT-013 | PUT `/v1/agent/check/deregister/{checkID}` | | 🟢 | | deregister check; config removal replicated through Raft FSM, fail-closed on rejected apply |
 | F-CON-AGNT-014 | PUT `/v1/agent/check/pass/{checkID}` | | 🟢 | | TTL pass (legacy) |
 | F-CON-AGNT-015 | PUT `/v1/agent/check/warn/{checkID}` | | 🟢 | | TTL warn (legacy) |
 | F-CON-AGNT-016 | PUT `/v1/agent/check/fail/{checkID}` | | 🟢 | | TTL fail (legacy) |
@@ -50,8 +50,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
-| F-CON-CAT-001 | PUT `/v1/catalog/register` | | 🟢 | | **core**: direct catalog write |
-| F-CON-CAT-002 | PUT `/v1/catalog/deregister` | | 🟢 | | deregister |
+| F-CON-CAT-001 | PUT `/v1/catalog/register` | | 🟢 | | **core**: catalog write goes through Raft FSM; node-only registration remains derived |
+| F-CON-CAT-002 | PUT `/v1/catalog/deregister` | | 🟢 | | service/check/node deregistration goes through Raft FSM |
 | F-CON-CAT-003 | GET `/v1/catalog/datacenters` | | 🟢 | | (non-blocking) |
 | F-CON-CAT-004 | GET `/v1/catalog/nodes?near=&node-meta=&filter=` | | 🟢 | | blockable; filter expr supported |
 | F-CON-CAT-005 | GET `/v1/catalog/services?node-meta=` | | 🟢 | | service→tags |
@@ -77,7 +77,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
 | F-CON-KV-001 | GET `/v1/kv/{key}` | | 🟢 | | single; `?recurse` list; `?keys=` names; `?raw` raw; 404=missing; blockable |
-| F-CON-KV-002 | PUT `/v1/kv/{key}?flags=&cas=&acquire=&release=` | | 🟢 | | write; returns true/false; session lock |
+| F-CON-KV-002 | PUT `/v1/kv/{key}?flags=&cas=&acquire=&release=` | | 🟢 | | write; returns true/false; session lock; leader lock delay enforced before commit |
 | F-CON-KV-003 | DELETE `/v1/kv/{key}?cas=&recurse=` | | 🟢 | | delete; CAS checked in FSM; `cas`+`recurse` rejected |
 
 ## 5. Session (`F-CON-SES-`)
@@ -85,7 +85,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
 | F-CON-SES-001 | PUT `/v1/session/create` | | 🟢 | | returns id |
-| F-CON-SES-002 | PUT `/v1/session/destroy/{id}` | | 🟢 | | release/delete behavior applied in FSM |
+| F-CON-SES-002 | PUT `/v1/session/destroy/{id}` | | 🟢 | | release/delete behavior applied in FSM; LockDelay recorded on every node |
 | F-CON-SES-003 | PUT `/v1/session/renew/{id}` | | 🟢 | | TTL renew |
 | F-CON-SES-004 | GET `/v1/session/info/{id}` | | 🟢 | | blockable |
 | F-CON-SES-005 | GET `/v1/session/node/{node}` | | 🟢 | | blockable |
@@ -114,7 +114,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-OTH-015 | DELETE `/v1/query/{id}` | | 🟢 | | delete |
 | F-CON-OTH-016 | GET `/v1/query/{id-or-name}/execute?near=&connect=` | | 🟢 | | **blockable** |
 | F-CON-OTH-017 | GET `/v1/query/{id}/explain` | | 🟢 | | explain prepared query |
-| F-CON-OTH-018 | PUT `/v1/txn` | | 🟢 | | atomic txn (KV/node/service/check) |
+| F-CON-OTH-018 | PUT `/v1/txn` | | 🟢 | | atomic KV txn in Raft FSM; node/service/check ops are response-only |
 
 ## 7. ACL (`F-CON-ACL-`)
 
@@ -282,7 +282,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-CORE-002 | Response `X-Consul-Index` monotonic index | | 🟢 | | feed back to next `?index=` |
 | F-CON-CORE-003 | Hash-based blocking `?hash=` + `X-Consul-ContentHash` (agent-local) | | 🟢 | | for `/v1/agent/*` |
 | F-CON-CORE-004 | Response `X-Consul-LastContact` / `X-Consul-KnownLeader` | | 🟢 | | |
-| F-CON-CORE-005 | Consistency modes `?stale/consistent/cached` | | 🟢 | | default stale |
+| F-CON-CORE-005 | Consistency modes `?stale/consistent/cached` | | 🟢 | | non-stale reads forwarded to Raft leader; `?consistent` adds ReadIndex; `?stale` stays local |
 | F-CON-CORE-006 | ACL auth `X-Consul-Token` / `?token=` | | 🟢 | | all endpoints |
 
 ---

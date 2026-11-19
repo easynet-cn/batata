@@ -43,6 +43,8 @@ pub mod consul_meta;
 pub mod plugin;
 /// The `raft` module.
 pub mod raft;
+/// The `read_consistency` module.
+pub mod read_consistency;
 
 /// The `acl` module.
 pub mod acl;
@@ -76,6 +78,8 @@ pub mod index_provider;
 pub mod internal;
 /// The `kv` module.
 pub mod kv;
+/// The `lock_delay` module.
+pub mod lock_delay;
 /// The `log_broadcast` module.
 pub mod log_broadcast;
 /// The `model` module.

@@ -13,7 +13,7 @@ use tokio::sync::Notify;
 use tracing::{error, info};
 
 use crate::constants::{CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS};
-use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
+use crate::raft::{ConsulRaftRequest, ConsulRaftResponse, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{
@@ -200,6 +200,10 @@ pub struct KVTxnOp {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `index` field.
     pub index: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    /// Session used by `lock` and `unlock` verbs.
+    pub session: Option<String>,
 }
 
 /// Transaction result
@@ -398,6 +402,9 @@ pub struct ConsulKVService {
     _temp_dir: Option<Arc<tempfile::TempDir>>,
     /// Optional Raft writer for cluster mode replication (via core Raft PluginWrite)
     raft_node: Option<Arc<ConsulRaftWriter>>,
+    /// Leader-local lock-delay map (standalone enforcement; cluster guard uses
+    /// the same shared instance on the leader).
+    lock_delay: crate::lock_delay::ConsulLockDelay,
     /// Test-only switch that makes `try_put` behave as if Raft rejected the
     /// write, so the HTTP fail-closed wiring can be exercised without a live
     /// Raft cluster.
@@ -415,6 +422,7 @@ impl ConsulKVService {
             notify: Arc::new(Notify::new()),
             _temp_dir: Some(temp_dir),
             raft_node: None,
+            lock_delay: crate::lock_delay::ConsulLockDelay::default(),
             #[cfg(test)]
             fail_raft_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -431,6 +439,7 @@ impl ConsulKVService {
             notify: Arc::new(Notify::new()),
             _temp_dir: None,
             raft_node: None,
+            lock_delay: crate::lock_delay::ConsulLockDelay::default(),
             #[cfg(test)]
             fail_raft_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -447,9 +456,16 @@ impl ConsulKVService {
             notify: Arc::new(Notify::new()),
             _temp_dir: None,
             raft_node: Some(raft_node),
+            lock_delay: crate::lock_delay::ConsulLockDelay::default(),
             #[cfg(test)]
             fail_raft_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Share the leader-local lock-delay map with the session service.
+    pub fn with_lock_delay(mut self, lock_delay: crate::lock_delay::ConsulLockDelay) -> Self {
+        self.lock_delay = lock_delay;
+        self
     }
 
     /// Satisfy a linearizable read guarantee when the caller requested
@@ -707,15 +723,19 @@ impl ConsulKVService {
     /// handler still returned `true`. Every mutation now goes through here so
     /// `try_*` callers can fail closed when the write never reached the state
     /// machine (no leader, timeout, transport error).
-    async fn replicate(&self, request: ConsulRaftRequest) -> Result<bool, String> {
+    async fn replicate_response(
+        &self,
+        request: ConsulRaftRequest,
+    ) -> Result<ConsulRaftResponse, String> {
         let Some(ref raft) = self.raft_node else {
-            return Ok(true);
+            return Ok(ConsulRaftResponse::success());
         };
-        let outcome = match raft.write(request).await {
-            Ok(r) => Ok((r.success, r.message.unwrap_or_default())),
-            Err(e) => Err(e.to_string()),
-        };
-        classify_raft_write(outcome)
+        raft.write(request).await.map_err(|e| e.to_string())
+    }
+
+    async fn replicate(&self, request: ConsulRaftRequest) -> Result<bool, String> {
+        let response = self.replicate_response(request).await?;
+        Ok(response.success)
     }
 
     /// Checked `put`: a Raft failure is an error, never a reported success.
@@ -834,6 +854,11 @@ impl ConsulKVService {
         flags: Option<u64>,
         session_id: &str,
     ) -> Result<bool, String> {
+        // Cluster mode enforces lock delay in the leader-side Raft write guard;
+        // standalone has no Raft node, so check the shared local map here.
+        if self.raft_node.is_none() && self.lock_delay.is_active(key) {
+            return Ok(false);
+        }
         let encoded = Some(BASE64.encode(value.as_bytes()));
         let mut stored = self.build_stored_kv(key, encoded, flags);
         match stored.pair.session.as_deref() {
@@ -1128,6 +1153,12 @@ impl ConsulKVService {
     /// Acquire a session lock on a key (without changing value).
     /// Returns false if the key is locked by a different session, or the key does not exist.
     pub async fn acquire_session(&self, key: &str, session_id: &str) -> bool {
+        // Standalone has no pre-commit guard; the shared local delay map is
+        // the only place this can be enforced. Cluster mode checks it on the
+        // leader before proposing `KVAcquireSession`.
+        if self.raft_node.is_none() && self.lock_delay.is_active(key) {
+            return false;
+        }
         let Some(mut stored) = self.get_stored(key) else {
             return false;
         };
@@ -1371,348 +1402,694 @@ impl ConsulKVService {
         self.get_prefix("")
     }
 
-    /// Increment lock_index on a key (for transaction "lock" verb)
-    fn increment_lock_index(&self, key: &str) {
-        if let Some(mut stored) = self.get_stored(key) {
-            stored.pair.lock_index += 1;
-            self.put_stored(key, &stored);
-        }
-    }
-
-    /// Clear session on a key (for transaction "unlock" verb)
-    fn clear_session(&self, key: &str) -> Option<KVPair> {
-        let mut stored = self.get_stored(key)?;
-        let old_session = stored.pair.session.take();
-        stored.pair.modify_index = self.next_index();
-        stored.modified_at = current_timestamp();
-
-        let mut batch = WriteBatch::default();
-        self.batch_put_stored(&mut batch, key, &stored);
-
-        // Clean up session index
-        if let Some(ref session_id) = old_session
-            && let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS)
-        {
-            let idx_key = format!("kidx:{}:{}", session_id, key);
-            batch.delete_cf(cf_sessions, idx_key.as_bytes());
-        }
-
-        if let Err(e) = self.db.write(batch) {
-            error!("Failed to clear session on '{}': {}", key, e);
-            return None;
-        }
-
-        self.notify.notify_waiters();
-        Some(stored.pair)
-    }
-
     /// Maximum number of operations allowed in a single transaction.
     /// Matches Consul's `maxTxnOps` (agent/txn_endpoint.go:23).
-    const MAX_TXN_OPS: usize = 128;
+    pub(crate) const MAX_TXN_OPS: usize = 128;
 
-    /// Execute a transaction with two-phase validation
+    /// Execute a transaction with one authoritative state-store decision.
+    ///
+    /// Cluster mode sends every verb in a single `KVTransaction` Raft entry;
+    /// the FSM re-validates all of them against committed state and commits
+    /// the whole batch or none of it. Standalone mode calls the same helper
+    /// with a local index so both modes share the exact semantics.
     pub async fn transaction(&self, ops: Vec<TxnOp>) -> TxnResult {
-        // Enforce max operation count (Consul limits to 128 per transaction)
-        if ops.len() > Self::MAX_TXN_OPS {
-            return TxnResult {
-                results: None,
-                errors: Some(vec![TxnError {
-                    op_index: 0,
-                    what: format!(
-                        "Transaction contains {} operations, which is more than the maximum of {}",
-                        ops.len(),
-                        Self::MAX_TXN_OPS
-                    ),
-                }]),
+        #[cfg(test)]
+        if self
+            .fail_raft_writes
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return txn_write_failure(0, "injected Raft write failure");
+        }
+
+        // Standalone has no leader-side write guard, so enforce lock delay
+        // here for `lock` verbs. Cluster mode enforces the same rule before
+        // the entry is proposed.
+        if self.raft_node.is_none()
+            && let Some(key) = self.lock_delay.first_active_txn_key(&ops)
+        {
+            return txn_write_failure(0, &format!("Lock delay active for key {}", key));
+        }
+
+        if self.raft_node.is_some() {
+            let response = match self
+                .replicate_response(ConsulRaftRequest::KVTransaction { ops })
+                .await
+            {
+                Ok(response) => response,
+                Err(e) => return txn_write_failure(0, &e),
+            };
+            let Some(data) = response.data.as_ref() else {
+                return txn_write_failure(0, "transaction response missing result data");
+            };
+            return match serde_json::from_slice::<TxnResult>(data) {
+                Ok(result) => {
+                    if result.errors.is_none() {
+                        self.notify.notify_waiters();
+                    }
+                    result
+                }
+                Err(e) => txn_write_failure(0, &format!("invalid transaction response: {}", e)),
             };
         }
 
-        // Phase 1: Validate all operations and collect planned changes
-        let mut errors: Vec<TxnError> = Vec::new();
-
-        // Validate check-index and check-not-exists first
-        for (idx, op) in ops.iter().enumerate() {
-            if let Some(ref kv_op) = op.kv {
-                match kv_op.verb.to_lowercase().as_str() {
-                    "check-index" => {
-                        let expected_index = kv_op.index.unwrap_or(0);
-                        match self.get(&kv_op.key) {
-                            Some(pair) => {
-                                if pair.modify_index != expected_index {
-                                    errors.push(TxnError {
-                                        op_index: idx as u32,
-                                        what: format!(
-                                            "current modify index {} does not match expected {}",
-                                            pair.modify_index, expected_index
-                                        ),
-                                    });
-                                }
-                            }
-                            None => {
-                                errors.push(TxnError {
-                                    op_index: idx as u32,
-                                    what: format!(
-                                        "key '{}' doesn't exist for check-index",
-                                        kv_op.key
-                                    ),
-                                });
-                            }
-                        }
-                    }
-                    "check-not-exists" => {
-                        if self.get(&kv_op.key).is_some() {
-                            errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: format!("key '{}' exists when it should not", kv_op.key),
-                            });
-                        }
-                    }
-                    "cas" => {
-                        // Consul semantic (kvsSetCASTxn in state/kvs.go):
-                        //   index == 0 + key exists    → FAIL (set-if-not-exists)
-                        //   index == 0 + key missing   → OK (create)
-                        //   index > 0  + key missing   → FAIL (key must exist)
-                        //   index > 0  + key.mi != idx → FAIL (stale)
-                        let cas_index = kv_op.index.unwrap_or(0);
-                        let existing = self.get(&kv_op.key);
-                        match (cas_index, existing) {
-                            (0, Some(_)) => errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: format!("CAS failed: key '{}' already exists", kv_op.key),
-                            }),
-                            (0, None) => { /* OK — will create in phase 2 */ }
-                            (_, None) => errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: format!("key '{}' not found", kv_op.key),
-                            }),
-                            (idx_val, Some(pair)) if pair.modify_index != idx_val => {
-                                errors.push(TxnError {
-                                    op_index: idx as u32,
-                                    what: "CAS failed: index mismatch".to_string(),
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                    "delete-cas" => {
-                        let cas_index = kv_op.index.unwrap_or(0);
-                        match self.get(&kv_op.key) {
-                            Some(pair) => {
-                                if pair.modify_index != cas_index {
-                                    errors.push(TxnError {
-                                        op_index: idx as u32,
-                                        what: "CAS failed: index mismatch".to_string(),
-                                    });
-                                }
-                            }
-                            None => {
-                                errors.push(TxnError {
-                                    op_index: idx as u32,
-                                    what: format!("key '{}' not found", kv_op.key),
-                                });
-                            }
-                        }
-                    }
-                    "get" | "set" | "delete" | "delete-tree" | "get-tree" | "lock" | "unlock" => {}
-                    verb => {
-                        errors.push(TxnError {
-                            op_index: idx as u32,
-                            what: format!("unknown verb: {}", verb),
-                        });
-                    }
-                }
-            }
+        let index = self.next_index();
+        let result = match apply_kv_transaction_ops(&self.db, &ops, index) {
+            Ok(result) => result,
+            Err(e) => return txn_write_failure(0, &e),
+        };
+        if result.errors.is_none() {
+            self.notify.notify_waiters();
         }
-
-        // If validation errors, return immediately without applying anything
-        if !errors.is_empty() {
-            return TxnResult {
-                results: None,
-                errors: Some(errors),
-            };
-        }
-
-        // Phase 2: Apply all operations
-        let mut results: Vec<TxnResultItem> = Vec::new();
-
-        for (idx, op) in ops.into_iter().enumerate() {
-            if let Some(kv_op) = op.kv {
-                match kv_op.verb.to_lowercase().as_str() {
-                    "get" => {
-                        if let Some(pair) = self.get(&kv_op.key) {
-                            results.push(TxnResultItem {
-                                kv: Some(pair),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    "get-tree" => {
-                        let pairs = self.get_prefix(&kv_op.key);
-                        for pair in pairs {
-                            results.push(TxnResultItem {
-                                kv: Some(pair),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    "set" => {
-                        let base64_val = txn_value_base64(&kv_op.value);
-                        let pair = match self
-                            .try_put_base64(kv_op.key, base64_val, kv_op.flags)
-                            .await
-                        {
-                            Ok(pair) => pair,
-                            Err(e) => return txn_write_failure(idx, &e),
-                        };
-                        results.push(TxnResultItem {
-                            kv: Some(pair),
-                            ..Default::default()
-                        });
-                    }
-                    "cas" => {
-                        let value = decode_txn_value(&kv_op.value);
-                        let cas_index = kv_op.index.unwrap_or(0);
-                        if let Err(e) = self
-                            .try_cas(kv_op.key.clone(), &value, cas_index, kv_op.flags)
-                            .await
-                        {
-                            return txn_write_failure(idx, &e);
-                        }
-                        if let Some(pair) = self.get(&kv_op.key) {
-                            results.push(TxnResultItem {
-                                kv: Some(pair),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    "delete" => {
-                        if let Err(e) = self.try_delete(&kv_op.key).await {
-                            return txn_write_failure(idx, &e);
-                        }
-                        results.push(TxnResultItem {
-                            kv: Some(KVPair::key_only(kv_op.key)),
-                            ..Default::default()
-                        });
-                    }
-                    "delete-tree" => {
-                        if let Err(e) = self.try_delete_prefix(&kv_op.key).await {
-                            return txn_write_failure(idx, &e);
-                        }
-                    }
-                    "delete-cas" => {
-                        if let Err(e) = self.try_delete(&kv_op.key).await {
-                            return txn_write_failure(idx, &e);
-                        }
-                        results.push(TxnResultItem {
-                            kv: Some(KVPair::key_only(kv_op.key)),
-                            ..Default::default()
-                        });
-                    }
-                    "check-index" | "check-not-exists" => {
-                        // Already validated in phase 1, these are check-only verbs
-                        if let Some(pair) = self.get(&kv_op.key) {
-                            results.push(TxnResultItem {
-                                kv: Some(pair),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    "lock" => {
-                        let base64_val = txn_value_base64(&kv_op.value);
-                        let pair = match self
-                            .try_put_base64(kv_op.key.clone(), base64_val, kv_op.flags)
-                            .await
-                        {
-                            Ok(pair) => pair,
-                            Err(e) => return txn_write_failure(idx, &e),
-                        };
-                        self.increment_lock_index(&kv_op.key);
-                        results.push(TxnResultItem {
-                            kv: Some(pair),
-                            ..Default::default()
-                        });
-                    }
-                    "unlock" => {
-                        if let Some(pair) = self.clear_session(&kv_op.key) {
-                            results.push(TxnResultItem {
-                                kv: Some(pair),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // Node transaction operations.
-            // Since Consul node data in Batata is derived from service registrations
-            // (not first-class nodes), these operations treat the Node struct as
-            // informational metadata returned in the response.
-            if let Some(node_op) = op.node {
-                match node_op.verb.to_lowercase().as_str() {
-                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
-                        results.push(TxnResultItem {
-                            node: Some(node_op.node),
-                            ..Default::default()
-                        });
-                    }
-                    _ => {}
-                }
-            }
-
-            // Service transaction operations
-            if let Some(service_op) = op.service {
-                match service_op.verb.to_lowercase().as_str() {
-                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
-                        results.push(TxnResultItem {
-                            service: Some(service_op.service),
-                            ..Default::default()
-                        });
-                    }
-                    _ => {}
-                }
-            }
-
-            // Check transaction operations
-            if let Some(check_op) = op.check {
-                match check_op.verb.to_lowercase().as_str() {
-                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
-                        results.push(TxnResultItem {
-                            check: Some(check_op.check),
-                            ..Default::default()
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        TxnResult {
-            results: if results.is_empty() {
-                None
-            } else {
-                Some(results)
-            },
-            errors: None,
-        }
+        result
     }
 }
 
-/// Get the base64 value from a transaction operation.
-/// The Go SDK sends values already base64-encoded. Since KVPair stores values
-/// as base64, we pass them through directly without decode/re-encode.
-fn txn_value_base64(value: &Option<String>) -> Option<String> {
-    value.clone().filter(|v| !v.is_empty())
-}
+/// Apply an ordered `/v1/txn` batch against one RocksDB snapshot.
+///
+/// This mirrors upstream `Store::TxnRW`: reads and writes observe a single
+/// transaction, every verb is validated against that view, and the RocksDB
+/// write batch is committed only when no verb reported an error.
+pub(crate) fn apply_kv_transaction_ops(
+    db: &DB,
+    ops: &[TxnOp],
+    index: u64,
+) -> Result<TxnResult, String> {
+    use std::collections::{BTreeSet, HashMap};
 
-/// Decode base64 value from transaction operation to a UTF-8 string for put().
-/// Falls back to lossy conversion for non-UTF-8 binary data.
-fn decode_txn_value(value: &Option<String>) -> String {
-    value
-        .as_ref()
-        .and_then(|v| BASE64.decode(v).ok())
-        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-        .unwrap_or_default()
+    fn load_stored(
+        db: &DB,
+        cf: &rocksdb::ColumnFamily,
+        key: &str,
+    ) -> Result<Option<StoredKV>, String> {
+        let bytes = db
+            .get_cf(cf, key.as_bytes())
+            .map_err(|e| format!("failed to read key '{}': {}", key, e))?;
+        match bytes {
+            Some(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|e| format!("corrupt stored KV for '{}': {}", key, e)),
+            None => Ok(None),
+        }
+    }
+
+    fn ensure_loaded(
+        db: &DB,
+        cf: &rocksdb::ColumnFamily,
+        key: &str,
+        original: &mut HashMap<String, Option<StoredKV>>,
+        overlay: &mut HashMap<String, Option<StoredKV>>,
+    ) -> Result<(), String> {
+        if original.contains_key(key) {
+            return Ok(());
+        }
+        let loaded = load_stored(db, cf, key)?;
+        original.insert(key.to_string(), loaded.clone());
+        overlay.entry(key.to_string()).or_insert(loaded);
+        Ok(())
+    }
+
+    fn load_prefix(
+        db: &DB,
+        cf: &rocksdb::ColumnFamily,
+        prefix: &str,
+        original: &mut HashMap<String, Option<StoredKV>>,
+        overlay: &mut HashMap<String, Option<StoredKV>>,
+    ) -> Result<Vec<String>, String> {
+        let mode = if prefix.is_empty() {
+            rocksdb::IteratorMode::Start
+        } else {
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)
+        };
+        for item in db.iterator_cf(cf, mode).flatten() {
+            let (key_bytes, _) = item;
+            let key = match String::from_utf8(key_bytes.to_vec()) {
+                Ok(key) => key,
+                Err(_) => continue,
+            };
+            if !prefix.is_empty() && !key.starts_with(prefix) {
+                break;
+            }
+            ensure_loaded(db, cf, &key, original, overlay)?;
+        }
+        let mut keys: Vec<String> = overlay
+            .keys()
+            .filter(|key| prefix.is_empty() || key.starts_with(prefix))
+            .cloned()
+            .collect();
+        keys.sort();
+        keys.dedup();
+        Ok(keys)
+    }
+
+    fn encoded_value(op: &KVTxnOp) -> Result<Option<String>, String> {
+        match op.value.as_deref() {
+            None | Some("") => Ok(None),
+            Some(value) => {
+                BASE64
+                    .decode(value)
+                    .map_err(|e| format!("invalid base64 value for key '{}': {}", op.key, e))?;
+                Ok(Some(value.to_string()))
+            }
+        }
+    }
+
+    fn entry<'a>(
+        overlay: &'a HashMap<String, Option<StoredKV>>,
+        key: &str,
+    ) -> Option<&'a StoredKV> {
+        overlay.get(key).and_then(|stored| stored.as_ref())
+    }
+
+    fn result_pair(pair: &KVPair, keep_value: bool) -> KVPair {
+        let mut pair = pair.clone();
+        if !keep_value {
+            pair.value = None;
+        }
+        pair
+    }
+
+    fn written_stored(
+        existing: Option<&StoredKV>,
+        key: &str,
+        value: Option<String>,
+        flags: Option<u64>,
+        index: u64,
+    ) -> StoredKV {
+        let now = current_timestamp();
+        match existing {
+            Some(existing) => {
+                let mut stored = existing.clone();
+                stored.pair.key = key.to_string();
+                stored.pair.value = value;
+                if let Some(flags) = flags {
+                    stored.pair.flags = flags;
+                }
+                stored.pair.modify_index = index;
+                stored.modified_at = now;
+                stored
+            }
+            None => StoredKV {
+                pair: KVPair {
+                    key: key.to_string(),
+                    create_index: index,
+                    modify_index: index,
+                    lock_index: 0,
+                    flags: flags.unwrap_or(0),
+                    value,
+                    session: None,
+                },
+                created_at: now,
+                modified_at: now,
+            },
+        }
+    }
+
+    fn push_error(errors: &mut Vec<TxnError>, op_index: usize, what: impl Into<String>) {
+        errors.push(TxnError {
+            op_index: op_index as u32,
+            what: what.into(),
+        });
+    }
+
+    let cf_kv = db
+        .cf_handle(CF_CONSUL_KV)
+        .ok_or("KV column family is missing")?;
+    let cf_sessions = db.cf_handle(CF_CONSUL_SESSIONS);
+
+    let mut overlay: HashMap<String, Option<StoredKV>> = HashMap::new();
+    let mut original: HashMap<String, Option<StoredKV>> = HashMap::new();
+    let mut dirty: BTreeSet<String> = BTreeSet::new();
+    let mut results: Vec<TxnResultItem> = Vec::new();
+    let mut errors: Vec<TxnError> = Vec::new();
+
+    for (op_index, op) in ops.iter().enumerate() {
+        let Some(kv) = op.kv.as_ref() else {
+            // Node/Service/Check writes are response-only in batata; their
+            // authoritative storage is the naming/catalog path, not the KV CF.
+            if let Some(node) = op.node.as_ref() {
+                match node.verb.to_ascii_lowercase().as_str() {
+                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
+                        results.push(TxnResultItem {
+                            node: Some(node.node.clone()),
+                            ..Default::default()
+                        })
+                    }
+                    verb => push_error(
+                        &mut errors,
+                        op_index,
+                        format!("unknown node verb: {}", verb),
+                    ),
+                }
+            }
+            if let Some(service) = op.service.as_ref() {
+                match service.verb.to_ascii_lowercase().as_str() {
+                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
+                        results.push(TxnResultItem {
+                            service: Some(service.service.clone()),
+                            ..Default::default()
+                        })
+                    }
+                    verb => push_error(
+                        &mut errors,
+                        op_index,
+                        format!("unknown service verb: {}", verb),
+                    ),
+                }
+            }
+            if let Some(check) = op.check.as_ref() {
+                match check.verb.to_ascii_lowercase().as_str() {
+                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
+                        results.push(TxnResultItem {
+                            check: Some(check.check.clone()),
+                            ..Default::default()
+                        })
+                    }
+                    verb => push_error(
+                        &mut errors,
+                        op_index,
+                        format!("unknown check verb: {}", verb),
+                    ),
+                }
+            }
+            if op.kv.is_none() && op.node.is_none() && op.service.is_none() && op.check.is_none() {
+                push_error(&mut errors, op_index, "unknown operation type");
+            }
+            continue;
+        };
+
+        let verb = kv.verb.to_ascii_lowercase();
+        match verb.as_str() {
+            "get" | "get-or-empty" => {
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                match entry(&overlay, &kv.key) {
+                    Some(stored) => results.push(TxnResultItem {
+                        kv: Some(result_pair(&stored.pair, true)),
+                        ..Default::default()
+                    }),
+                    None if verb == "get-or-empty" => results.push(TxnResultItem {
+                        kv: Some(KVPair::key_only(kv.key.clone())),
+                        ..Default::default()
+                    }),
+                    None => push_error(
+                        &mut errors,
+                        op_index,
+                        format!("key '{}' doesn't exist", kv.key),
+                    ),
+                }
+            }
+            "get-tree" => {
+                let keys = match load_prefix(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    Ok(keys) => keys,
+                    Err(e) => {
+                        push_error(&mut errors, op_index, e);
+                        continue;
+                    }
+                };
+                for key in keys {
+                    if let Some(stored) = entry(&overlay, &key) {
+                        results.push(TxnResultItem {
+                            kv: Some(result_pair(&stored.pair, true)),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            "set" => {
+                let value = match encoded_value(kv) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        push_error(&mut errors, op_index, e);
+                        continue;
+                    }
+                };
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                let stored =
+                    written_stored(entry(&overlay, &kv.key), &kv.key, value, kv.flags, index);
+                results.push(TxnResultItem {
+                    kv: Some(result_pair(&stored.pair, false)),
+                    ..Default::default()
+                });
+                overlay.insert(kv.key.clone(), Some(stored));
+                dirty.insert(kv.key.clone());
+            }
+            "cas" => {
+                let expected = kv.index.unwrap_or(0);
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                let existing = entry(&overlay, &kv.key).cloned();
+                let matches = match (&existing, expected) {
+                    (None, 0) => true,
+                    (None, _) => false,
+                    (Some(_), 0) => false,
+                    (Some(stored), expected) => stored.pair.modify_index == expected,
+                };
+                if !matches {
+                    push_error(&mut errors, op_index, "CAS failed: index mismatch");
+                    continue;
+                }
+                let value = match encoded_value(kv) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        push_error(&mut errors, op_index, e);
+                        continue;
+                    }
+                };
+                let stored = written_stored(existing.as_ref(), &kv.key, value, kv.flags, index);
+                results.push(TxnResultItem {
+                    kv: Some(result_pair(&stored.pair, false)),
+                    ..Default::default()
+                });
+                overlay.insert(kv.key.clone(), Some(stored));
+                dirty.insert(kv.key.clone());
+            }
+            "delete" => {
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                if overlay.contains_key(&kv.key) {
+                    overlay.insert(kv.key.clone(), None);
+                    dirty.insert(kv.key.clone());
+                }
+            }
+            "delete-cas" => {
+                let expected = kv.index.unwrap_or(0);
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                let stored = entry(&overlay, &kv.key);
+                if stored.is_none() && expected != 0 {
+                    push_error(&mut errors, op_index, format!("key '{}' not found", kv.key));
+                    continue;
+                }
+                if let Some(stored) = stored
+                    && stored.pair.modify_index != expected
+                {
+                    push_error(&mut errors, op_index, "CAS failed: index mismatch");
+                    continue;
+                }
+                if stored.is_some() {
+                    overlay.insert(kv.key.clone(), None);
+                    dirty.insert(kv.key.clone());
+                }
+            }
+            "delete-tree" => {
+                let keys = match load_prefix(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    Ok(keys) => keys,
+                    Err(e) => {
+                        push_error(&mut errors, op_index, e);
+                        continue;
+                    }
+                };
+                for key in keys {
+                    if overlay.get(&key).is_some_and(|stored| stored.is_some()) {
+                        overlay.insert(key.clone(), None);
+                        dirty.insert(key);
+                    }
+                }
+            }
+            "check-index" => {
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                match entry(&overlay, &kv.key) {
+                    Some(stored) if stored.pair.modify_index == kv.index.unwrap_or(0) => {
+                        results.push(TxnResultItem {
+                            kv: Some(result_pair(&stored.pair, false)),
+                            ..Default::default()
+                        });
+                    }
+                    Some(stored) => push_error(
+                        &mut errors,
+                        op_index,
+                        format!(
+                            "current modify index {} does not match expected {}",
+                            stored.pair.modify_index,
+                            kv.index.unwrap_or(0)
+                        ),
+                    ),
+                    None => push_error(
+                        &mut errors,
+                        op_index,
+                        format!("key '{}' doesn't exist for check-index", kv.key),
+                    ),
+                }
+            }
+            "check-not-exists" => {
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                if entry(&overlay, &kv.key).is_some() {
+                    push_error(
+                        &mut errors,
+                        op_index,
+                        format!("key '{}' exists when it should not", kv.key),
+                    );
+                }
+            }
+            "check-session" => {
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                let expected = kv.session.as_deref().unwrap_or_default();
+                match entry(&overlay, &kv.key) {
+                    Some(stored)
+                        if stored.pair.session.as_deref().unwrap_or_default() == expected =>
+                    {
+                        results.push(TxnResultItem {
+                            kv: Some(result_pair(&stored.pair, false)),
+                            ..Default::default()
+                        });
+                    }
+                    Some(stored) => push_error(
+                        &mut errors,
+                        op_index,
+                        format!(
+                            "failed session check for key '{}', current session '{:?}' != '{}'",
+                            kv.key, stored.pair.session, expected
+                        ),
+                    ),
+                    None => push_error(
+                        &mut errors,
+                        op_index,
+                        format!("key '{}' doesn't exist for check-session", kv.key),
+                    ),
+                }
+            }
+            "lock" => {
+                let Some(session) = kv.session.as_deref().filter(|s| !s.is_empty()) else {
+                    push_error(&mut errors, op_index, "missing session");
+                    continue;
+                };
+                let cf_sessions = match cf_sessions {
+                    Some(cf) => cf,
+                    None => {
+                        push_error(&mut errors, op_index, "Session column family is missing");
+                        continue;
+                    }
+                };
+                let exists = match db.get_cf(cf_sessions, session.as_bytes()) {
+                    Ok(value) => value.is_some(),
+                    Err(e) => {
+                        push_error(
+                            &mut errors,
+                            op_index,
+                            format!("failed session lookup: {}", e),
+                        );
+                        continue;
+                    }
+                };
+                if !exists {
+                    push_error(
+                        &mut errors,
+                        op_index,
+                        format!("invalid session '{}'", session),
+                    );
+                    continue;
+                }
+                let value = match encoded_value(kv) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        push_error(&mut errors, op_index, e);
+                        continue;
+                    }
+                };
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                let existing = entry(&overlay, &kv.key).cloned();
+                let stored = match existing {
+                    Some(mut stored) => {
+                        match stored.pair.session.as_deref() {
+                            Some(holder) if holder == session => {}
+                            Some(_) => {
+                                push_error(
+                                    &mut errors,
+                                    op_index,
+                                    format!(
+                                        "failed to lock key '{}', lock is already held",
+                                        kv.key
+                                    ),
+                                );
+                                continue;
+                            }
+                            None => {
+                                stored.pair.lock_index = stored.pair.lock_index.saturating_add(1)
+                            }
+                        }
+                        stored.pair.value = value;
+                        stored.pair.session = Some(session.to_string());
+                        if let Some(flags) = kv.flags {
+                            stored.pair.flags = flags;
+                        }
+                        stored.pair.modify_index = index;
+                        stored.modified_at = current_timestamp();
+                        stored
+                    }
+                    None => StoredKV {
+                        pair: KVPair {
+                            key: kv.key.clone(),
+                            create_index: index,
+                            modify_index: index,
+                            lock_index: 1,
+                            flags: kv.flags.unwrap_or(0),
+                            value,
+                            session: Some(session.to_string()),
+                        },
+                        created_at: current_timestamp(),
+                        modified_at: current_timestamp(),
+                    },
+                };
+                results.push(TxnResultItem {
+                    kv: Some(result_pair(&stored.pair, false)),
+                    ..Default::default()
+                });
+                overlay.insert(kv.key.clone(), Some(stored));
+                dirty.insert(kv.key.clone());
+            }
+            "unlock" => {
+                let Some(session) = kv.session.as_deref().filter(|s| !s.is_empty()) else {
+                    push_error(&mut errors, op_index, "missing session");
+                    continue;
+                };
+                let value = match encoded_value(kv) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        push_error(&mut errors, op_index, e);
+                        continue;
+                    }
+                };
+                if let Err(e) = ensure_loaded(db, cf_kv, &kv.key, &mut original, &mut overlay) {
+                    push_error(&mut errors, op_index, e);
+                    continue;
+                }
+                let Some(mut stored) = entry(&overlay, &kv.key).cloned() else {
+                    push_error(&mut errors, op_index, format!("key '{}' not found", kv.key));
+                    continue;
+                };
+                if stored.pair.session.as_deref() != Some(session) {
+                    push_error(
+                        &mut errors,
+                        op_index,
+                        format!(
+                            "failed to unlock key '{}', lock isn't held by session '{}'",
+                            kv.key, session
+                        ),
+                    );
+                    continue;
+                }
+                stored.pair.value = value;
+                stored.pair.session = None;
+                if let Some(flags) = kv.flags {
+                    stored.pair.flags = flags;
+                }
+                stored.pair.modify_index = index;
+                stored.modified_at = current_timestamp();
+                results.push(TxnResultItem {
+                    kv: Some(result_pair(&stored.pair, false)),
+                    ..Default::default()
+                });
+                overlay.insert(kv.key.clone(), Some(stored));
+                dirty.insert(kv.key.clone());
+            }
+            verb => push_error(&mut errors, op_index, format!("unknown verb: {}", verb)),
+        }
+    }
+
+    if !errors.is_empty() {
+        return Ok(TxnResult {
+            results: None,
+            errors: Some(errors),
+        });
+    }
+
+    let mut batch = WriteBatch::default();
+    let mut session_index_puts: BTreeSet<String> = BTreeSet::new();
+    let mut session_index_deletes: BTreeSet<String> = BTreeSet::new();
+
+    for key in &dirty {
+        let before_session = original
+            .get(key)
+            .and_then(|stored| stored.as_ref())
+            .and_then(|stored| stored.pair.session.as_deref())
+            .filter(|session| !session.is_empty());
+        let after = overlay.get(key).and_then(|stored| stored.as_ref());
+
+        match after {
+            Some(stored) => {
+                let bytes = serde_json::to_vec(stored)
+                    .map_err(|e| format!("failed to encode key '{}': {}", key, e))?;
+                batch.put_cf(cf_kv, key.as_bytes(), &bytes);
+            }
+            None => batch.delete_cf(cf_kv, key.as_bytes()),
+        }
+
+        let after_session = after
+            .and_then(|stored| stored.pair.session.as_deref())
+            .filter(|session| !session.is_empty());
+        if before_session != after_session {
+            if let Some(session) = before_session {
+                session_index_deletes.insert(format!("kidx:{}:{}", session, key));
+            }
+            if let Some(session) = after_session {
+                session_index_puts.insert(format!("kidx:{}:{}", session, key));
+            }
+        }
+    }
+
+    if let Some(cf_sessions) = cf_sessions {
+        for index_key in session_index_deletes {
+            batch.delete_cf(cf_sessions, index_key.as_bytes());
+        }
+        for index_key in session_index_puts {
+            batch.put_cf(cf_sessions, index_key.as_bytes(), b"");
+        }
+    }
+
+    db.write(batch)
+        .map_err(|e| format!("KV transaction commit failed: {}", e))?;
+
+    Ok(TxnResult {
+        results: if results.is_empty() {
+            None
+        } else {
+            Some(results)
+        },
+        errors: None,
+    })
 }
 
 impl Default for ConsulKVService {
@@ -1771,29 +2148,9 @@ pub async fn get_kv(
     }
     crate::api_metrics::incr_endpoint("kv_get", "success");
 
-    // Honor ?consistent — wait for the local state machine to catch up to
-    // the latest committed Raft log index so the following read returns
-    // fully-linearizable state. On a standalone node this is a no-op.
-    // On a follower, fall through and serve from the local state machine
-    // rather than returning a 503 error. The Raft-replicated data is
-    // sufficiently consistent for Consul API consumers (lock monitors,
-    // blocking queries, etc.) — rejecting with 503 breaks Go SDK lock
-    // monitor which uses RequireConsistent:true and treats errors as
-    // lock loss.
-    let opts = crate::consul_meta::ConsulQueryOptions::from_request(&req);
-    if matches!(
-        opts.consistency,
-        crate::consul_meta::ConsistencyMode::Consistent
-    ) && let Err(e) = kv_service.ensure_linearizable_read().await
-    {
-        tracing::debug!(
-            "consistent KV read: not leader, serving from local state machine: {:?}",
-            e
-        );
-        // Fall through to read from local Raft state machine.
-        // This provides near-linearizable consistency since the
-        // local state is kept up-to-date by Raft replication.
-    }
+    // Consistency is handled centrally by `ConsulReadConsistency` on the /v1
+    // scope: non-stale reads are proxied to the leader and ?consistent gets a
+    // ReadIndex barrier there. Do not re-check here or issue a second barrier.
 
     let raw = query.raw.unwrap_or(false);
     let keys_only = query.keys.unwrap_or(false);
@@ -2000,6 +2357,7 @@ pub async fn delete_kv(
 pub async fn txn(
     kv_service: web::Data<ConsulKVService>,
     acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     req: HttpRequest,
     body: web::Json<Vec<TxnOp>>,
 ) -> HttpResponse {
@@ -2010,6 +2368,59 @@ pub async fn txn(
     }
 
     let ops = body.into_inner();
+    if ops.len() > ConsulKVService::MAX_TXN_OPS {
+        return HttpResponse::build(actix_web::http::StatusCode::PAYLOAD_TOO_LARGE).consul_error(
+            ConsulError::new(format!(
+                "Transaction contains too many operations ({} > {})",
+                ops.len(),
+                ConsulKVService::MAX_TXN_OPS
+            )),
+        );
+    }
+
+    // Upstream validates keys and value sizes before proposing the Raft entry.
+    for op in &ops {
+        let Some(kv) = op.kv.as_ref() else {
+            continue;
+        };
+        if let Err(reason) = validate_kv_key(&kv.key) {
+            return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
+                "Invalid key in transaction: {}",
+                reason
+            )));
+        }
+        if let Some(value) = kv.value.as_deref()
+            && !value.is_empty()
+        {
+            match BASE64.decode(value) {
+                Ok(bytes) if bytes.len() > DEFAULT_KV_MAX_VALUE_SIZE => {
+                    return HttpResponse::build(actix_web::http::StatusCode::PAYLOAD_TOO_LARGE)
+                        .consul_error(ConsulError::new(format!(
+                            "Value for key '{}' is too large ({} > {} bytes)",
+                            kv.key,
+                            bytes.len(),
+                            DEFAULT_KV_MAX_VALUE_SIZE
+                        )));
+                }
+                Err(_) => {
+                    return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
+                        "Invalid base64 value for key '{}'",
+                        kv.key
+                    )));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let has_write = ops.iter().any(|op| {
+        op.kv.as_ref().is_some_and(|kv| {
+            matches!(
+                kv.verb.to_ascii_lowercase().as_str(),
+                "set" | "cas" | "delete" | "delete-cas" | "delete-tree" | "lock" | "unlock"
+            )
+        })
+    });
     let result = kv_service.transaction(ops).await;
 
     // A failed replicated write is a service error, not a transaction conflict.
@@ -2020,10 +2431,12 @@ pub async fn txn(
         return raft_write_unavailable("kv_txn", "transaction could not be replicated");
     }
     if result.errors.is_some() {
-        HttpResponse::Conflict().json(result)
-    } else {
-        HttpResponse::Ok().json(result)
+        return HttpResponse::Conflict().json(result);
     }
+    if has_write {
+        index_provider.increment(ConsulTable::KVS);
+    }
+    HttpResponse::Ok().json(result)
 }
 
 // ============================================================================
@@ -2454,6 +2867,7 @@ mod tests {
                     value: Some(BASE64.encode("value1".as_bytes())),
                     flags: None,
                     index: None,
+                    session: None,
                 }),
                 ..Default::default()
             },
@@ -2464,6 +2878,7 @@ mod tests {
                     value: Some(BASE64.encode("value2".as_bytes())),
                     flags: None,
                     index: None,
+                    session: None,
                 }),
                 ..Default::default()
             },
@@ -2474,6 +2889,7 @@ mod tests {
                     value: None,
                     flags: None,
                     index: None,
+                    session: None,
                 }),
                 ..Default::default()
             },
@@ -2685,6 +3101,7 @@ mod tests {
                     value: None,
                     flags: None,
                     index: Some(modify_index),
+                    session: None,
                 }),
                 ..Default::default()
             },
@@ -2695,6 +3112,7 @@ mod tests {
                     value: Some(BASE64.encode("updated".as_bytes())),
                     flags: None,
                     index: None,
+                    session: None,
                 }),
                 ..Default::default()
             },
@@ -2714,6 +3132,7 @@ mod tests {
                 value: None,
                 flags: None,
                 index: Some(999),
+                session: None,
             }),
             ..Default::default()
         }];
@@ -2733,6 +3152,7 @@ mod tests {
                 value: None,
                 flags: None,
                 index: None,
+                session: None,
             }),
             ..Default::default()
         }];
@@ -2748,6 +3168,7 @@ mod tests {
                 value: None,
                 flags: None,
                 index: None,
+                session: None,
             }),
             ..Default::default()
         }];
@@ -2766,6 +3187,7 @@ mod tests {
                 value: None,
                 flags: None,
                 index: None,
+                session: None,
             }),
             ..Default::default()
         }];
@@ -2790,6 +3212,7 @@ mod tests {
                 value: None,
                 flags: None,
                 index: None,
+                session: None,
             }),
             ..Default::default()
         }];
@@ -2815,6 +3238,7 @@ mod tests {
                 value: None,
                 flags: None,
                 index: None,
+                session: None,
             }),
             ..Default::default()
         }];
@@ -2910,6 +3334,7 @@ mod tests {
                 value: Some(BASE64.encode("updated".as_bytes())),
                 flags: None,
                 index: Some(99999), // wrong index
+                session: None,
             }),
             ..Default::default()
         }];
@@ -2997,5 +3422,200 @@ mod tests {
 
         let result = service.wait_for_index(1, 2000).await;
         assert!(result);
+    }
+
+    fn txn_kv_op(
+        verb: &str,
+        key: &str,
+        value: Option<&str>,
+        index: Option<u64>,
+        session: Option<&str>,
+    ) -> TxnOp {
+        TxnOp {
+            kv: Some(KVTxnOp {
+                verb: verb.to_string(),
+                key: key.to_string(),
+                value: value.map(|value| BASE64.encode(value.as_bytes())),
+                flags: None,
+                index,
+                session: session.map(str::to_string),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kv_transaction_rolls_back_every_write_on_conflict() {
+        let service = ConsulKVService::new();
+        let seeded = service.put("txn/seed".to_string(), "original", None).await;
+
+        let result = service
+            .transaction(vec![
+                txn_kv_op("set", "txn/a", Some("a"), None, None),
+                txn_kv_op(
+                    "delete-cas",
+                    "txn/seed",
+                    None,
+                    Some(seeded.modify_index + 999),
+                    None,
+                ),
+                txn_kv_op("set", "txn/b", Some("b"), None, None),
+            ])
+            .await;
+
+        assert!(result.errors.is_some());
+        assert!(result.results.is_none());
+        assert!(service.get("txn/a").is_none());
+        assert!(service.get("txn/b").is_none());
+        assert_eq!(
+            service.get("txn/seed").unwrap().decoded_value(),
+            Some("original".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_kv_transaction_reads_see_earlier_writes() {
+        let service = ConsulKVService::new();
+
+        let result = service
+            .transaction(vec![
+                txn_kv_op("set", "txn/read-after-write", Some("value"), None, None),
+                txn_kv_op("get", "txn/read-after-write", None, None, None),
+            ])
+            .await;
+
+        assert!(result.errors.is_none());
+        let results = result.results.expect("transaction results");
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[1].kv.as_ref().expect("get result").decoded_value(),
+            Some("value".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_kv_transaction_delete_cas_missing_zero_is_noop() {
+        let service = ConsulKVService::new();
+
+        let ok = service
+            .transaction(vec![txn_kv_op(
+                "delete-cas",
+                "txn/missing",
+                None,
+                Some(0),
+                None,
+            )])
+            .await;
+        assert!(ok.errors.is_none());
+
+        let conflict = service
+            .transaction(vec![txn_kv_op(
+                "delete-cas",
+                "txn/missing",
+                None,
+                Some(7),
+                None,
+            )])
+            .await;
+        assert!(conflict.errors.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_kv_transaction_lock_unlock_updates_session_index() {
+        let service = ConsulKVService::new();
+        let cf_sessions = service.db.cf_handle(CF_CONSUL_SESSIONS).unwrap();
+        service
+            .db
+            .put_cf(cf_sessions, b"txn-session", b"{}")
+            .expect("seed session");
+
+        let locked = service
+            .transaction(vec![txn_kv_op(
+                "lock",
+                "txn/lock",
+                Some("locked"),
+                None,
+                Some("txn-session"),
+            )])
+            .await;
+        assert!(locked.errors.is_none());
+        let pair = service.get("txn/lock").expect("locked key");
+        assert_eq!(pair.session.as_deref(), Some("txn-session"));
+        assert_eq!(pair.lock_index, 1);
+        assert!(
+            service
+                .db
+                .get_cf(cf_sessions, b"kidx:txn-session:txn/lock")
+                .expect("read session index")
+                .is_some()
+        );
+
+        let check = service
+            .transaction(vec![txn_kv_op(
+                "check-session",
+                "txn/lock",
+                None,
+                None,
+                Some("other-session"),
+            )])
+            .await;
+        assert!(check.errors.is_some());
+
+        let unlocked = service
+            .transaction(vec![txn_kv_op(
+                "unlock",
+                "txn/lock",
+                None,
+                None,
+                Some("txn-session"),
+            )])
+            .await;
+        assert!(unlocked.errors.is_none());
+        assert!(
+            service
+                .get("txn/lock")
+                .expect("unlocked key")
+                .session
+                .is_none()
+        );
+        assert!(
+            service
+                .db
+                .get_cf(cf_sessions, b"kidx:txn-session:txn/lock")
+                .expect("read session index")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_kv_transaction_lock_obeys_standalone_lock_delay() {
+        let delay = crate::lock_delay::ConsulLockDelay::default();
+        delay.set("txn/delayed", std::time::Duration::from_secs(1));
+        let service = ConsulKVService::new().with_lock_delay(delay);
+        let cf_sessions = service.db.cf_handle(CF_CONSUL_SESSIONS).unwrap();
+        service
+            .db
+            .put_cf(cf_sessions, b"txn-session", b"{}")
+            .expect("seed session");
+        service.put("txn/delayed".to_string(), "value", None).await;
+
+        let conflict = service
+            .transaction(vec![txn_kv_op(
+                "lock",
+                "txn/delayed",
+                Some("locked"),
+                None,
+                Some("txn-session"),
+            )])
+            .await;
+        assert!(conflict.errors.is_some());
+        assert!(
+            conflict
+                .errors
+                .expect("lock delay error")
+                .iter()
+                .any(|error| error.what.contains("Lock delay active"))
+        );
+        assert!(service.get("txn/delayed").unwrap().session.is_none());
     }
 }

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::kv::TxnOp;
+
 /// Consul-specific Raft request types.
 ///
 /// These are applied by the Consul plugin handler and produce a dedicated
@@ -79,16 +81,15 @@ pub enum ConsulRaftRequest {
         expected_modify_index: u64,
     },
 
-    /// Execute a batch transaction of KV puts and deletes
+    /// Apply an ordered KV transaction as one state-store write.
+    ///
+    /// The FSM re-validates every verb against committed state and returns the
+    /// serialized `TxnResult` in `data`, so all nodes reach the same commit or
+    /// rollback decision. Node/service/check verbs remain response-only in
+    /// batata; they are carried for result shape but do not mutate state.
     KVTransaction {
-        /// Vec of (key, stored_kv_json) puts
-        puts: Vec<(String, String)>,
-        /// Keys to delete
-        deletes: Vec<String>,
-        /// Session index keys to put
-        session_index_puts: Vec<String>,
-        /// Session index keys to delete
-        session_index_deletes: Vec<String>,
+        /// Ordered operations from `/v1/txn`. Only KV verbs mutate state.
+        ops: Vec<TxnOp>,
     },
 
     // ==================== Session Operations ====================

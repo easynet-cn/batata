@@ -39,6 +39,7 @@ use crate::model::{
 };
 use crate::naming_store::ConsulNamingStore;
 use crate::peering::ConsulPeeringService;
+use crate::raft::{ConsulRaftRequest, ConsulRaftResponse};
 
 /// Handle blocking query wait if `index` query parameter is set.
 /// Returns once index advances past the target or timeout elapses.
@@ -53,6 +54,24 @@ async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, w
 
 /// Callback type for scheduling active health checks in the reactor.
 pub type CheckScheduler = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Minimal Raft seam for check-config writes. Production uses
+/// `ConsulRaftWriter`; tests can record the exact requests emitted by the
+/// check HTTP handlers without booting an openraft cluster.
+#[async_trait::async_trait]
+pub trait HealthCheckRaftSink: Send + Sync {
+    /// Propose one Consul request and return the replicated response.
+    async fn write(&self, request: ConsulRaftRequest) -> Result<ConsulRaftResponse, String>;
+}
+
+#[async_trait::async_trait]
+impl HealthCheckRaftSink for crate::raft::ConsulRaftWriter {
+    async fn write(&self, request: ConsulRaftRequest) -> Result<ConsulRaftResponse, String> {
+        crate::raft::ConsulRaftWriter::write(self, request)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
 
 /// Consul Health Check service backed by InstanceCheckRegistry.
 /// All check operations delegate to the unified registry, which immediately
@@ -73,6 +92,10 @@ pub struct ConsulHealthService {
     check_scheduler: Arc<std::sync::RwLock<Option<CheckScheduler>>>,
     /// Alias check mappings: alias_check_id → (aliased_service_id or aliased_node)
     alias_map: Arc<dashmap::DashMap<String, AliasTarget>>,
+    /// Optional Raft sink for cluster-mode check-config writes. When present,
+    /// register/deregister are authoritative only after the FSM applies them;
+    /// standalone mode keeps the local in-memory writes only.
+    raft_sink: Option<Arc<dyn HealthCheckRaftSink>>,
 }
 
 /// Target of an alias check (either a service ID or a node name).
@@ -96,6 +119,7 @@ impl ConsulHealthService {
             node_name,
             check_scheduler: Arc::new(std::sync::RwLock::new(None)),
             alias_map: Arc::new(dashmap::DashMap::new()),
+            raft_sink: None,
         }
     }
 
@@ -103,6 +127,30 @@ impl ConsulHealthService {
     pub fn with_node_name(mut self, node_name: String) -> Self {
         self.node_name = node_name;
         self
+    }
+
+    /// Attach the Raft sink used to replicate check-config writes in cluster
+    /// mode. Tests pass a recording sink to assert the exact requests.
+    pub fn with_raft_sink(mut self, sink: Arc<dyn HealthCheckRaftSink>) -> Self {
+        self.raft_sink = Some(sink);
+        self
+    }
+
+    /// Persist a check-config mutation through the FSM when running in cluster
+    /// mode. A rejected apply is surfaced as an error so the leader cannot
+    /// acknowledge a config that was never committed.
+    async fn write_check_config(&self, request: ConsulRaftRequest) -> Result<(), String> {
+        let Some(ref sink) = self.raft_sink else {
+            return Ok(());
+        };
+        let response = sink.write(request).await?;
+        if response.success {
+            Ok(())
+        } else {
+            Err(response
+                .message
+                .unwrap_or_else(|| "Raft apply rejected the check write".to_string()))
+        }
     }
 
     /// Set a callback for scheduling active health checks.
@@ -300,7 +348,25 @@ impl ConsulHealthService {
         let is_active = config.check_type.is_active();
         // The reactor keys tasks by the registry key, which is node-qualified.
         let check_key = config.registry_key();
+        // Persist the config through the FSM in cluster mode so every replica
+        // survives a restart with the same check definitions. Serialize only
+        // when a sink is attached so standalone behaviour is unchanged.
+        let persisted_json = if self.raft_sink.is_some() {
+            Some(
+                serde_json::to_string(&config)
+                    .map_err(|e| format!("Failed to serialize health check config: {}", e))?,
+            )
+        } else {
+            None
+        };
         self.registry.register_check(config);
+        if let Some(config_json) = persisted_json {
+            self.write_check_config(ConsulRaftRequest::HealthCheckRegister {
+                check_id: check_key.clone(),
+                config_json,
+            })
+            .await?;
+        }
 
         // Schedule active checks (HTTP/TCP/gRPC/MySQL) for periodic execution
         if is_active
@@ -325,6 +391,28 @@ impl ConsulHealthService {
         self.check_index.remove_check(check_id);
         self.alias_map.remove(check_id);
         self.registry.deregister_check(&check_key);
+        self.write_check_config(ConsulRaftRequest::HealthCheckDeregister {
+            check_id: check_key,
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Deregister all checks attached to an instance and replicate every
+    /// removal through the FSM. Used by service/node deregistration so a
+    /// follower does not resurrect stale check configs on restart.
+    pub async fn deregister_instance_checks_replicated(
+        &self,
+        instance_key: &str,
+    ) -> Result<(), String> {
+        let check_keys = self.registry.get_check_keys_for_instance(instance_key);
+        self.registry.deregister_all_instance_checks(instance_key);
+        for check_key in check_keys {
+            self.write_check_config(ConsulRaftRequest::HealthCheckDeregister {
+                check_id: check_key,
+            })
+            .await?;
+        }
         Ok(())
     }
 
@@ -3568,5 +3656,172 @@ mod tests {
         );
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].service.id, "web-1");
+    }
+
+    // ---- Raft-backed check-config replication guards ----
+
+    /// Records the requests a check write emits, and can be configured to
+    /// reject or fail so tests exercise fail-closed behaviour.
+    struct RecordingCheckSink {
+        requests: std::sync::Mutex<Vec<ConsulRaftRequest>>,
+        mode: std::sync::Mutex<SinkMode>,
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum SinkMode {
+        Accept,
+        Reject,
+        Fail,
+    }
+
+    impl RecordingCheckSink {
+        fn new() -> Arc<Self> {
+            Self::with_mode(SinkMode::Accept)
+        }
+
+        fn with_mode(mode: SinkMode) -> Arc<Self> {
+            Arc::new(Self {
+                requests: std::sync::Mutex::new(Vec::new()),
+                mode: std::sync::Mutex::new(mode),
+            })
+        }
+
+        fn op_types(&self) -> Vec<&'static str> {
+            self.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.op_type())
+                .collect()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HealthCheckRaftSink for RecordingCheckSink {
+        async fn write(&self, request: ConsulRaftRequest) -> Result<ConsulRaftResponse, String> {
+            let mode = *self.mode.lock().unwrap();
+            self.requests.lock().unwrap().push(request);
+            match mode {
+                SinkMode::Accept => Ok(ConsulRaftResponse::success()),
+                SinkMode::Reject => Ok(ConsulRaftResponse::failure("apply rejected".to_string())),
+                SinkMode::Fail => Err("no leader".to_string()),
+            }
+        }
+    }
+
+    fn service_with_sink(sink: Arc<dyn HealthCheckRaftSink>) -> ConsulHealthService {
+        let naming_service = Arc::new(NamingService::new());
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service));
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        ConsulHealthService::new(registry, check_index)
+            .with_node_name("node-a".to_string())
+            .with_raft_sink(sink)
+    }
+
+    #[tokio::test]
+    async fn check_register_and_deregister_emit_raft_requests() {
+        let sink = RecordingCheckSink::new();
+        let service = service_with_sink(sink.clone());
+        let reg = make_check_reg("web-health", Some("web-1-check"), Some("web-1"));
+
+        service.register_check(reg).await.unwrap();
+        service.deregister_check("web-1-check").await.unwrap();
+
+        assert_eq!(
+            sink.op_types(),
+            vec!["HealthCheckRegister", "HealthCheckDeregister"]
+        );
+        // The persisted key must be node-qualified so FSM restore matches.
+        let requests = sink.requests.lock().unwrap();
+        match &requests[0] {
+            ConsulRaftRequest::HealthCheckRegister {
+                check_id,
+                config_json,
+            } => {
+                assert_eq!(check_id, "node-a#web-1-check");
+                assert!(config_json.contains("web-1-check"));
+            }
+            other => panic!("unexpected request: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn check_register_fails_closed_on_rejected_or_failed_apply() {
+        for mode in [SinkMode::Reject, SinkMode::Fail] {
+            let sink = RecordingCheckSink::with_mode(mode);
+            let service = service_with_sink(sink.clone());
+            let reg = make_check_reg("web-health", Some("web-1-check"), Some("web-1"));
+            assert!(service.register_check(reg).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn check_deregister_fails_closed_on_rejected_apply() {
+        // Register locally via a standalone service (no sink), then rebind the
+        // same registry into a service whose sink rejects the removal.
+        let naming_service = Arc::new(NamingService::new());
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service));
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        let bootstrap = ConsulHealthService::new(registry.clone(), check_index.clone())
+            .with_node_name("node-a".to_string());
+        bootstrap
+            .register_check(make_check_reg(
+                "web-health",
+                Some("web-1-check"),
+                Some("web-1"),
+            ))
+            .await
+            .unwrap();
+
+        let sink = RecordingCheckSink::with_mode(SinkMode::Reject);
+        let service = ConsulHealthService::new(registry, check_index)
+            .with_node_name("node-a".to_string())
+            .with_raft_sink(sink);
+        assert!(service.deregister_check("web-1-check").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn standalone_check_write_emits_no_raft_request() {
+        let service = create_test_service();
+        service
+            .register_check(make_check_reg(
+                "web-health",
+                Some("web-1-check"),
+                Some("web-1"),
+            ))
+            .await
+            .unwrap();
+        service.deregister_check("web-1-check").await.unwrap();
+        // No sink attached => both writes succeed locally with no Raft traffic.
+        assert!(service.get_check("web-1-check").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn bulk_check_deregister_replicates_every_check() {
+        let sink = RecordingCheckSink::new();
+        let service = service_with_sink(sink.clone());
+        let reg1 = make_check_reg("c1", Some("inst-c1"), Some("web-1"));
+        let reg2 = make_check_reg("c2", Some("inst-c2"), Some("web-1"));
+        service.register_check(reg1).await.unwrap();
+        service.register_check(reg2).await.unwrap();
+        sink.requests.lock().unwrap().clear();
+
+        // Derive the actual instance key from a registered config.
+        let cfg = service
+            .registry()
+            .get_check_config(&service.check_key("inst-c1"))
+            .unwrap();
+        let real_instance_key = format!(
+            "{}#{}#{}#{}#{}#{}",
+            cfg.namespace, cfg.group_name, cfg.service_name, cfg.ip, cfg.port, cfg.cluster_name
+        );
+        service
+            .deregister_instance_checks_replicated(&real_instance_key)
+            .await
+            .unwrap();
+        assert_eq!(
+            sink.op_types(),
+            vec!["HealthCheckDeregister", "HealthCheckDeregister"]
+        );
     }
 }
