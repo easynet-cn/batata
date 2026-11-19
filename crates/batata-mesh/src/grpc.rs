@@ -1104,87 +1104,108 @@ impl AggregatedDiscoveryService for AggregatedDiscoveryServiceImpl {
                             if let Some(snapshot) =
                                 xds_server.snapshot_cache().get_snapshot(effective_node_id)
                             {
-                                // Build delta response based on subscriptions
+                                // Build delta response based on subscriptions.
+                                // Resource payloads are encoded Envoy protobuf,
+                                // not JSON, so an Envoy client can unpack Any.
+                                let subscribe = &req.resource_names_subscribe;
+                                let wanted = |name: &String| {
+                                    subscribe.is_empty() || subscribe.contains(name)
+                                };
                                 let resources: Vec<proto::Resource> = match resource_type {
                                     ResourceType::Cluster => snapshot
                                         .clusters
                                         .iter()
-                                        .filter(|(name, _)| {
-                                            req.resource_names_subscribe.is_empty()
-                                                || req.resource_names_subscribe.contains(name)
-                                        })
-                                        .map(|(name, cluster)| proto::Resource {
-                                            name: name.clone(),
-                                            version: snapshot.version.clone(),
-                                            resource: Some(proto::Any {
-                                                type_url: ResourceType::Cluster
-                                                    .type_url()
-                                                    .to_string(),
-                                                value: serde_json::to_vec(cluster)
-                                                    .unwrap_or_default(),
-                                            }),
-                                            ..Default::default()
+                                        .filter(|(name, _)| wanted(name))
+                                        .filter_map(|(name, cluster)| {
+                                            let data = crate::xds::encode::encode_resource(
+                                                ResourceType::Cluster,
+                                                crate::xds::encode::NativeResource::Cluster(
+                                                    cluster,
+                                                ),
+                                            )?;
+                                            Some(proto::Resource {
+                                                name: name.clone(),
+                                                version: snapshot.version.clone(),
+                                                resource: Some(proto::Any {
+                                                    type_url: ResourceType::Cluster
+                                                        .type_url()
+                                                        .to_string(),
+                                                    value: data,
+                                                }),
+                                                ..Default::default()
+                                            })
                                         })
                                         .collect(),
                                     ResourceType::Endpoint => snapshot
                                         .endpoints
                                         .iter()
-                                        .filter(|(name, _)| {
-                                            req.resource_names_subscribe.is_empty()
-                                                || req.resource_names_subscribe.contains(name)
-                                        })
-                                        .map(|(name, cla)| proto::Resource {
-                                            name: name.clone(),
-                                            version: snapshot.version.clone(),
-                                            resource: Some(proto::Any {
-                                                type_url: ResourceType::Endpoint
-                                                    .type_url()
-                                                    .to_string(),
-                                                value: serde_json::to_vec(cla).unwrap_or_default(),
-                                            }),
-                                            ..Default::default()
+                                        .filter(|(name, _)| wanted(name))
+                                        .filter_map(|(name, cla)| {
+                                            let data = crate::xds::encode::encode_resource(
+                                                ResourceType::Endpoint,
+                                                crate::xds::encode::NativeResource::Endpoints(cla),
+                                            )?;
+                                            Some(proto::Resource {
+                                                name: name.clone(),
+                                                version: snapshot.version.clone(),
+                                                resource: Some(proto::Any {
+                                                    type_url: ResourceType::Endpoint
+                                                        .type_url()
+                                                        .to_string(),
+                                                    value: data,
+                                                }),
+                                                ..Default::default()
+                                            })
                                         })
                                         .collect(),
                                     ResourceType::Listener => snapshot
                                         .listeners
                                         .iter()
-                                        .filter(|(name, _)| {
-                                            req.resource_names_subscribe.is_empty()
-                                                || req.resource_names_subscribe.contains(name)
-                                        })
-                                        .map(|(name, listener)| proto::Resource {
-                                            name: name.clone(),
-                                            version: snapshot.version.clone(),
-                                            resource: Some(proto::Any {
-                                                type_url: ResourceType::Listener
-                                                    .type_url()
-                                                    .to_string(),
-                                                value: serde_json::to_vec(listener)
-                                                    .unwrap_or_default(),
-                                            }),
-                                            ..Default::default()
+                                        .filter(|(name, _)| wanted(name))
+                                        .filter_map(|(name, listener)| {
+                                            let data = crate::xds::encode::encode_resource(
+                                                ResourceType::Listener,
+                                                crate::xds::encode::NativeResource::Listener(
+                                                    listener,
+                                                ),
+                                            )?;
+                                            Some(proto::Resource {
+                                                name: name.clone(),
+                                                version: snapshot.version.clone(),
+                                                resource: Some(proto::Any {
+                                                    type_url: ResourceType::Listener
+                                                        .type_url()
+                                                        .to_string(),
+                                                    value: data,
+                                                }),
+                                                ..Default::default()
+                                            })
                                         })
                                         .collect(),
                                     ResourceType::Route => snapshot
                                         .routes
                                         .iter()
-                                        .filter(|(name, _)| {
-                                            req.resource_names_subscribe.is_empty()
-                                                || req.resource_names_subscribe.contains(name)
-                                        })
-                                        .map(|(name, route)| proto::Resource {
-                                            name: name.clone(),
-                                            version: snapshot.version.clone(),
-                                            resource: Some(proto::Any {
-                                                type_url: ResourceType::Route
-                                                    .type_url()
-                                                    .to_string(),
-                                                value: serde_json::to_vec(route)
-                                                    .unwrap_or_default(),
-                                            }),
-                                            ..Default::default()
+                                        .filter(|(name, _)| wanted(name))
+                                        .filter_map(|(name, route)| {
+                                            let data = crate::xds::encode::encode_resource(
+                                                ResourceType::Route,
+                                                crate::xds::encode::NativeResource::Route(route),
+                                            )?;
+                                            Some(proto::Resource {
+                                                name: name.clone(),
+                                                version: snapshot.version.clone(),
+                                                resource: Some(proto::Any {
+                                                    type_url: ResourceType::Route
+                                                        .type_url()
+                                                        .to_string(),
+                                                    value: data,
+                                                }),
+                                                ..Default::default()
+                                            })
                                         })
                                         .collect(),
+                                    // SDS / Runtime protos are still absent;
+                                    // skip instead of emitting an invalid Any.
                                     _ => Vec::new(),
                                 };
 
@@ -1241,131 +1262,49 @@ pub fn create_ads_service(xds_server: Arc<XdsServer>) -> AggregatedDiscoveryServ
 pub async fn start_xds_grpc_server(
     xds_server: Arc<XdsServer>,
     addr: std::net::SocketAddr,
-    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ads_service = AggregatedDiscoveryServiceImpl::new(xds_server);
-    let ads_server = XdsGrpcServer::new(ads_service);
+    use tonic::transport::Server;
 
-    info!(addr = %addr, "Starting xDS gRPC server");
+    info!(addr = %addr, "Starting Envoy ADS gRPC server");
 
-    // Create TCP listener
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-
-    // Accept connections in a loop
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                match result {
-                    Ok((stream, peer_addr)) => {
-                        debug!(peer = %peer_addr, "Accepted xDS connection");
-                        let ads_server = ads_server.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = ads_server.handle_connection(stream).await {
-                                error!(peer = %peer_addr, error = %e, "Error handling xDS connection");
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!(error = %e, "Error accepting xDS connection");
-                    }
-                }
-            }
-            _ = &mut shutdown_rx => {
-                info!("xDS gRPC server shutdown signal received");
-                break;
-            }
-        }
-    }
+    Server::builder()
+        .add_service(crate::ads::BatataAdsService::new(xds_server).into_server())
+        .serve_with_shutdown(addr, async {
+            let _ = shutdown_rx.await;
+            info!("xDS gRPC server shutdown signal received");
+        })
+        .await?;
 
     Ok(())
 }
 
-/// xDS gRPC server that handles streaming connections
-#[derive(Clone)]
-pub struct XdsGrpcServer {
-    ads_service: Arc<AggregatedDiscoveryServiceImpl>,
-}
+/// Start the ADS gRPC server on an already-bound TCP listener.
+///
+/// Binding is performed by the caller so a port conflict or an invalid address
+/// propagates synchronously out of plugin startup instead of being swallowed as
+/// a background `tracing::error!`. Passing the listener through also removes
+/// the bind twice / TOCTOU window of a probe-then-serve approach.
+pub async fn start_xds_grpc_server_on_listener(
+    xds_server: Arc<XdsServer>,
+    listener: tokio::net::TcpListener,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use tokio_stream::wrappers::TcpListenerStream;
+    use tonic::transport::Server;
 
-impl XdsGrpcServer {
-    /// Create a new xDS gRPC server
-    pub fn new(ads_service: AggregatedDiscoveryServiceImpl) -> Self {
-        Self {
-            ads_service: Arc::new(ads_service),
-        }
-    }
+    let addr = listener.local_addr()?;
+    info!(addr = %addr, "Starting Envoy ADS gRPC server");
 
-    /// Handle an incoming TCP connection
-    async fn handle_connection(
-        &self,
-        stream: tokio::net::TcpStream,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use hyper::server::conn::http2::Builder;
-        use hyper_util::rt::TokioIo;
-
-        let io = TokioIo::new(stream);
-        let ads_service = self.ads_service.clone();
-
-        // Create HTTP/2 connection
-        let http = Builder::new(hyper_util::rt::TokioExecutor::new());
-
-        http.serve_connection(
-            io,
-            hyper::service::service_fn(move |req| {
-                let ads_service = ads_service.clone();
-                async move { Self::handle_request(ads_service, req).await }
-            }),
-        )
+    Server::builder()
+        .add_service(crate::ads::BatataAdsService::new(xds_server).into_server())
+        .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
+            let _ = shutdown_rx.await;
+            info!("xDS gRPC server shutdown signal received");
+        })
         .await?;
 
-        Ok(())
-    }
-
-    /// Handle an HTTP/2 request
-    async fn handle_request(
-        _ads_service: Arc<AggregatedDiscoveryServiceImpl>,
-        req: http::Request<hyper::body::Incoming>,
-    ) -> Result<http::Response<http_body_util::Full<hyper::body::Bytes>>, std::convert::Infallible>
-    {
-        use http_body_util::Full;
-        use hyper::body::Bytes;
-
-        let path = req.uri().path();
-        let method = path.rsplit('/').next().unwrap_or("");
-
-        debug!(path = %path, method = %method, "Handling xDS request");
-
-        // For now, return a simple response indicating the service is available
-        // Full streaming implementation would require more complex body handling
-        let response = match method {
-            "StreamAggregatedResources" | "DeltaAggregatedResources" => {
-                // Log that we received an ADS request
-                info!(method = %method, "Received ADS streaming request");
-
-                // Return a basic gRPC response indicating service is available
-                http::Response::builder()
-                    .status(200)
-                    .header("content-type", "application/grpc")
-                    .header("grpc-status", "0")
-                    .header(
-                        "grpc-message",
-                        "xDS service active - use tonic client for streaming",
-                    )
-                    .body(Full::new(Bytes::new()))
-                    .unwrap()
-            }
-            _ => {
-                // Return unimplemented for unknown methods
-                http::Response::builder()
-                    .status(200)
-                    .header("content-type", "application/grpc")
-                    .header("grpc-status", "12") // UNIMPLEMENTED
-                    .body(Full::new(Bytes::new()))
-                    .unwrap()
-            }
-        };
-
-        Ok(response)
-    }
+    Ok(())
 }
 
 #[cfg(test)]

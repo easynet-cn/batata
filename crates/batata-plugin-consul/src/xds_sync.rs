@@ -6,7 +6,7 @@
 //! sidecars (bootstrapped via `/v1/connect/proxy/:service_id`) can discover
 //! backend services through ADS.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,18 +17,35 @@ use tracing::{debug, info, warn};
 use batata_mesh::server::{XdsServer, XdsServerConfig};
 use batata_mesh::snapshot::ResourceSnapshot;
 use batata_mesh::xds::types::{
-    Cluster, ClusterLoadAssignment, Endpoint, FilterChain, HealthStatus, LbPolicy, Listener,
-    ListenerAddress, Locality, NetworkFilter,
+    Cluster, ClusterLoadAssignment, Endpoint, FilterChain, HeaderMatchType, HeaderMatcher,
+    HealthStatus, LbPolicy, Listener, ListenerAddress, Locality, NetworkFilter, PathMatch, Route,
+    RouteAction, RouteConfiguration, RouteDestination, RouteMatch, VirtualHost, WeightedCluster,
 };
 
+use crate::connect::{
+    CompiledDiscoveryChain, ConsulConnectService, DiscoveryGraphNodeType, DiscoveryRouteMatch,
+};
 use crate::model::AgentServiceRegistration;
 use crate::namespace::DEFAULT_NAMESPACE;
 use crate::naming_store::ConsulNamingStore;
+
+/// Base bind port for listeners published on the default snapshot.
+///
+/// Service registrations often omit `port` (0) and several services may share
+/// one port, while Envoy rejects two listeners bound to the same address.
+/// A stable synthetic port per service keeps the default LDS deterministic and
+/// answerable. Per-node connect-proxy snapshots use their own bind ports.
+const DEFAULT_LISTENER_BASE_PORT: u16 = 15001;
 
 /// Sync bridge that publishes Consul services to the xDS server.
 pub struct ConsulSyncBridge {
     naming_store: Arc<ConsulNamingStore>,
     xds_server: Arc<XdsServer>,
+    /// Discovery-chain compiler. When present, HTTP services are published as
+    /// RDS `RouteConfiguration` resources and their listeners use HCM/RDS
+    /// instead of a plain TCP proxy. Kept optional so tests and deployments
+    /// without a Connect service keep the previous CDS/EDS-only behaviour.
+    connect_service: Option<Arc<ConsulConnectService>>,
     /// Last observed naming store revision; used to skip no-op updates.
     last_revision: std::sync::atomic::AtomicU64,
 }
@@ -39,8 +56,26 @@ impl ConsulSyncBridge {
         Self {
             naming_store,
             xds_server,
+            connect_service: None,
             last_revision: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Attach the discovery-chain compiler so config-entry L7 routing reaches
+    /// the data plane. Without this, only CDS/EDS are published.
+    pub fn with_connect_service(mut self, connect: Arc<ConsulConnectService>) -> Self {
+        self.connect_service = Some(connect);
+        self
+    }
+
+    /// Compile the discovery chain for `service_name` into an RDS resource.
+    ///
+    /// Returns `None` for TCP services (no L7 route table) and for chains that
+    /// cannot be represented by the checked-in xDS proto subset.
+    pub fn build_discovery_route_config(&self, service_name: &str) -> Option<RouteConfiguration> {
+        let connect = self.connect_service.as_ref()?;
+        let chain = connect.get_discovery_chain(service_name).chain;
+        discovery_chain_to_route_config(&chain)
     }
 
     /// Start the background sync loop.
@@ -183,8 +218,25 @@ impl ConsulSyncBridge {
                 .build_service_cluster_and_endpoints(dest_name, &mut snapshot)
                 .is_some()
             {
-                let outbound = consul_to_outbound_listener(bind_port, dest_name);
-                snapshot.add_listener(outbound);
+                // HTTP services get a discovery-chain-derived route table and
+                // an HCM listener that subscribes to it over RDS; TCP services
+                // keep the original tcp_proxy listener.
+                if let Some(route_config) = self.build_discovery_route_config(dest_name) {
+                    let route_name = route_config.name.clone();
+                    snapshot.add_route(route_config);
+                    let chain = FilterChain::new(format!("http-outbound:{}", dest_name))
+                        .with_filter(NetworkFilter::http_connection_manager(&route_name));
+                    snapshot.add_listener(
+                        Listener::new(
+                            format!("outbound_listener:{}", bind_port),
+                            ListenerAddress::tcp("127.0.0.1", bind_port),
+                        )
+                        .with_filter_chain(chain),
+                    );
+                } else {
+                    let outbound = consul_to_outbound_listener(bind_port, dest_name);
+                    snapshot.add_listener(outbound);
+                }
             }
         }
 
@@ -269,16 +321,16 @@ impl ConsulSyncBridge {
         let mut clusters: Vec<Cluster> = Vec::new();
         let mut endpoints: Vec<ClusterLoadAssignment> = Vec::new();
 
-        for (service_name, regs) in groups {
+        for (service_name, regs) in &groups {
             // Use the first registration to derive cluster-level config.
             let first = regs.first().expect("group is non-empty");
-            clusters.push(consul_to_xds_cluster(service_name.as_str(), first));
+            clusters.push(consul_to_xds_cluster(service_name, first));
 
-            let mut cla = ClusterLoadAssignment::new(&service_name);
+            let mut cla = ClusterLoadAssignment::new(service_name);
             let locality = Locality::new("", "");
             let mut eps: Vec<Endpoint> = Vec::new();
 
-            for reg in &regs {
+            for reg in regs {
                 let ip = reg.effective_address();
                 let port = reg.effective_port() as i32;
                 let healthy = self.naming_store.is_healthy(&ip, port);
@@ -294,7 +346,44 @@ impl ConsulSyncBridge {
             endpoints.push(cla);
         }
 
-        ResourceSnapshot::with_resources(clusters, endpoints)
+        // Publish route tables for HTTP services on the default snapshot too,
+        // so RDS is answerable before any proxy-specific snapshot exists.
+        let routes = groups
+            .keys()
+            .filter_map(|service_name| self.build_discovery_route_config(service_name))
+            .collect::<Vec<_>>();
+
+        // Envoy bootstraps with `lds_config` over ADS. An empty default LDS
+        // leaves that subscription with nothing to apply, so mirror each
+        // backend service as a listener: HTTP services get an HCM filter
+        // referencing their RDS route table, all others a TCP proxy to their
+        // CDS cluster. Per-node snapshots for connect-proxy registrations
+        // still take precedence (see `sync_proxy_snapshots`).
+        let mut service_names = groups.keys().collect::<Vec<_>>();
+        service_names.sort();
+        let route_names: HashSet<&str> = routes.iter().map(|r| r.name.as_str()).collect();
+        let listeners = service_names
+            .into_iter()
+            .enumerate()
+            .map(|(index, service_name)| {
+                let bind_port = DEFAULT_LISTENER_BASE_PORT + index as u16;
+                let route_name = route_config_name(service_name);
+                let filter = if route_names.contains(route_name.as_str()) {
+                    NetworkFilter::http_connection_manager(&route_name)
+                } else {
+                    NetworkFilter::tcp_proxy(service_name.as_str())
+                };
+                let chain =
+                    FilterChain::new(format!("default:{}", service_name)).with_filter(filter);
+                Listener::new(
+                    format!("default_listener:{}", service_name),
+                    ListenerAddress::tcp("127.0.0.1", bind_port),
+                )
+                .with_filter_chain(chain)
+            })
+            .collect::<Vec<_>>();
+
+        ResourceSnapshot::with_all_resources(clusters, endpoints, listeners, routes)
     }
 }
 
@@ -371,6 +460,215 @@ pub fn consul_to_outbound_listener(bind_port: u16, upstream_cluster: &str) -> Li
         .with_filter(NetworkFilter::tcp_proxy(upstream_cluster));
     Listener::new(name, ListenerAddress::tcp("127.0.0.1", bind_port))
         .with_filter_chain(filter_chain)
+}
+
+/// Name of the RDS `RouteConfiguration` generated for a service.
+///
+/// The HCM filter in the corresponding listener uses this exact name in its
+/// `rds.route_config_name`, otherwise Envoy would subscribe to a route table
+/// that the ADS server never sends.
+pub fn route_config_name(service: &str) -> String {
+    format!("{}:routes", service)
+}
+
+/// Guard against cyclic / corrupted discovery chains.
+const MAX_CHAIN_DEPTH: usize = 8;
+
+/// Whether a discovery chain describes an L7 protocol that can use RDS.
+fn is_http_protocol(protocol: &str) -> bool {
+    matches!(
+        protocol.to_ascii_lowercase().as_str(),
+        "http" | "http2" | "grpc" | "http3"
+    )
+}
+
+/// Compile a Consul discovery chain into an RDS `RouteConfiguration`.
+///
+/// Only HTTP-ish protocols are converted: a `tcp` chain (the default when no
+/// `service-defaults` config entry exists) has no L7 route table, and emitting
+/// one would silently change TCP proxy semantics. The graph walk handles
+/// router (path/header matches), splitter (weighted clusters) and resolver
+/// (single target) nodes. Nodes that need protos outside the checked-in subset
+/// (regex matchers, redirect/direct-response) are skipped rather than guessed.
+pub fn discovery_chain_to_route_config(
+    chain: &CompiledDiscoveryChain,
+) -> Option<RouteConfiguration> {
+    if !is_http_protocol(&chain.protocol) {
+        return None;
+    }
+    let routes = routes_from_node(chain, &chain.start_node, 0)?;
+    if routes.is_empty() {
+        return None;
+    }
+    Some(RouteConfiguration {
+        name: route_config_name(&chain.service_name),
+        virtual_hosts: vec![VirtualHost {
+            name: chain.service_name.clone(),
+            domains: vec!["*".to_string()],
+            routes,
+            ..Default::default()
+        }],
+        ..Default::default()
+    })
+}
+
+fn routes_from_node(
+    chain: &CompiledDiscoveryChain,
+    node_name: &str,
+    depth: usize,
+) -> Option<Vec<Route>> {
+    if depth > MAX_CHAIN_DEPTH {
+        return None;
+    }
+    let node = chain.nodes.get(node_name)?;
+    match node.node_type {
+        DiscoveryGraphNodeType::Router => {
+            let mut routes = Vec::new();
+            for (i, entry) in node.routes.iter().enumerate() {
+                let Some(route_match) = route_match_from_definition(entry.definition.as_ref())
+                else {
+                    continue;
+                };
+                let Some(dest) = resolve_destination(chain, &entry.next_node, depth + 1) else {
+                    continue;
+                };
+                routes.push(Route::new(
+                    format!("{}-route-{}", chain.service_name, i),
+                    route_match,
+                    RouteAction::Route(dest),
+                ));
+            }
+            Some(routes)
+        }
+        DiscoveryGraphNodeType::Splitter | DiscoveryGraphNodeType::Resolver => {
+            let dest = resolve_destination(chain, node_name, depth + 1)?;
+            Some(vec![Route::new(
+                format!("{}-default", chain.service_name),
+                RouteMatch::prefix("/"),
+                RouteAction::Route(dest),
+            )])
+        }
+    }
+}
+
+/// Resolve a graph node to the cluster (or weighted clusters) it routes to.
+fn resolve_destination(
+    chain: &CompiledDiscoveryChain,
+    node_name: &str,
+    depth: usize,
+) -> Option<RouteDestination> {
+    if depth > MAX_CHAIN_DEPTH {
+        return None;
+    }
+    let node = chain.nodes.get(node_name)?;
+    match node.node_type {
+        DiscoveryGraphNodeType::Resolver => {
+            let resolver = node.resolver.as_ref()?;
+            let target = chain.targets.get(&resolver.target)?;
+            Some(RouteDestination::cluster(&target.service))
+        }
+        DiscoveryGraphNodeType::Splitter => {
+            let total: f64 = node.splits.iter().map(|s| s.weight.max(0.0)).sum();
+            if total <= 0.0 {
+                return None;
+            }
+            let mut clusters = Vec::new();
+            for split in &node.splits {
+                if split.weight <= 0.0 {
+                    continue;
+                }
+                let dest = resolve_destination(chain, &split.next_node, depth + 1)?;
+                let name = match dest.cluster {
+                    Some(name) => name,
+                    None => dest.weighted_clusters.into_iter().next()?.name,
+                };
+                // Consul splitter weights are relative (usually summing to 100).
+                // Normalize to a percentage so Envoy's `total_weight` is stable
+                // even when a config entry uses 0.8/0.2 style fractions.
+                let weight = ((split.weight / total) * 100.0).round().max(1.0) as u32;
+                clusters.push(WeightedCluster::new(name, weight));
+            }
+            (!clusters.is_empty()).then(|| RouteDestination::weighted(clusters))
+        }
+        DiscoveryGraphNodeType::Router => {
+            let first = node.routes.first()?;
+            resolve_destination(chain, &first.next_node, depth + 1)
+        }
+    }
+}
+
+/// Translate a Consul router match definition into an Envoy route match.
+fn route_match_from_definition(definition: Option<&DiscoveryRouteMatch>) -> Option<RouteMatch> {
+    let Some(definition) = definition else {
+        return Some(RouteMatch::prefix("/"));
+    };
+    let Some(http) = definition.http.as_ref() else {
+        return Some(RouteMatch::prefix("/"));
+    };
+
+    let mut route_match = if let Some(path) = &http.path_exact {
+        RouteMatch::path(path)
+    } else if let Some(prefix) = &http.path_prefix {
+        RouteMatch::prefix(prefix)
+    } else if http.path_regex.is_some() {
+        // RegexMatcher is not in the checked-in proto subset; a prefix "/"
+        // would silently match everything and must not be substituted.
+        return None;
+    } else {
+        RouteMatch::prefix("/")
+    };
+
+    for header in &http.header {
+        let matcher = if let Some(exact) = &header.exact {
+            Some(HeaderMatcher {
+                name: header.name.clone(),
+                match_type: HeaderMatchType::Exact(exact.clone()),
+                invert_match: header.invert,
+            })
+        } else if let Some(prefix) = &header.prefix {
+            Some(HeaderMatcher {
+                name: header.name.clone(),
+                match_type: HeaderMatchType::Prefix(prefix.clone()),
+                invert_match: header.invert,
+            })
+        } else if let Some(suffix) = &header.suffix {
+            Some(HeaderMatcher {
+                name: header.name.clone(),
+                match_type: HeaderMatchType::Suffix(suffix.clone()),
+                invert_match: header.invert,
+            })
+        } else if header.present {
+            Some(HeaderMatcher {
+                name: header.name.clone(),
+                match_type: HeaderMatchType::Present,
+                invert_match: header.invert,
+            })
+        } else if header.regex.is_some() {
+            return None;
+        } else {
+            None
+        };
+        if let Some(matcher) = matcher {
+            route_match = route_match.with_header(matcher);
+        }
+    }
+
+    // A single method restriction maps cleanly to a `:method` exact match.
+    // Multiple methods would need an OR matcher, which the minimal proto does
+    // not carry, so they are deliberately not approximated by an AND chain.
+    if http.methods.len() == 1 {
+        route_match = route_match.with_header(HeaderMatcher::exact(":method", &http.methods[0]));
+    }
+
+    // Keep the compiler honest about what it can encode: PathMatch::Regex is
+    // skipped here rather than by letting the encoder drop the whole route.
+    if matches!(
+        route_match.path_match,
+        PathMatch::Regex(_) | PathMatch::PathTemplate(_)
+    ) {
+        return None;
+    }
+    Some(route_match)
 }
 
 /// Helper to create an xDS server with default config.
@@ -474,6 +772,61 @@ mod tests {
 
         let cla = snapshot.endpoints.get("web").unwrap();
         assert_eq!(cla.healthy_count(), 1);
+    }
+
+    /// Regression: the default snapshot used to publish `Vec::new()` for LDS,
+    /// so an Envoy bootstrapped with `lds_config` over ADS had no listener to
+    /// apply. Every generated listener must also encode to real Envoy protobuf
+    /// (not be silently skipped by `encode_resource`).
+    #[test]
+    fn test_default_snapshot_publishes_encodable_listeners() {
+        use batata_mesh::xds::ResourceType;
+        use batata_mesh::xds::encode::{NativeResource, encode_resource};
+
+        let naming_store = Arc::new(ConsulNamingStore::new());
+        let xds_server = create_xds_server();
+        for (service, port) in [("web", 8080), ("api", 9090)] {
+            let id = format!("{}-1", service);
+            let reg = AgentServiceRegistration {
+                name: service.to_string(),
+                id: Some(id.clone()),
+                address: Some("127.0.0.1".to_string()),
+                port: Some(port),
+                ..Default::default()
+            };
+            let key = ConsulNamingStore::build_key(DEFAULT_NAMESPACE, service, &id);
+            naming_store
+                .register(&key, serde_json::to_vec(&reg).unwrap().into())
+                .unwrap();
+        }
+
+        let bridge = ConsulSyncBridge::new(naming_store, xds_server);
+        let snapshot = bridge.build_snapshot();
+        assert_eq!(snapshot.listeners.len(), 2);
+        for listener in snapshot.listeners.values() {
+            assert!(
+                encode_resource(ResourceType::Listener, NativeResource::Listener(listener))
+                    .is_some(),
+                "default LDS listener {} must encode to real Envoy protobuf",
+                listener.name
+            );
+            // No Connect service means no RDS table, so the filter must be a
+            // tcp_proxy rather than an HCM pointing at a missing route.
+            assert!(matches!(
+                listener.filter_chains[0].filters[0].filter_type,
+                NetworkFilterType::TcpProxy { .. }
+            ));
+        }
+
+        // Stable, collision-free bind ports (sorted service names).
+        let mut ports: Vec<u16> = snapshot
+            .listeners
+            .values()
+            .map(|l| l.address.port)
+            .collect();
+        ports.sort();
+        ports.dedup();
+        assert_eq!(ports.len(), 2);
     }
 
     #[test]
@@ -611,5 +964,297 @@ mod tests {
         let snapshot = bridge.build_proxy_snapshot(&proxy_reg);
         assert!(snapshot.clusters.is_empty());
         assert!(snapshot.listeners.is_empty());
+    }
+
+    use crate::config_entry::{ConfigEntry, ConsulConfigEntryService};
+    use crate::connect::{
+        DiscoveryGraphNode, DiscoveryHTTPHeaderMatch, DiscoveryHTTPRouteMatch, DiscoveryResolver,
+        DiscoveryRoute, DiscoverySplit, DiscoveryTarget,
+    };
+
+    fn test_target(service: &str) -> DiscoveryTarget {
+        DiscoveryTarget {
+            id: format!("{}.default.dc1", service),
+            service: service.to_string(),
+            service_subset: String::new(),
+            namespace: "default".to_string(),
+            partition: "default".to_string(),
+            datacenter: "dc1".to_string(),
+            mesh_gateway: Default::default(),
+            subset: Default::default(),
+            connect_timeout: "5s".to_string(),
+            sni: String::new(),
+            name: service.to_string(),
+        }
+    }
+
+    fn test_resolver_node(service: &str) -> DiscoveryGraphNode {
+        DiscoveryGraphNode {
+            node_type: DiscoveryGraphNodeType::Resolver,
+            name: service.to_string(),
+            routes: Vec::new(),
+            splits: Vec::new(),
+            resolver: Some(DiscoveryResolver {
+                default: true,
+                connect_timeout: "5s".to_string(),
+                target: format!("{}.default.dc1", service),
+                failover: None,
+            }),
+        }
+    }
+
+    fn test_chain(
+        service: &str,
+        protocol: &str,
+        start_node: &str,
+        nodes: HashMap<String, DiscoveryGraphNode>,
+        targets: HashMap<String, DiscoveryTarget>,
+    ) -> CompiledDiscoveryChain {
+        CompiledDiscoveryChain {
+            service_name: service.to_string(),
+            namespace: "default".to_string(),
+            datacenter: "dc1".to_string(),
+            customization_hash: String::new(),
+            protocol: protocol.to_string(),
+            start_node: start_node.to_string(),
+            nodes,
+            targets,
+            default: false,
+        }
+    }
+
+    fn single_resolver_chain(service: &str, protocol: &str) -> CompiledDiscoveryChain {
+        let start = format!("resolver:{}", service);
+        let mut nodes = HashMap::new();
+        nodes.insert(start.clone(), test_resolver_node(service));
+        let mut targets = HashMap::new();
+        targets.insert(format!("{}.default.dc1", service), test_target(service));
+        test_chain(service, protocol, &start, nodes, targets)
+    }
+
+    #[test]
+    fn test_tcp_discovery_chain_has_no_rds_resource() {
+        // The default chain protocol is tcp: emitting an L7 route table would
+        // silently change TCP proxy semantics.
+        let chain = single_resolver_chain("payments", "tcp");
+        assert!(discovery_chain_to_route_config(&chain).is_none());
+    }
+
+    #[test]
+    fn test_http_resolver_chain_becomes_single_cluster_route() {
+        let chain = single_resolver_chain("payments", "http");
+        let config = discovery_chain_to_route_config(&chain).expect("http chain must produce RDS");
+        assert_eq!(config.name, route_config_name("payments"));
+        assert_eq!(config.virtual_hosts.len(), 1);
+        assert_eq!(config.virtual_hosts[0].domains, vec!["*".to_string()]);
+        let route = &config.virtual_hosts[0].routes[0];
+        assert!(matches!(
+            &route.match_config.path_match,
+            PathMatch::Prefix(p) if p == "/"
+        ));
+        match &route.action {
+            RouteAction::Route(dest) => {
+                assert_eq!(dest.cluster.as_deref(), Some("payments"));
+                assert!(dest.weighted_clusters.is_empty());
+            }
+            _ => panic!("expected a cluster route action"),
+        }
+    }
+
+    #[test]
+    fn test_splitter_chain_normalizes_relative_weights() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "splitter:payments".to_string(),
+            DiscoveryGraphNode {
+                node_type: DiscoveryGraphNodeType::Splitter,
+                name: "payments".to_string(),
+                routes: Vec::new(),
+                splits: vec![
+                    DiscoverySplit {
+                        definition: None,
+                        weight: 0.8,
+                        next_node: "resolver:payments-v1".to_string(),
+                    },
+                    DiscoverySplit {
+                        definition: None,
+                        weight: 0.2,
+                        next_node: "resolver:payments-v2".to_string(),
+                    },
+                ],
+                resolver: None,
+            },
+        );
+        nodes.insert(
+            "resolver:payments-v1".to_string(),
+            test_resolver_node("payments-v1"),
+        );
+        nodes.insert(
+            "resolver:payments-v2".to_string(),
+            test_resolver_node("payments-v2"),
+        );
+        let mut targets = HashMap::new();
+        targets.insert(
+            "payments-v1.default.dc1".to_string(),
+            test_target("payments-v1"),
+        );
+        targets.insert(
+            "payments-v2.default.dc1".to_string(),
+            test_target("payments-v2"),
+        );
+        let chain = test_chain("payments", "http", "splitter:payments", nodes, targets);
+
+        let config = discovery_chain_to_route_config(&chain).expect("splitter must produce RDS");
+        let route = &config.virtual_hosts[0].routes[0];
+        match &route.action {
+            RouteAction::Route(dest) => {
+                assert_eq!(dest.weighted_clusters.len(), 2);
+                assert_eq!(dest.weighted_clusters[0].name, "payments-v1");
+                assert_eq!(dest.weighted_clusters[0].weight, 80);
+                assert_eq!(dest.weighted_clusters[1].weight, 20);
+            }
+            _ => panic!("expected a cluster route action"),
+        }
+    }
+
+    #[test]
+    fn test_router_chain_preserves_path_and_header_matches() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "router:payments".to_string(),
+            DiscoveryGraphNode {
+                node_type: DiscoveryGraphNodeType::Router,
+                name: "payments".to_string(),
+                routes: vec![DiscoveryRoute {
+                    definition: Some(DiscoveryRouteMatch {
+                        http: Some(DiscoveryHTTPRouteMatch {
+                            path_exact: None,
+                            path_prefix: Some("/api".to_string()),
+                            path_regex: None,
+                            header: vec![DiscoveryHTTPHeaderMatch {
+                                name: "x-env".to_string(),
+                                exact: Some("prod".to_string()),
+                                prefix: None,
+                                suffix: None,
+                                regex: None,
+                                present: false,
+                                invert: false,
+                            }],
+                            query_param: Vec::new(),
+                            methods: vec!["GET".to_string()],
+                        }),
+                    }),
+                    next_node: "resolver:payments".to_string(),
+                }],
+                splits: Vec::new(),
+                resolver: None,
+            },
+        );
+        nodes.insert(
+            "resolver:payments".to_string(),
+            test_resolver_node("payments"),
+        );
+        let mut targets = HashMap::new();
+        targets.insert("payments.default.dc1".to_string(), test_target("payments"));
+        let chain = test_chain("payments", "http", "router:payments", nodes, targets);
+
+        let config = discovery_chain_to_route_config(&chain).expect("router must produce RDS");
+        let route = &config.virtual_hosts[0].routes[0];
+        assert!(matches!(
+            &route.match_config.path_match,
+            PathMatch::Prefix(p) if p == "/api"
+        ));
+        assert_eq!(route.match_config.headers.len(), 2);
+        assert_eq!(route.match_config.headers[0].name, "x-env");
+        assert_eq!(route.match_config.headers[1].name, ":method");
+    }
+
+    #[test]
+    fn test_regex_router_match_is_skipped_not_approximated() {
+        let regex_definition = DiscoveryRouteMatch {
+            http: Some(DiscoveryHTTPRouteMatch {
+                path_exact: None,
+                path_prefix: None,
+                path_regex: Some("^/v[0-9]+/.*".to_string()),
+                header: Vec::new(),
+                query_param: Vec::new(),
+                methods: Vec::new(),
+            }),
+        };
+
+        // Guard the matcher itself: an approximation such as prefix("/") would
+        // silently match every request, so it must be rejected outright.
+        assert!(route_match_from_definition(Some(&regex_definition)).is_none());
+
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "router:payments".to_string(),
+            DiscoveryGraphNode {
+                node_type: DiscoveryGraphNodeType::Router,
+                name: "payments".to_string(),
+                routes: vec![DiscoveryRoute {
+                    definition: Some(regex_definition),
+                    next_node: "resolver:payments".to_string(),
+                }],
+                splits: Vec::new(),
+                resolver: None,
+            },
+        );
+        // A fully resolvable chain is essential: without the resolver node and
+        // target the chain returns None for the wrong reason and the test would
+        // still pass if the regex were approximated as prefix("/").
+        nodes.insert(
+            "resolver:payments".to_string(),
+            test_resolver_node("payments"),
+        );
+        let mut targets = HashMap::new();
+        targets.insert("payments.default.dc1".to_string(), test_target("payments"));
+        let chain = test_chain("payments", "http", "router:payments", nodes, targets);
+        assert!(discovery_chain_to_route_config(&chain).is_none());
+    }
+
+    #[test]
+    fn test_bridge_publishes_rds_from_service_defaults() {
+        let naming_store = Arc::new(ConsulNamingStore::new());
+        let reg = AgentServiceRegistration {
+            name: "payments".to_string(),
+            id: Some("payments-1".to_string()),
+            address: Some("127.0.0.1".to_string()),
+            port: Some(8080),
+            ..Default::default()
+        };
+        let key = ConsulNamingStore::build_key(DEFAULT_NAMESPACE, "payments", "payments-1");
+        naming_store
+            .register(&key, serde_json::to_vec(&reg).unwrap().into())
+            .unwrap();
+
+        // Without a connect service the snapshot stays CDS/EDS-only.
+        let plain = ConsulSyncBridge::new(naming_store.clone(), create_xds_server());
+        assert!(plain.build_snapshot().routes.is_empty());
+
+        // A `service-defaults` with Protocol=http must reach the data plane.
+        let entries = ConsulConfigEntryService::new();
+        entries.entries_arc().insert(
+            "service-defaults/payments".to_string(),
+            ConfigEntry {
+                kind: "service-defaults".to_string(),
+                name: "payments".to_string(),
+                namespace: None,
+                partition: None,
+                meta: None,
+                extra: HashMap::from([("Protocol".to_string(), serde_json::json!("http"))]),
+                create_index: 1,
+                modify_index: 1,
+            },
+        );
+        let connect =
+            Arc::new(ConsulConnectService::new().with_config_entry_service(Arc::new(entries)));
+        let bridge =
+            ConsulSyncBridge::new(naming_store, create_xds_server()).with_connect_service(connect);
+        let snapshot = bridge.build_snapshot();
+        assert!(
+            snapshot.routes.contains_key("payments:routes"),
+            "HTTP service must publish an RDS resource"
+        );
     }
 }

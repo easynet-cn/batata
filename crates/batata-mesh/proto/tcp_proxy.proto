@@ -1,0 +1,17 @@
+// TCP Proxy network filter configuration.
+// Minimal, wire-compatible subset of Envoy TCP proxy API v3.
+//
+// Field numbers verified against upstream envoyproxy/envoy:
+//   api/envoy/extensions/filters/network/tcp_proxy/v3/tcp_proxy.proto
+//   (stat_prefix = 1, cluster = 2)
+// This filter is what the existing Consul connect-proxy inbound/outbound
+// listeners use; encoding it is what makes those listeners usable by Envoy.
+
+syntax = "proto3";
+
+package envoy.extensions.filters.network.tcp_proxy.v3;
+
+message TcpProxy {
+  string stat_prefix = 1;
+  string cluster = 2;
+}

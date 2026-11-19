@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::snapshot::{ResourceSnapshot, SnapshotCache, SubscriptionTracker};
 use crate::xds::ResourceType;
+use crate::xds::encode::{NativeResource, encode_resource};
 use crate::xds::types::Node;
 
 /// xDS server configuration
@@ -88,7 +89,7 @@ pub struct ResourceData {
     pub name: String,
     /// Resource type
     pub resource_type: ResourceType,
-    /// Serialized resource data (JSON for now)
+    /// Encoded Envoy v3 protobuf payload for `google.protobuf.Any.value`.
     pub data: Vec<u8>,
 }
 
@@ -156,6 +157,14 @@ impl XdsServer {
                 if let Err(e) = self.send_endpoint_response(node_id, &snapshot, &sender) {
                     warn!(node_id = %node_id, error = %e, "Failed to send EDS update");
                 }
+                // Send LDS updates (listeners with encodable filters only)
+                if let Err(e) = self.send_listener_response(node_id, &snapshot, &sender) {
+                    warn!(node_id = %node_id, error = %e, "Failed to send LDS update");
+                }
+                // Send RDS updates
+                if let Err(e) = self.send_route_response(node_id, &snapshot, &sender) {
+                    warn!(node_id = %node_id, error = %e, "Failed to send RDS update");
+                }
             }
         }
     }
@@ -170,10 +179,14 @@ impl XdsServer {
         let resources: Vec<ResourceData> = snapshot
             .clusters
             .iter()
-            .map(|(name, cluster)| ResourceData {
-                name: name.clone(),
-                resource_type: ResourceType::Cluster,
-                data: serde_json::to_vec(cluster).unwrap_or_default(),
+            .filter_map(|(name, cluster)| {
+                encode_resource(ResourceType::Cluster, NativeResource::Cluster(cluster)).map(
+                    |data| ResourceData {
+                        name: name.clone(),
+                        resource_type: ResourceType::Cluster,
+                        data,
+                    },
+                )
             })
             .collect();
 
@@ -204,10 +217,14 @@ impl XdsServer {
         let resources: Vec<ResourceData> = snapshot
             .endpoints
             .iter()
-            .map(|(name, cla)| ResourceData {
-                name: name.clone(),
-                resource_type: ResourceType::Endpoint,
-                data: serde_json::to_vec(cla).unwrap_or_default(),
+            .filter_map(|(name, cla)| {
+                encode_resource(ResourceType::Endpoint, NativeResource::Endpoints(cla)).map(
+                    |data| ResourceData {
+                        name: name.clone(),
+                        resource_type: ResourceType::Endpoint,
+                        data,
+                    },
+                )
             })
             .collect();
 
@@ -225,6 +242,86 @@ impl XdsServer {
 
         sender.try_send(Ok(response))?;
         debug!(node_id = %node_id, "Sent EDS response");
+        Ok(())
+    }
+
+    /// Send listener (LDS) response.
+    ///
+    /// Listeners whose filters cannot be encoded are skipped by
+    /// [`encode_resource`], so a partially representable snapshot never emits
+    /// an invalid `Any` payload.
+    fn send_listener_response(
+        &self,
+        node_id: &str,
+        snapshot: &ResourceSnapshot,
+        sender: &StreamSender,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let resources: Vec<ResourceData> = snapshot
+            .listeners
+            .iter()
+            .filter_map(|(name, listener)| {
+                encode_resource(ResourceType::Listener, NativeResource::Listener(listener)).map(
+                    |data| ResourceData {
+                        name: name.clone(),
+                        resource_type: ResourceType::Listener,
+                        data,
+                    },
+                )
+            })
+            .collect();
+
+        if resources.is_empty() {
+            return Ok(());
+        }
+
+        let response = DiscoveryResponse {
+            version_info: snapshot.version.clone(),
+            resources,
+            type_url: ResourceType::Listener.type_url().to_string(),
+            nonce: uuid::Uuid::new_v4().to_string(),
+            control_plane_id: self.config.server_id.clone(),
+        };
+
+        sender.try_send(Ok(response))?;
+        debug!(node_id = %node_id, "Sent LDS response");
+        Ok(())
+    }
+
+    /// Send route (RDS) response.
+    fn send_route_response(
+        &self,
+        node_id: &str,
+        snapshot: &ResourceSnapshot,
+        sender: &StreamSender,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let resources: Vec<ResourceData> = snapshot
+            .routes
+            .iter()
+            .filter_map(|(name, route)| {
+                encode_resource(ResourceType::Route, NativeResource::Route(route)).map(|data| {
+                    ResourceData {
+                        name: name.clone(),
+                        resource_type: ResourceType::Route,
+                        data,
+                    }
+                })
+            })
+            .collect();
+
+        if resources.is_empty() {
+            return Ok(());
+        }
+
+        let response = DiscoveryResponse {
+            version_info: snapshot.version.clone(),
+            resources,
+            type_url: ResourceType::Route.type_url().to_string(),
+            nonce: uuid::Uuid::new_v4().to_string(),
+            control_plane_id: self.config.server_id.clone(),
+        };
+
+        sender.try_send(Ok(response))?;
+        debug!(node_id = %node_id, "Sent RDS response");
         Ok(())
     }
 
@@ -327,10 +424,13 @@ impl XdsServer {
         names
             .iter()
             .filter_map(|name| {
-                snapshot.clusters.get(*name).map(|cluster| ResourceData {
+                let cluster = snapshot.clusters.get(*name)?;
+                let data =
+                    encode_resource(ResourceType::Cluster, NativeResource::Cluster(cluster))?;
+                Some(ResourceData {
                     name: name.to_string(),
                     resource_type: ResourceType::Cluster,
-                    data: serde_json::to_vec(cluster).unwrap_or_default(),
+                    data,
                 })
             })
             .collect()
@@ -352,10 +452,12 @@ impl XdsServer {
         names
             .iter()
             .filter_map(|name| {
-                snapshot.endpoints.get(*name).map(|cla| ResourceData {
+                let cla = snapshot.endpoints.get(*name)?;
+                let data = encode_resource(ResourceType::Endpoint, NativeResource::Endpoints(cla))?;
+                Some(ResourceData {
                     name: name.to_string(),
                     resource_type: ResourceType::Endpoint,
-                    data: serde_json::to_vec(cla).unwrap_or_default(),
+                    data,
                 })
             })
             .collect()
@@ -377,10 +479,13 @@ impl XdsServer {
         names
             .iter()
             .filter_map(|name| {
-                snapshot.listeners.get(*name).map(|listener| ResourceData {
+                let listener = snapshot.listeners.get(*name)?;
+                let data =
+                    encode_resource(ResourceType::Listener, NativeResource::Listener(listener))?;
+                Some(ResourceData {
                     name: name.to_string(),
                     resource_type: ResourceType::Listener,
-                    data: serde_json::to_vec(listener).unwrap_or_default(),
+                    data,
                 })
             })
             .collect()
@@ -402,10 +507,12 @@ impl XdsServer {
         names
             .iter()
             .filter_map(|name| {
-                snapshot.routes.get(*name).map(|route| ResourceData {
+                let route = snapshot.routes.get(*name)?;
+                let data = encode_resource(ResourceType::Route, NativeResource::Route(route))?;
+                Some(ResourceData {
                     name: name.to_string(),
                     resource_type: ResourceType::Route,
-                    data: serde_json::to_vec(route).unwrap_or_default(),
+                    data,
                 })
             })
             .collect()

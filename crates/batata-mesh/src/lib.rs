@@ -25,6 +25,7 @@
 #![allow(clippy::result_large_err)]
 #![allow(clippy::empty_line_after_doc_comments)]
 
+pub mod ads;
 pub mod conversion;
 pub mod grpc;
 pub mod mcp;
@@ -34,8 +35,10 @@ pub mod sync;
 pub mod xds;
 
 // Re-export commonly used types
+pub use ads::{BatataAdsService, to_internal_request, to_wire_response};
 pub use grpc::{
-    AggregatedDiscoveryServiceImpl, XdsGrpcServer, create_ads_service, start_xds_grpc_server,
+    AggregatedDiscoveryServiceImpl, create_ads_service, start_xds_grpc_server,
+    start_xds_grpc_server_on_listener,
 };
 pub use mcp::{McpServer, McpServerConfig};
 pub use server::XdsServer;

@@ -2676,7 +2676,7 @@ combinations with every coverage anchor at its full case count. The archived
 `startup.log` now records the debug binary. Generated `sdk-tests/*/TEST_REPORT.md`
 and `conf/cluster.conf` were restored after the run.
 
-## 30. Apollo user-management and PAT runtime alignment (2026-11-17, uncommitted)
+## 30. Apollo user-management and PAT runtime alignment (2026-11-17, committed `1162f975`)
 
 This batch closes the audit gaps found in `batata-plugin-apollo`'s Portal user-management surface. It is an implementation + validation round, **not an inventory recount**: no F-ID status marker or T-ID status changed (577 F / 1040 T-ID, Apollo 199 / 85%).
 
@@ -2700,7 +2700,7 @@ This batch closes the audit gaps found in `batata-plugin-apollo`'s Portal user-m
 ### 30.4 Documentation sync and pending gate
 
 * `docs/compat/apollo/features.md` records both round summaries; the 08-31 orphan-migration note now points to the 11-17 superseding round. The stale `always true` / `no role store populated` comments in `openapi.rs` were removed. The root `README.md` Apollo figure was corrected from `~81%` to `~85%` to match `docs/compat/README.md` (which `compat_check.py` verifies). `docs/compat/apollo/tests.md` stays unchanged: the new cases are batata-native guards, so the 401 / 1040 T-ID mapping is unaffected.
-* The round was committed as `1162f975` and pushed to gitee. The origin push was blocked by the local proxy (`CONNECT tunnel failed, response 502`, direct connect also times out) — a network issue, not a code failure. A clean `--full` was launched on that commit and exposed two regressions, fixed in §31.
+* The round was committed as `1162f975` and pushed to gitee. The origin push was blocked at that moment by the local proxy (`CONNECT tunnel failed, response 502`, direct connect also times out) — a network issue, not a code failure; the proxy condition later cleared and both remotes were dual-pushed through `3874d341` (see §37.11). A clean `--full` was launched on that commit and exposed two regressions, fixed in §31.
 
 ## 31. Full-gate regressions from the Apollo user-management round
 
@@ -2734,7 +2734,7 @@ Fix: a single `insert_if_absent` helper in `persistence/sql/portal.rs` now uses 
 
 Validation: Apollo unit/integration suites green; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 F / 1040 T-ID) and `cargo test --workspace --exclude batata-integration-tests` = **4117 passed / 0 failed / 33 ignored** all clean. A clean `--full` on the fix commit is required before closing this item.
 
-## 33. Consul ACL control-plane parity hardening (2026-11-18, uncommitted)
+## 33. Consul ACL control-plane parity hardening (2026-11-18, committed `3874d341`)
 
 Backend-only follow-up to the Apollo-style audit. `batata-ui` was running its own e2e suite and was **not touched**. Upstream Consul was re-read at `7574cf237e`: `agent/consul/acl_endpoint.go` gates ACL admin RPCs with `ACLReadAllowed`/`ACLWriteAllowed`, calls `validator.ValidateLogin` before minting a login token (`agent/consul/acl_endpoint.go:2144`), redacts `SecretID` unless the caller has `ACLWrite` (`agent/structs/aclfilter/filter.go:648,679`), and checks token expiry on use. The earlier route-surface claim that the UI was missing `/v1/peering/token/generate` or plural `/v1/acl/binding-rules/{id}` was corrected: those mismatches were on the UI side, while the plugin matched upstream `/v1/peering/token` and singular `/v1/acl/binding-rule/{id}`.
 
@@ -2752,3 +2752,278 @@ Backend-only follow-up to the Apollo-style audit. `batata-ui` was running its ow
 * Tests: `cargo test -p batata-plugin-consul --lib` = **719 passed / 0 failed / 0 ignored** (+11 cases: 5 JWT validation, 5 ACL HTTP security, 1 parser regression). Existing ACL-disabled SDK-posture tests remain green.
 * Gates: `cargo fmt --all`, `cargo clippy -p batata-plugin-consul --all-targets -- -D warnings`, `cargo check --workspace --all-targets`, `python3 scripts/compat_check.py` (577 F / 1040 T-ID; Nacos 191/191 anchored), and `git diff --check` clean. `cargo test --workspace --exclude batata-integration-tests` = **4131 passed / 0 failed / 33 ignored** (+16 over the 4115 baseline).
 * No full/matrix/SDK run was launched: the frontend task is using the ports for its own e2e suite, and this round deliberately stayed backend-only. No F-ID/T-ID status or compat count changed (577 F / 1040 T-ID).
+* The round was committed as `3874d341` and pushed to `gitee/main`. The `origin` push was initially blocked by the proxy (`CONNECT tunnel failed, response 502`, direct GitHub connect also timed out — a network issue, not a code failure), but it later succeeded: `git ls-remote origin refs/heads/main`, `git ls-remote gitee refs/heads/main` and the `origin/main` reflog (`2026-11-18 22:02:26 +0800: update by push`) all confirm `origin/main` = `gitee/main` = `3874d341`. The earlier "origin pending / 502" notes in this report and the 2026-11-18 work log are therefore obsolete; §37.10 was corrected and §37.11 records the evidence. Per the explicit instruction to commit first and only run `--full` after the frontend task is fully complete, no clean full has been launched on this commit yet.
+
+## 34. P2 data plane: real ADS gRPC server and Envoy protobuf resources (2026-11-18)
+
+Backend-only continuation of the Consul mechanism-level audit (§33). The audit classified batata as a high-fidelity Consul **HTTP/protocol compatibility layer** over a single shared Raft group, not a mechanism-level clone of Consul's distributed kernel. The user selected P2 first ("启动P2内容的支持数据面要补齐") from the recommended P0→P3 priority list. This round takes the "support the data plane" branch: make a real Envoy able to connect to batata over ADS and receive **decodable protobuf resources**, instead of documenting xDS as a simulation. `batata-ui` was not touched.
+
+### 34.1 What was actually broken
+
+`batata-mesh` exposed an HTTP/2 placeholder that returned an empty `200` body with `grpc-status: 0` — no gRPC service was registered, so no Envoy could ever connect. Independently, `DiscoveryResponse.resources` was built by serializing native Rust structs to **JSON** and placing those bytes in `google.protobuf.Any.value`. Envoy expects protobuf-encoded `envoy.config.cluster.v3.Cluster` / `envoy.config.endpoint.v3.ClusterLoadAssignment` there, so even a working transport would have been unusable. `build.rs` had proto compilation disabled and `proto/eds.proto` was missing the `google/protobuf/struct.proto` and `google/protobuf/any.proto` imports required by `Metadata.filter_metadata`.
+
+### 34.2 Fixes
+
+* `crates/batata-mesh/build.rs`: `tonic_prost_build::configure()` now compiles `xds.proto`, `eds.proto`, `cds.proto` into the ADS service plus Envoy v3 `discovery` / `cluster` / `endpoint` modules. `crates/batata-mesh/src/xds/generated.rs` includes them through `tonic::include_proto!` with **scoped** `#![allow(missing_docs)]` / `#![allow(clippy::all)]` (prost generates a nested `cluster` module that trips `clippy::module_inception` under `-D warnings`). `tonic-prost` and `prost-types` were added as runtime dependencies.
+* `crates/batata-mesh/src/ads.rs` (new): `BatataAdsService` implements the generated `AggregatedDiscoveryService` trait. `to_wire_response()` wraps each encoded resource in `prost_types::Any { type_url, value }`; `stream_aggregated_resources()` registers a server-side push channel via `xds_server.register_stream(&id)`, sends request-driven responses, forwards snapshot pushes on the **same stream**, and unregisters on close. `delta_aggregated_resources()` maps delta requests and wraps delta `Resource` payloads the same way.
+* `crates/batata-mesh/src/grpc.rs`: the empty HTTP/2 placeholder (`XdsGrpcServer`, `handle_connection`, `handle_request`) was deleted. `start_xds_grpc_server()` now runs a real tonic `Server::builder().add_service(...).serve_with_shutdown(...)`. The legacy handwritten delta path also uses the protobuf encoder and skips unsupported resource types.
+* `crates/batata-mesh/src/xds/encode.rs` (new): `encode_resource(resource_type, NativeResource)` produces real Envoy protobuf bytes. CDS sets `name`, `DiscoveryType::Eds`, `LbPolicy`, `connect_timeout` and an `eds_cluster_config` pointing at ADS with `resource_api_version = V3`. EDS builds `ClusterLoadAssignment` → `LocalityLbEndpoints` → `LbEndpoint` → `SocketAddress` / `PortValue`. `encode_cluster` / `encode_endpoints` have prost decode round-trip helpers. `ResourceData.data` is now documented and used as encoded `Any.value`, not JSON.
+* LDS/RDS/SDS are **intentionally skipped** (`encode_resource` returns `None`) rather than emitting invalid JSON into `Any.value`. Emitting a wrong-typed `Any` is worse than omitting the resource, because Envoy rejects the whole discovery response.
+
+### 34.3 Validation
+
+* `crates/batata-mesh/tests/ads_e2e.rs` (new): starts a real tonic ADS server on an ephemeral port, connects with the **generated ADS client**, sends CDS/EDS `DiscoveryRequest`s and decodes `Any.value` with prost. Verifies `Cluster.name == "payments"`, `DiscoveryType::Eds`, `connect_timeout.seconds == 3`, the ADS EDS config source, `ClusterLoadAssignment.cluster_name`, endpoint count / locality / weight, and that snapshot updates arrive as pushes without a new request. 3/3 passed.
+* Targeted mutants (`/tmp/batata_p2_mutants.py`): **6/6 killed** — `encode_resource` returning `None` for clusters, CDS regressing to JSON, `to_wire_response` dropping `Any.value`, server using JSON again for CDS, EDS encoder dropping endpoints, and ADS stream not registering for pushes. Every mutated file was byte-restored and touched before the next run so no stale mutant binary was reused. A negative test (`test_json_is_not_a_valid_cluster_payload`) asserts JSON cannot be decoded as a `Cluster`.
+* Gates: `cargo fmt --all`; `cargo test -p batata-mesh` = **80 lib + 3 integration passed**; `cargo clippy -p batata-mesh --all-targets -- -D warnings` clean; `cargo check --workspace --all-targets` clean; `cargo test --workspace --exclude batata-integration-tests` = **4140 passed / 0 failed / 33 ignored** (+9 over the 4131 baseline); `python3 scripts/compat_check.py` OK (577 F / 1040 T-ID, Nacos 191/191 anchored); `git diff --check` clean. No compat F-ID/T-ID status or count changed.
+
+### 34.4 Wire-fidelity check against upstream Envoy
+
+The three checked-in `.proto` files are **hand-written minimal subsets**, not vendored upstream Envoy protos; they import only `google/protobuf/*` well-known types and define helper messages locally. Protobuf `Any.value` is interpreted by the receiver's own descriptor, so a real Envoy can only decode these bytes if the **field numbers** match upstream. This was verified field-by-field against `envoyproxy/envoy@main` (`api/envoy/config/cluster/v3/cluster.proto`, `.../endpoint/v3/endpoint.proto`, `.../endpoint/v3/endpoint_components.proto`, `.../core/v3/config_source.proto`, `.../core/v3/address.proto`) for exactly the fields `encode_cluster` / `encode_endpoints` emit:
+
+| Message | Local / upstream field numbers | Verdict |
+| --- | --- | --- |
+| `Cluster` | `name=1`, `type=2`, `eds_cluster_config=3`, `connect_timeout=4`, `lb_policy=6` | match |
+| `EdsClusterConfig` | `eds_config=1`, `service_name=2` | match |
+| `ConfigSource` | `path=1`, `api_config_source=2`, `ads=3`, `initial_fetch_timeout=4`, `self=5`, `resource_api_version=6` | match |
+| `ApiVersion` | `AUTO=0`, `V2=1`, `V3=2` | match |
+| `ClusterLoadAssignment` | `cluster_name=1`, `endpoints=2`, `policy=4` | match |
+| `LocalityLbEndpoints` | `locality=1`, `lb_endpoints=2`, `load_balancing_weight=3`, `priority=5`, `proximity=6` | match |
+| `LbEndpoint` | `endpoint=1`, `health_status=2`, `metadata=3`, `load_balancing_weight=4`, `endpoint_name=5` | match |
+| `SocketAddress` | `protocol=1`, `address=2`, `port_value=3`, `named_port=4`, `resolver_name=5`, `ipv4_compat=6` | match |
+
+An initial suspicion that local `LocalityLbEndpoints.priority=5` was wrong was checked and **dismissed** — upstream also uses `5` (field `4` is not used there). Caveats: comparison is against upstream `main`, not a pinned Envoy release; no real Envoy binary has been run; and because the local protos are subsets, any field not defined locally simply cannot be emitted. So CDS/EDS wire fidelity is evidence-backed for the emitted subset, not a blanket claim of full Envoy proto compatibility.
+
+### 34.5 Deliberate boundary and pending work
+
+This is a **transport + wire-format** milestone, not a full Connect data plane. Still out of scope: LDS/RDS/SDS proto definitions and their encoders; config-entry / intentions / discovery-chain → LDS/RDS/RBAC wiring (P2-C), so L7 splitter/router/resolver and intentions do **not** yet influence Envoy; Connect CA lifecycle and SDS-delivered mTLS; and an end-to-end run with a real Envoy binary (verification here uses the generated tonic client). No commit, push, `--full`, matrix, SDK or perf run has been performed for this batch — the frontend task still owns the ports and the user explicitly deferred the clean full until it is fully complete.
+
+## 35. P2-C read-only source audit: why config entries / intentions never reach Envoy (2026-11-18)
+
+A read-only pass mapped the gap between Consul config entries / intentions / discovery chains and the xDS data plane. **No files were modified.** The conclusion: the two subsystems exist in parallel and are connected **only** through a naming-store → CDS/EDS bridge. This is the evidence base for the P2-C scope decision.
+
+### 35.1 Dependency direction constrains where the bridge can live
+
+`crates/batata-plugin-consul/Cargo.toml:18` depends on `batata-mesh`; `crates/batata-mesh/Cargo.toml` has **no** Consul/plugin dependency. The arrow is `consul → mesh`, so the mesh crate cannot read Consul state by construction. Any config-entry → xDS bridge therefore has to live in the Consul plugin (where `src/xds_sync.rs` already is), not in `batata-mesh`.
+
+The only live path is `xds_sync.rs::build_snapshot()` (`:239-298`): it scans `ConsulNamingStore` and ends at `ResourceSnapshot::with_resources(clusters, endpoints)` (`:297`), which leaves `listeners` / `routes` empty. `snapshot.rs:71` does have a `with_all_resources(...)` that could fill all four, but nothing calls it. `plugin.rs:969-975` constructs `ConsulSyncBridge::new(naming_store, xds_server)` — the config-entry service, `ConsulConnectService` and the CA/intention service are **never passed** to the bridge.
+
+### 35.2 What exists on the Consul side (all HTTP-only)
+
+| Surface | Implementation | Real persistence | Consumer |
+| --- | --- | --- | --- |
+| Config entries (14 kinds incl. `service-router` / `service-splitter` / `service-resolver` / `service-intentions`) | `src/config_entry.rs` (`SUPPORTED_KINDS`:33-48, generic `extra: HashMap<String, Value>`:50-74) | Yes — `DashMap` + RocksDB + Raft (`with_rocks`:158, `with_raft`:203, write-through:308-327) | Only `catalog.rs:1611` / `health.rs:1037` for `merge-central-config` |
+| Legacy intentions (L4/L7) | `src/connect_ca.rs` (`check_intention`:1055, `authorize`:1195, HTTP/L7 permission helpers:1232-1297) | Yes — `DashMap` + RocksDB + Raft (`:405-432`, `:546-573`) | Only `/v1/intentions/check` & `/match` HTTP handlers |
+| Discovery chain | `src/connect.rs::get_discovery_chain()`:575 — real assembly from router/splitter/resolver/defaults, returned at `:811-825` | Derived from config entries | Only `GET/POST /v1/discovery-chain/{service}` handlers |
+
+Two semantic gaps worth noting: `validate_config_entry()` (`:387-399`) structurally validates only 5 kinds, so `service-intentions` is accepted and persisted as opaque JSON with **no validation**, and there is **no** `ConfigEntry → Intention` conversion — `service-intentions` appears in only two lines in the whole plugin. Also `check_intention()` defaults to **allow** when nothing matches (`:1077-1086`), so intentions are an HTTP query API today, not data-plane enforcement. There is no `envoy.config.rbac.v3` proto and no `envoy.filters.*.rbac` config anywhere; the only `rbac` code in the repo is `batata-auth`'s control-plane user/role RBAC.
+
+**Sharpest contradiction:** `src/connect.rs:24-38` / `:76-85` produces an Envoy bootstrap whose `dynamic_resources` asks for `lds_config` over ADS, but §34 established that no LDS resource can currently be encoded or pushed. An Envoy started from that bootstrap cannot complete listener warming.
+
+### 35.3 Every place that yields empty LDS/RDS
+
+1. `xds/encode.rs:24-32` — `encode_resource()` returns `None` for `Listener` / `Route` / `Secret` / `Runtime`.
+2. `server.rs:379-404` and `:407-431` — `get_listener_resources` / `get_route_resources` `filter_map` on that `None`, so all entries are dropped.
+3. `server.rs:148-160` — `notify_client` pushes **CDS + EDS only**; no `send_listener_response` / `send_route_response` exists.
+4. `grpc.rs:1161-1163` — delta xDS returns `Vec::new()` for LDS/RDS/SDS.
+5. `snapshot.rs:56-68` — `with_resources()` leaves listeners/routes empty (the constructor the bridge uses).
+6. `sync.rs:404-416` — `generate_listeners` / `generate_routes` false → explicit empty vectors (defaults are true, but the generated native structs still cannot be encoded).
+7. `server.rs:303-311` — SotW `handle_request` rejects `Secret` / `Runtime` outright.
+
+`ResourceType` lives in `xds/mod.rs:30-43` (not `types.rs`); LDS/RDS/SDS/Runtime type URLs are declared as **string constants only** (`:13-25`), with no proto message behind them. A strict grep for `unimplemented!|todo!|TODO|FIXME|stub` across `batata-mesh` returns **0** — incompleteness is expressed through comments and empty returns, not panic macros.
+
+### 35.4 The real blocker: no vendored Envoy proto tree
+
+`build.rs` compiles exactly three protos with a single include path `&["proto/"]`. Real upstream LDS/RDS/HCM/RBAC protos import `envoy/config/core/v3/*`, `validate/validate.proto` (PGV), `udpa/annotations/*`, `envoy/annotations/*`, `xds/annotations/v3/*` and `google/api/annotations.proto` — **none are vendored** in this repo (the only five `.proto` files are the three mesh ones plus `raft.proto` and `nacos_grpc_service.proto`). Protoc well-known types *are* available (`google/protobuf/any/duration/wrappers/struct` already compile), which is exactly why the existing hand-rolled minimal `cds.proto` / `eds.proto` work. So P2-C has two viable proto strategies: continue the hand-rolled minimal-subset approach (small, consistent with the repo, but every field number must be verified against upstream as in §34.4), or vendor the real Envoy API tree (correct by construction, but adds a large generated dependency surface and PGV/udpa includes).
+
+This section is an audit only: no P2-C code, commit or test run has been started. The scope/strategy decision is pending user confirmation.
+
+**Follow-up:** the user subsequently chose the hand-rolled minimal-proto strategy; the implementation and its verification are recorded in §36 below.
+
+## 36. P2-C: minimal LDS/RDS protos and the discovery-chain → RDS bridge (2026-11-18, uncommitted)
+
+After §35, the user chose **"手写最小 proto（推荐）"**: continue the checked-in hand-written Envoy proto subset instead of vendoring the full upstream Envoy API tree, instead of switching back to P0/P1 kernel correctness, and instead of committing the P2 checkpoint as-is. This round closes the sharpest contradiction from §35 — `connect.rs:24-38` / `:76-85` bootstraps Envoy with `lds_config` over ADS while the server could not encode or push a single LDS/RDS resource, so listener warming could never complete. Scope is backend-only; `batata-ui` was not touched.
+
+### 36.1 Wire numbers verified before writing any proto
+
+As in §34.4, `Any.value` is decoded by the receiver's own descriptor, so **field numbers**, not local Rust names, decide whether Envoy can read the payload. `curl` to `raw.githubusercontent.com` failed with `LibreSSL SSL_connect: SSL_ERROR_SYSCALL` and WebFetch of the large upstream protos truncated the field lists, so the numbers were taken from a locally available vendored Envoy v3 proto tree (`/Users/terry/work/github/easynet-cn/nacos/istio/target/protoc-dependencies/0051214e9070954ca8484eed76648ce3`, 528 `.proto` files), cross-checked against `envoyproxy/envoy@main`:
+
+| Message | Emitted field numbers | Verdict |
+| --- | --- | --- |
+| `Listener` | `name=1`, `address=2`, `filter_chains=3`, `default_filter_chain=25` | match |
+| `Filter` / `FilterChain` | `Filter.name=1`, `typed_config=4`; `FilterChain.filter_chain_match=1`, `filters=3`, `name=7` | match |
+| `FilterChainMatch` | `destination_port=8`, `prefix_ranges=3`, `transport_protocol=9`, `application_protocols=10`, `server_names=11` | match |
+| `RouteConfiguration` | `name=1`, `virtual_hosts=2`, `internal_only_headers=3` | match |
+| `VirtualHost` | `name=1`, `domains=2`, `routes=3` | match |
+| `Route` | `name=14`, `match=1`, `route=2`, `redirect=3`, `direct_response=7` | match |
+| `RouteMatch` | `prefix=1`, `path=2`, `case_sensitive=4`, `headers=6`, `safe_regex=10` | match |
+| `RouteAction` | `cluster=1`, `cluster_header=2`, `weighted_clusters=3`, `prefix_rewrite=5`, `host_rewrite_literal=6`, `timeout=8`, `retry_policy=9` | match |
+| `WeightedCluster` / `ClusterWeight` | `clusters=1`, `runtime_key_prefix=2`, `total_weight=3`; `name=1`, `weight=2` | match |
+| `HttpConnectionManager` | `codec_type=1`, `stat_prefix=2`, `rds=3`, `route_config=4`, `http_filters=5` | match |
+| `Rds` / `HttpFilter` | `config_source=1`, `route_config_name=2`; `name=1`, `typed_config=4` | match |
+| `CodecType` / `TcpProxy` | `AUTO=0`, `HTTP1=1`, `HTTP2=2`, `HTTP3=3`; `stat_prefix=1`, `cluster=2` | match |
+
+`Route.name = 14` and `WeightedCluster.total_weight = 3` are the two easiest to get wrong; both are copied verbatim from upstream. Caveat is the same as §34.4: comparison is against upstream `main` / that vendored snapshot, not a pinned Envoy release; no real Envoy binary has been run; and a local subset can only emit the fields it defines.
+
+### 36.2 What was implemented
+
+* Four new checked-in protos — `crates/batata-mesh/proto/lds.proto` (76 lines), `rds.proto` (84), `hcm.proto` (57), `tcp_proxy.proto` (17). All are minimal wire-compatible subsets importing only protobuf well-known types; no PGV / udpa / envoy annotation tree is vendored.
+* `build.rs` now compiles **seven** protos; `xds/generated.rs` adds `listener` / `route` / `http_connection_manager` / `tcp_proxy` modules; `xds/mod.rs` adds the HCM, TCP-proxy and router filter type URLs. `eds.proto` keeps the `struct.proto` / `any.proto` imports from §34.
+* `xds/encode.rs` adds `encode_listener` / `encode_route` / `encode_http_connection_manager` / `encode_tcp_proxy` plus prost `decode_*` round-trip guards. `encode_resource()` now returns real bytes for `Listener` / `Route` and `None` only when a listener has no encodable filter. HCM points `rds.config_source` at ADS with `resource_api_version = V3` and carries a terminal router filter, so an RDS reference is actually resolvable.
+* `src/server.rs`: `notify_client()` pushes **CDS + EDS + LDS + RDS** on the same stream; `send_listener_response()` / `send_route_response()` were added, and `get_listener_resources()` / `get_route_resources()` no longer filter every entry out. `src/grpc.rs` delta xDS gains `Listener` / `Route` arms; SDS and Runtime still skip rather than emit an invalid `Any`.
+* `crates/batata-plugin-consul/src/xds_sync.rs`: `ConsulSyncBridge::with_connect_service(...)` plus `build_discovery_route_config()`, `route_config_name()` (`<service>:routes`) and `discovery_chain_to_route_config()`. Router nodes become `RouteMatch` + `RouteAction`, splitter nodes become `WeightedCluster` with Consul relative weights normalized to percentages, resolver nodes become a single cluster. Only `http` / `http2` / `grpc` / `http3` chains are converted; a `tcp` chain returns `None` because an L7 route table would silently change TCP proxy semantics. `build_snapshot()` now uses `with_all_resources(...)`, and `build_proxy_snapshot()` adds HCM/RDS listeners for HTTP upstreams while keeping `tcp_proxy` for TCP ones.
+* `crates/batata-plugin-consul/src/plugin.rs` passes `Arc::new(inner.connect.clone())` into the bridge, which is the dependency-direction-correct (`consul → mesh`) place for config-entry state to reach the data plane.
+
+### 36.3 Skip rather than guess
+
+A wrong-typed or JSON `Any.value` makes Envoy NACK the whole discovery response, so unsupported constructs are **omitted**, never approximated: `NetworkFilterType::Generic`, `PathMatch::Regex` / `PathTemplate`, `RouteAction::Redirect` / `DirectResponse`, `HeaderMatchType::Regex` / `Range`, multiple `methods` (which would need an OR matcher), and regex discovery-chain routes. In particular a regex path is not substituted with `prefix("/")`, which would silently match every request. SDS / Runtime protos remain absent. There are still no `envoy.config.rbac.v3` protos, so intentions remain HTTP-only.
+
+### 36.4 Validation
+
+* `crates/batata-mesh/src/xds/encode.rs`: 7 unit tests (CDS/EDS protobuf round-trips, LDS with TCP-proxy and HCM/RDS typed configs, RDS preserving prefix and weighted clusters, unsupported matchers skipped, JSON rejected as a `Cluster` payload).
+* `crates/batata-mesh/tests/ads_e2e.rs`: 6 integration tests using the **generated tonic ADS client** against a real gRPC server — decodable CDS / EDS / LDS / RDS `Any.value`, snapshot pushes without a new request, and a single snapshot update delivering CDS + EDS + LDS + RDS on the same stream.
+* `crates/batata-plugin-consul/src/xds_sync.rs`: 6 new tests — tcp chain has no RDS, http resolver → single cluster, splitter weight normalization, router path/header preservation, regex skipped, and `service-defaults(Protocol=http)` actually publishing RDS through the bridge.
+* Semantic mutants (`/tmp/batata_p2c_mutants.py`): **12/12 killed**. The first run was **11/12**: `regex_path_approximated_as_prefix` survived because the guard test used a chain with no resolver node / target, so it returned `None` for the wrong reason. The fixture was fixed to be fully resolvable and a direct `route_match_from_definition(...).is_none()` assertion was added; the clean test passes and the mutant now dies. Every mutated file is byte-restored and touched so Cargo cannot reuse a mutant binary.
+* Gates: `cargo fmt --all` and `cargo fmt --all -- --check`; workspace `cargo clippy --workspace --all-targets -- -D warnings`; `python3 scripts/compat_check.py`; `git diff --check`; workspace unit suite `cargo test --workspace --exclude batata-integration-tests` = **4152 passed / 0 failed / 33 ignored** (+12 over the 4140 §34 baseline), `unit_rc=0`, no `FAILED` lines. `compat_check.py` reports `577 feature rows / 1040 T-ID rows`, Nacos `191/191` anchored and `3.3.0 GA` consistent. No compat F-ID / T-ID status or total changed.
+
+### 36.5 Boundary and remaining work
+
+This makes LDS/RDS resources **encodable, pushable and decodable**, and makes HTTP L7 config entries (router / splitter / resolver) reach Envoy for the first time. It is still not a full Connect data plane: intentions → `envoy.config.rbac.v3` / L7 RBAC filter, `service-intentions` config entries → legacy intention store (still no conversion and no structural validation), SDS + Connect CA lifecycle / mTLS, and an end-to-end run with a real Envoy binary are all outstanding. The P0/P1 kernel-correctness items from the Consul mechanism audit (atomic `/v1/txn`, lock mutual exclusion in Raft apply, `LockDelay`, `Behavior=delete`, CAS-delete, catalog writes via Raft, `?consistent` no fallback) have not started. No commit, push, `--full`, matrix, SDK or perf run was performed for this batch — the frontend task still owns the ports and the user explicitly deferred the clean full until it is fully complete.
+
+## 37. Two mesh paths: full source audit, Phase 0 runtime repair (2026-11-18)
+
+### 37.1 Why this section exists
+
+The user challenged whether the mechanism audit had compared against **Consul** at all, since the cited upstream proto tree lives under `nacos/istio/target/...` and both Nacos and Consul support a mesh. A four-domain read-only audit (Nacos/MCP path, Consul Connect path, shared layer, docs + upstream cross-check) was run before any file was changed. Verdict: **the comparison source never switched to Nacos — the implementation carrier did.**
+
+* The mechanism audit and §§33–36 all cite upstream Consul `7574cf237e` (`/Users/terry/work/github/easynet-cn/consul`), whose `agent/xds/` golden files use `type.googleapis.com/envoy.config.cluster.v3.Cluster` and friends. DNS 8600, Serf/memberlist, anti-entropy, WAN federation, Connect CA, intentions, discovery chains, `LockDelay` and atomic txn are Consul-specific; Nacos has no counterparts.
+* The tree at `/Users/terry/work/github/easynet-cn/nacos/istio/target/protoc-dependencies/0051214e9070954ca8484eed76648ce3` holds `envoy/ google/ udpa/ validate/ opencensus/ metrics.proto` — **Envoy/Istio official API protos**, not Nacos implementation code. It sits under `nacos/istio/target` only because the Nacos istio module downloads them at build time. Using it to verify field numbers was correct; §36's wording was ambiguous and is corrected here.
+* `batata-mesh` was originally built for the **Nacos → Istio MCP** model (`Cargo.toml:9` "xDS protocol, Istio integration"; `lib.rs:5,17`; `conversion.rs` `NacosService` / `NacosInstance` / `istio.*` metadata; `sync.rs::NacosSyncBridge`; `architecture.md:29,72`). It is now also used as the **Consul Connect → Envoy xDS** data plane. Both speak Envoy v3 protobuf, so this is technically coherent, not a runtime bug — but it produced two coexisting bridges and mixed documentation claims.
+
+Three naming collisions are worth recording explicitly: **MCP** = Mesh Configuration Protocol in `nacos.istio.mcp.*`, but Model Context Protocol in `docs/compat/nacos/features.md` AI-MCP rows; **xDS** vs **MCP** are different protocols; and `configuration.md:237` "Compatible with: Envoy Proxy, Istio, and any xDS-compatible service mesh" wrongly treats Istio (a control plane) as an xDS client.
+
+### 37.2 Two paths, end to end
+
+| | Path A: Nacos → xDS | Path B: Consul Connect → xDS |
+| --- | --- | --- |
+| Startup | `app_builder.rs:1078 → :865 → startup/xds.rs:83` | `spi.rs:852 → plugin.rs:707` (`start_background_tasks`) |
+| Bridge | `NacosSyncBridge` (`sync.rs:216`) | `ConsulSyncBridge` (`xds_sync.rs:33`) |
+| Data source | internal `HashMap` + mpsc events; `_naming_service` unused | real `ConsulNamingStore` |
+| `XdsServer` | independent `Arc` (`startup/xds.rs:110`) | independent `Arc` (`xds_sync.rs:637`) |
+| Port / default | 15010, `enabled=false` (`application.yml:757`) | 8502, `enabled=false` (`:652`) |
+| MCP branch | `mcp/` is DTO + DashMap + mpsc only; **no gRPC protocol, no `start`/`serve`**; all 8 constructors are `#[cfg(test)]` | n/a |
+| End-to-end now | **not working**: `event_sender()` / `sync_now()` have no production caller → HashMap stays empty → `sync_to_xds` returns at `sync.rs:387-389` | **P0 broken before this section**: both shutdown senders were dropped |
+
+Upstream scale for any "full implementation" claim: Nacos `istio/` = **40 Java files / 4,580 lines**, `IstioServer.java:66-72` registers both `NacosMcpService` and `NacosXdsService` on port 18848 gated by `nacos.istio.mcp.server.enabled`, with `ApiGeneratorFactory.java:44-51` registering CDS / EDS / LDS / RDS + ServiceEntry generators. Consul `agent/xds/` = **54 files / 34,424 lines** plus `agent/proxycfg` **27,219 lines**, 38 distinct Envoy type URLs, 10 `*_ce.go` Enterprise stubs, and `agent/connect/ca/` providers (consul / vault / aws). Batata's whole `batata-mesh` crate is 10,091 lines including hand-written protos, of which 1,570 are MCP DTOs with no protocol and 759 are Istio-semantic conversion code.
+
+### 37.3 P0: both shutdown senders were discarded (source-level, fixed in Phase 0)
+
+Before Phase 0, `start_background_tasks()` contained:
+
+```rust
+let _shutdown_tx = bridge.start();                               // sender dropped
+let (_grpc_shutdown_tx, grpc_shutdown_rx) = oneshot::channel();  // sender dropped
+spawn_background(&mut handles, async move { /* uses grpc_shutdown_rx */ });
+```
+
+`ConsulPlugin` stored neither sender, and the `async move` closure did not capture them. Both receivers therefore resolved with `RecvError` as soon as `start_background_tasks()` returned:
+
+* `xds_sync.rs::run` `select!` took the shutdown branch immediately → the **5-second sync loop exited and the snapshot was never refreshed**;
+* `grpc.rs::start_xds_grpc_server` `serve_with_shutdown` saw its shutdown future complete → the **tonic ADS server stopped right after startup**.
+
+Path A does **not** have this bug: `startup/xds.rs:29` stores `grpc_shutdown_tx` in `XdsServerHandle` and sends it in `shutdown()`. This was a Path-B-only historical defect, which means the P2/P2-C CDS/EDS/LDS/RDS work could not run in a real process.
+
+### 37.4 Other gaps found by the audit
+
+| Severity | Gap | Evidence |
+| --- | --- | --- |
+| P0 | Default snapshot published `with_all_resources(clusters, endpoints, Vec::new(), routes)` — **LDS always empty**; listeners only existed in `build_proxy_snapshot` when a connect-proxy node was connected | `xds_sync.rs` `build_snapshot`, `:141-157` |
+| P1 | Bootstrap `api_type: "GRPC"` (SotW) while upstream Consul uses `DELTA_GRPC`; upstream SotW at this HEAD is `not implemented`; batata's delta reuses `handle_request` and has no incremental diff | `connect.rs:1006`, `bootstrap_tpl.go:319`, `server.go:301-303`, `ads.rs:228-263` |
+| P1 | Path A data source disconnected (see §37.2) | `startup/xds.rs:42,47`, `sync.rs:387` |
+| P1 | No SDS (`SecretType`), no intentions → `envoy RBAC` filter, no mTLS `TransportSocket` in listeners. **Correction to the verbal audit:** the Connect CA itself is implemented — `connect_ca.rs` is 2,921 lines with `/v1/connect/ca/roots`, `ca/configuration`, `ca/leaf/{id}`, SPIFFE identities and the full intentions HTTP API; `docs/compat/consul/features.md:189-208` scores that surface **16/16 🟢**. What is missing is the *xDS wiring* of CA and intentions, not the CA. | `agent/xds/{secrets.go,rbac.go,resources.go}` vs `connect.rs` |
+| P2 | `retry_policy`, `VirtualHost.rate_limits`, `istio.timeout/retries` silently dropped; `server.rs` `filter_map` warns nothing when `encode_resource` returns `None` | `encode.rs:459-493`, `server.rs:182-190` |
+| P2 | Dead code: hand-written `grpc.rs::proto` module + `AggregatedDiscoveryServiceImpl` + `create_ads_service` are never registered (the served service is `ads.rs::BatataAdsService`); `include_unhealthy` unused; `grpc_server_handle` never awaited; gRPC start errors only logged | `grpc.rs:921-1256`, `lib.rs:39` |
+| P2 | No real Envoy binary e2e; `ads_e2e.rs` injects a hand-written `sample_snapshot()` and bypasses both bridges | `ads_e2e.rs:33-83` |
+
+Also **correcting the previous turn's claim** that Nacos only does MCP/ServiceEntry and never serves Envoy xDS: upstream `NacosXdsService.java:57-58` extends `AggregatedDiscoveryServiceGrpc.AggregatedDiscoveryServiceImplBase`, `:77` implements SotW and `:309` Delta, and `ApiConstants.java:55-62` defines CDS / EDS / LDS / RDS. The stale `TODO Support lds, rds and sds` at `ApiConstants.java:52` is contradicted by `ApiGeneratorFactory.java:44-51`; **upstream Nacos has no SDS generator**. So the `config-mapping.md:89` claim is not a protocol mismatch — the key really gates xDS upstream — but batata's "covers mesh via `batata.mesh.xds.*`" is still unsupported because Path A is not wired.
+
+### 37.5 Runtime conflict verdict: none
+
+The two `Arc<XdsServer>` instances each own their `SnapshotCache` / `active_streams` / `SubscriptionTracker`; ports 15010 vs 8502 do not collide and no snapshot or resource name is shared. The only shared state is library code (`XdsServer`, `encode`, generated protos) and the process-level `VERSION_COUNTER`. Latent (not triggered) risks: `SnapshotCache::set_default_snapshot` is a single-slot full replace with no merge, so handing one instance to two bridges would be last-writer-wins; and the two port keys can be configured to the same value with no validation.
+
+### 37.6 Documentation overclaims (registered, not fixed in Phase 0)
+
+`architecture.md:29,72` · `configuration.md:229-237` · `roadmap.md:8` (`[x]`) · `compat/nacos/feature-comparison.md:83,100` · `compat/nacos/config-mapping.md:89` · `compat/README.md:666,675,720`. Internal contradiction: `compat/README.md:679` and `compat/consul/features.md:6` say 8502 connect/xDS is "out of core scope". §36 also needs the proto-tree wording correction from §37.1 and a note that its wire-fidelity table covers only the emitted field subset.
+
+### 37.7 Phase 0 implementation (this round)
+
+Approved by the user as "先做阶段0". Backend-only; `batata-ui` untouched.
+
+1. **Shutdown lifetime** — `ConsulPlugin` gains `xds_shutdown_txs: Mutex<Vec<oneshot::Sender<()>>>`, initialized in all three constructors. `retain_xds_shutdown_senders()` keeps the bridge and gRPC senders; `shutdown()` sends on both before aborting `JoinHandle`s. New unit test `test_xds_shutdown_senders_survive_startup` asserts the receivers are still `Empty` after retention and resolve after shutdown.
+2. **Startup errors** — `grpc.rs` gains `start_xds_grpc_server_on_listener()` using `serve_with_incoming_shutdown(TcpListenerStream, ...)`; `start_background_tasks()` now binds the `TcpListener` synchronously and returns `Err` on an invalid address or port conflict instead of logging from a detached task. This also removes the bind-twice / TOCTOU window. `tokio-stream` gains the `net` feature and `batata-plugin-consul` tokio gains `net`.
+3. **Default LDS** — `build_snapshot()` now publishes one listener per backend service on stable synthetic ports from `DEFAULT_LISTENER_BASE_PORT = 15001` (service-name sorted, so no duplicate bind addresses even when registrations omit `port`). HTTP services get an HCM filter referencing their `<service>:routes` RDS table; others get a `tcp_proxy` to their CDS cluster. Per-node connect-proxy snapshots still take precedence.
+4. **Runtime smoke test** — `crates/batata-plugin-consul/tests/connect_xds_runtime.rs` runs the real `ConsulSyncBridge` loop plus a real tonic ADS server, waits for the first 5-second tick to push a decodable LDS resource, registers a second service and waits for the **next** tick to push it over CDS, then opens a fresh stream to prove the server is still serving. It directly reproduces the P0 failure mode.
+
+### 37.8 Phase 0 validation
+
+* **Runtime smoke test**: `cargo test -p batata-plugin-consul --test connect_xds_runtime` = **1 passed / 0 failed**, 15.01s. It spans two real 5-second sync ticks, asserts a pushed LDS `Any.value` decodes as an Envoy `Listener`, asserts a second registered service arrives through the timed loop (not a manual `update_snapshot`), and opens a fresh ADS stream afterwards to prove the server is still serving.
+* **New unit tests**: `plugin::tests::test_xds_shutdown_senders_survive_startup` and `xds_sync::tests::test_default_snapshot_publishes_encodable_listeners` both green; the 6 `ads_e2e.rs` integration tests still pass.
+* **Semantic mutants** (`/tmp/batata_phase0_mutants.py`): **7/7 killed** — drop both senders, shutdown without signalling, empty default LDS again, colliding listener ports, HCM without an RDS table, sync loop exiting on the first tick, gRPC server returning immediately. Every source file is byte-restored and touched after each mutant so Cargo cannot reuse a mutant binary.
+* **Gates**: `cargo fmt --all` and `cargo fmt --all -- --check` rc=0; `cargo clippy --workspace --all-targets -- -D warnings` rc=0 with no warnings; `python3 scripts/compat_check.py` rc=0 (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent); `git diff --check` rc=0; `cargo test --workspace --exclude batata-integration-tests` = **4155 passed / 0 failed / 33 ignored** (+3 over the §36 baseline of 4152), 137 result lines, zero `FAILED`. No compat F-ID / T-ID status or total changed.
+* **Podman runtime** was verified with an existing local image (`podman run --rm docker.io/library/debian:bookworm-slim` → `podman-runtime-ok`, `aarch64`) through the `CONTAINER_HOST=unix://...` workaround. No image pull, install or container-based product test was performed.
+
+### 37.9 Feasibility of a "full" mesh and the remaining roadmap
+
+"Complete" is only meaningful when scoped. Three tiers were measured in §37.2: **L0** = both paths producing decodable CDS/EDS/LDS/RDS (+ Consul SDS/RBAC/CA wiring) and verified by a real Envoy; **L1** = upstream CE parity (38 type URLs, gateways, JWT/ext_authz, access logs, tracing, locality/failover, DNS listeners, real Delta, CA providers) — roughly 6–8× the current mesh code; **L2** = distributed kernel (Serf/anti-entropy, WAN federation, txn atomicity, lock mutual exclusion, `LockDelay`), which is outside mesh proper. Aim at **Consul CE at `7574cf237e`**, excluding the 10 Enterprise stubs and upstream's own unimplemented SDS.
+
+Phased plan: **0** (this section) repair P0 + audit + checkpoint; **1** wire Nacos naming service → `NacosSyncBridge`, align with the 7 upstream generators, add `nacos.istio.mcp.server.enabled` / 18848 and new compat F-ID/T-ID rows (classic MCP is a separate product decision, Istio has deprecated it); **2** Consul Connect closure — `DELTA_GRPC` + real Delta, SDS wired to `connect_ca.rs`, intentions → network/HTTP RBAC filters, TLS `TransportSocket`, full discovery-chain matchers; **3** real Envoy sidecar verification; **4** optional CE breadth; **5** P0/P1 kernel correctness.
+
+**Podman feasibility** (asked by the user in this round): Podman 6.2.0 is installed and `podman-machine-default` (applehv, 9 CPU / 6 GiB) is running. The default `ssh://` connection fails in this sandbox with `open /Users/terry/.ssh/known_hosts: operation not permitted`; setting `CONTAINER_HOST=unix:///var/folders/tg/7m32lh9j11n85tm1tcztyzzc0000gn/T/podman/podman-machine-default-api.sock` connects successfully and lists 9 local images (postgres / rust / redis / debian / mysql / phpmyadmin / kafka / batata-erp-test). **No Envoy image is present.** Phase 0 needs no container (the smoke test uses the generated tonic client); Phase 3 can run a real Envoy sidecar via Podman once an `envoyproxy/envoy` image is available. Per the user's standing preference, image pulls / installs are left as manual steps and were not executed here.
+
+### 37.10 Boundaries of this round
+
+No commit or push was performed for P2, P2-C or Phase 0; HEAD is still `3874d341`. No `--full`, matrix, SDK or perf run — the user explicitly deferred the clean full until the frontend task fully completes. `batata-ui` was not modified. The §37.6 documentation overclaims are **registered but not fixed**; Phase 0 deliberately targeted runtime correctness first. The `origin` proxy 502 recorded earlier in this round has since been resolved — see §37.11.
+
+### 37.11 Remote state correction (verified 2026-11-18)
+
+A follow-up read-only check after the Phase 0 gates found that the "origin push pending / proxy 502" statement recorded in §33.2, §37.10 and the 2026-11-18 work log was no longer true. Evidence:
+
+* `git ls-remote origin refs/heads/main` → `3874d341d14e33fb2c0417147328947f107bf25b`.
+* `git ls-remote gitee refs/heads/main` → the same `3874d341d14e33fb2c0417147328947f107bf25b`.
+* `git reflog show origin/main` → `3874d341 ... refs/remotes/origin/main@{2026-11-18 22:02:26 +0800}: update by push`, superseding `7d599869` (`10:29:41`) and `9abeef36` (`2026-11-17 22:58:37`).
+* Local `HEAD = main = origin/main = origin/HEAD = gitee/main = 3874d341`.
+
+So the ACL control-plane commit is fully dual-pushed. What remains uncommitted is **only** the P2 / P2-C / Phase 0 mesh work (11 tracked modifications + 9 untracked paths, `+1267/-248` in the tracked diff); it is a local checkpoint, not a remote divergence. This correction changes no product code and no compat F-ID / T-ID count.
+
+### 37.12 Phase 3 real-Envoy host environment (2026-11-19)
+
+The user asked to add the images needed for Podman testing to `~/work/docker/compose.yml` (the local infra base: MySQL / PostgreSQL / phpMyAdmin / Redis / Kafka). Scope was narrowed to "only add the Envoy image", then extended to complete the bootstrap config + ports so a real Envoy can actually attach to batata's ADS. **No product code changed; no batata commit; `batata-ui` untouched.**
+
+Changes are all outside the repo, under `/Users/terry/work/docker/`:
+
+* **`compose.yml`** — new `envoy` service, `docker.io/envoyproxy/envoy:v1.38-latest` (fixed minor, arm64 confirmed, avoids qemu on the aarch64 podman-machine). Isolated under `profiles: [mesh]` so the default `podman-compose up -d` still starts only the original 5 services. Mounts the bootstrap, overrides `command: ["envoy","-c","/etc/envoy/envoy.yaml"]`, maps admin `19901:9901` and placeholder `11000:10000` (19xxx/11xxx chosen to dodge `sdk_port_guard.sh`).
+* **`envoy-bootstrap.yaml`** (new) — mirrors batata's own runtime bootstrap shape (`connect.rs::build_envoy_bootstrap_config`): SotW `ads_config` (`api_type: GRPC`, `transport_api_version: V3`), `lds_config`/`cds_config` via `ads: {}`, `local_agent` STRICT_DNS cluster with `http2_protocol_options`. One deliberate difference: the ADS endpoint is `host.containers.internal:8502` instead of `127.0.0.1` (in-container loopback cannot reach the host). `node.id = phase3-envoy-probe` is not a registered connect-proxy id, so `SnapshotCache::get_snapshot` falls back to the default snapshot published by `ConsulSyncBridge` (all CDS/EDS/LDS/RDS).
+
+**Host-to-container contract verified** (read-only, no product code): the ADS server binds `0.0.0.0:8502` (`plugin.rs::start_background_tasks`); `batata-mesh::ads.rs` serves SotW ADS and wraps encoded protobuf in `Any.value`; a real Envoy `DiscoveryRequest` with a node id registers a push stream. `host.containers.internal` resolves to the Podman gateway `192.168.127.254`; a TCP probe from inside a container to `192.168.127.254:8502` with a temporary host listener fired the accept (`HOST_NETWORK_OK`).
+
+**Validation**: `python3 yaml.safe_load` parsed both files (envoy service fields correct, original 5 services have no profile); real Envoy `envoy --mode validate -c envoy-bootstrap.yaml` exited 0; a detached real-Envoy run showed `Starting admin HTTP server at 0.0.0.0:9901` and `cm init: initializing cds` — i.e. the bootstrap is accepted and Envoy enters ADS initialization. Probe containers were removed.
+
+**Prerequisite / boundary**: the host must run batata with `BATATA_PLUGIN_CONSUL_ENABLED=true` so the gRPC ADS server listens on 8502; with no host server, Envoy retries ADS and `/config_dump` shows no dynamic resources (expected). Image pull was done manually by the user. This is a host test harness only — no compat F-ID / T-ID state, no gate, no commit.
+
+### 37.13 Phase 3 real-Envoy end-to-end acceptance (2026-11-19)
+
+Ran the full acceptance chain end to end: start batata (Consul ADS enabled) → start real Envoy v1.38 → verify `/config_dump`. **No product code changed; no commit; `batata-ui` untouched; all probe processes/containers removed afterwards.**
+
+**Setup**: launched the current-worktree debug binary (`target/debug/batata-server`, mtime 22:25:34 > Phase 0 source mtimes, and carrying all three ADS log anchors) with `BATATA_PLUGIN_CONSUL_ENABLED=true` and an isolated `SDK_DATA_DIR=data/phase3-envoy-verify2`. Note: `startup.sh` uses `nohup &`, which the tool harness reaps on command exit — the server had to be held as a direct background task. Real Envoy was started via `podman run` mirroring the compose `envoy` service (podman-compose is not installed locally). `dev` network does not exist, so the default bridge was used (same as the earlier successful TCP probe).
+
+**Result — PASS. Real Envoy pulled all dynamic resources from batata ADS over `host.containers.internal:8502`:**
+
+| Resource | Evidence from real Envoy |
+|---|---|
+| CDS | `cds: response indicates 1 added/updated cluster(s)`; `/config_dump` → `dynamic_active_clusters: consul` (type=EDS, `eds_cluster_config` → ADS) + static `local_agent` |
+| EDS | `consul` cluster resolves endpoints via ADS; `/clusters` → `local_agent::192.168.127.254:8502::health_flags::healthy`, `cx_active=1`, `rq_active=1` (live ADS stream) |
+| LDS | `lds: add/update listener 'default_listener:consul'`; `/config_dump` → `dynamic_listeners[].active_state.listener` bound `127.0.0.1:15001`, filter `envoy.filters.network.tcp_proxy` → `cluster: consul`; `/listeners` confirms socket |
+| RDS | No HTTP discovery chain registered in this scenario, so LDS correctly uses TCP proxy (no HCM/RDS) — expected, not a defect |
+
+Envoy reached `all dependencies initialized. starting workers` with **no NACK/rejection** — the hand-rolled minimal protobuf (CDS/EDS/LDS/TCP-proxy `Any.value`) is accepted by a real Envoy descriptor. The default LDS shape is exactly what the Phase 0 unit test `test_default_snapshot_publishes_encodable_listeners` asserts (`default_listener:<service>` at 15001+ with `tcp_proxy`), so real-Envoy behavior corroborates the unit contract.
+
+**Cleanup**: Envoy container removed; batata background task stopped; ports 8502/8848/8500/8081/19901/11000 all closed; no leftover probe containers. This is a host harness acceptance only — no compat F-ID / T-ID changes, no gate, no version bump.

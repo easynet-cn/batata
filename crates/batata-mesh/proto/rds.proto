@@ -1,0 +1,84 @@
+// Route Discovery Service (RDS) Protocol Definitions
+// Minimal, wire-compatible subset of Envoy RDS API v3.
+//
+// Field numbers verified against upstream envoyproxy/envoy:
+//   api/envoy/config/route/v3/route.proto          (RouteConfiguration)
+//   api/envoy/config/route/v3/route_components.proto (VirtualHost, Route,
+//     RouteMatch, RouteAction, WeightedCluster, ClusterWeight, HeaderMatcher)
+// Note `Route.name = 14` and `WeightedCluster.total_weight = 3` are easy to get
+// wrong; they are intentionally taken verbatim from the upstream declarations.
+
+syntax = "proto3";
+
+package envoy.config.route.v3;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+
+message RouteConfiguration {
+  string name = 1;
+  repeated VirtualHost virtual_hosts = 2;
+  repeated string internal_only_headers = 3;
+}
+
+message VirtualHost {
+  string name = 1;
+  repeated string domains = 2;
+  repeated Route routes = 3;
+}
+
+message Route {
+  string name = 14;
+  RouteMatch match = 1;
+  oneof action {
+    RouteAction route = 2;
+    RedirectAction redirect = 3;
+    DirectResponseAction direct_response = 7;
+  }
+}
+
+// Redirect / direct-response actions are declared so the oneof keeps upstream
+// field numbers, but batata does not emit them yet.
+message RedirectAction {}
+message DirectResponseAction {}
+
+message RouteMatch {
+  oneof path_specifier {
+    string prefix = 1;
+    string path = 2;
+  }
+  google.protobuf.BoolValue case_sensitive = 4;
+  repeated HeaderMatcher headers = 6;
+}
+
+message HeaderMatcher {
+  string name = 1;
+  string exact_match = 4;
+  bool present_match = 7;
+  bool invert_match = 8;
+  string prefix_match = 9;
+  string suffix_match = 10;
+  string contains_match = 12;
+}
+
+message RouteAction {
+  oneof cluster_specifier {
+    string cluster = 1;
+    string cluster_header = 2;
+    WeightedCluster weighted_clusters = 3;
+  }
+  string prefix_rewrite = 5;
+  string host_rewrite_literal = 6;
+  google.protobuf.Duration timeout = 8;
+}
+
+message WeightedCluster {
+  repeated ClusterWeight clusters = 1;
+  string runtime_key_prefix = 2;
+  google.protobuf.UInt32Value total_weight = 3;
+}
+
+message ClusterWeight {
+  string name = 1;
+  google.protobuf.UInt32Value weight = 2;
+}

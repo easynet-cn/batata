@@ -31,7 +31,7 @@ base64 = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "net"] }
 futures = { workspace = true }
 
 # Logging
@@ -93,6 +93,8 @@ url = { workspace = true }
 actix-http = { workspace = true }
 criterion = { workspace = true }
 wiremock = { workspace = true }
+tonic = { workspace = true, features = ["transport"] }
+tokio-stream = { workspace = true }
 
 [[bench]]
 name = "consul_store_bench"

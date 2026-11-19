@@ -1,0 +1,57 @@
+// HTTP Connection Manager network filter configuration.
+// Minimal, wire-compatible subset of Envoy HCM API v3.
+//
+// Field numbers verified against upstream envoyproxy/envoy:
+//   api/envoy/extensions/filters/network/http_connection_manager/v3/
+//     http_connection_manager.proto
+//   api/envoy/config/core/v3/config_source.proto (ConfigSource / ApiVersion)
+// HCM is delivered as a `google.protobuf.Any` inside Listener.Filter.typed_config.
+
+syntax = "proto3";
+
+package envoy.extensions.filters.network.http_connection_manager.v3;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+
+enum CodecType {
+  AUTO = 0;
+  HTTP1 = 1;
+  HTTP2 = 2;
+  HTTP3 = 3;
+}
+
+enum ApiVersion {
+  API_AUTO = 0;
+  V2 = 1;
+  V3 = 2;
+}
+
+message HttpConnectionManager {
+  CodecType codec_type = 1;
+  string stat_prefix = 2;
+  oneof route_specifier {
+    Rds rds = 3;
+  }
+  repeated HttpFilter http_filters = 5;
+}
+
+message Rds {
+  ConfigSource config_source = 1;
+  string route_config_name = 2;
+}
+
+// Minimal ConfigSource: only the ADS specifier and resource version are used.
+message ConfigSource {
+  AggregatedConfigSource ads = 3;
+  ApiVersion resource_api_version = 6;
+}
+
+message AggregatedConfigSource {}
+
+message HttpFilter {
+  string name = 1;
+  oneof config_type {
+    google.protobuf.Any typed_config = 4;
+  }
+}

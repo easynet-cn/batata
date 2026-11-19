@@ -1,0 +1,76 @@
+// Listener Discovery Service (LDS) Protocol Definitions
+// Minimal, wire-compatible subset of Envoy LDS API v3.
+//
+// This is NOT a vendored copy of the upstream Envoy protos. Only the messages
+// and fields emitted by `batata-mesh/src/xds/encode.rs` are declared here, and
+// every field number is verified against upstream envoyproxy/envoy:
+//   api/envoy/config/listener/v3/listener.proto
+//   api/envoy/config/listener/v3/listener_components.proto
+//   api/envoy/config/core/v3/address.proto
+// Protobuf `Any.value` is decoded by the receiver's own descriptor, so field
+// numbers (not message names) determine whether a real Envoy accepts the bytes.
+
+syntax = "proto3";
+
+package envoy.config.listener.v3;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/wrappers.proto";
+
+// The unique name by which this listener is known.
+message Listener {
+  string name = 1;
+  Address address = 2;
+  repeated FilterChain filter_chains = 3;
+  FilterChain default_filter_chain = 25;
+}
+
+// Subset of envoy.config.core.v3.Address.
+message Address {
+  oneof address {
+    SocketAddress socket_address = 1;
+  }
+}
+
+// Subset of envoy.config.core.v3.SocketAddress.
+message SocketAddress {
+  enum Protocol {
+    TCP = 0;
+    UDP = 1;
+  }
+  Protocol protocol = 1;
+  string address = 2;
+  oneof port_specifier {
+    uint32 port_value = 3;
+    string named_port = 4;
+  }
+  string resolver_name = 5;
+  bool ipv4_compat = 6;
+}
+
+message FilterChain {
+  FilterChainMatch filter_chain_match = 1;
+  repeated Filter filters = 3;
+  string name = 7;
+}
+
+message FilterChainMatch {
+  google.protobuf.UInt32Value destination_port = 8;
+  repeated CidrRange prefix_ranges = 3;
+  string transport_protocol = 9;
+  repeated string application_protocols = 10;
+  repeated string server_names = 11;
+}
+
+// Subset of envoy.config.core.v3.CidrRange.
+message CidrRange {
+  string address_prefix = 1;
+  google.protobuf.UInt32Value prefix_len = 2;
+}
+
+message Filter {
+  string name = 1;
+  oneof config_type {
+    google.protobuf.Any typed_config = 4;
+  }
+}

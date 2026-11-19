@@ -197,6 +197,11 @@ pub struct ConsulPlugin {
     /// Aborted on `shutdown()` so they stop probing/heartbeating/re-registering
     /// instead of being merely detached.
     background_tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Shutdown senders for the Consul Connect xDS sync bridge and ADS gRPC
+    /// server. Both receivers are `oneshot`, so the senders must outlive
+    /// `start_background_tasks()`; dropping them resolves the receivers and
+    /// stops the 5-second sync loop and the ADS server immediately on startup.
+    xds_shutdown_txs: std::sync::Mutex<Vec<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl ConsulPlugin {
@@ -215,6 +220,7 @@ impl ConsulPlugin {
             dc_config,
             inner: std::sync::OnceLock::new(),
             background_tasks: std::sync::Mutex::new(Vec::new()),
+            xds_shutdown_txs: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -406,6 +412,7 @@ impl ConsulPlugin {
             dc_config,
             inner: std::sync::OnceLock::new(),
             background_tasks: std::sync::Mutex::new(Vec::new()),
+            xds_shutdown_txs: std::sync::Mutex::new(Vec::new()),
         };
 
         let inner =
@@ -446,6 +453,7 @@ impl ConsulPlugin {
             dc_config,
             inner: std::sync::OnceLock::new(),
             background_tasks: std::sync::Mutex::new(Vec::new()),
+            xds_shutdown_txs: std::sync::Mutex::new(Vec::new()),
         };
 
         let inner =
@@ -481,6 +489,26 @@ impl ConsulPlugin {
     /// Get the event service. Panics if not initialized.
     pub fn event_service(&self) -> &ConsulEventService {
         &self.inner().event
+    }
+
+    /// Keep the xDS shutdown senders alive until `shutdown()`.
+    ///
+    /// Both the sync bridge loop and tonic's `serve_with_shutdown` treat a
+    /// resolved `oneshot::Receiver` as a stop signal. If the senders are
+    /// dropped when `start_background_tasks()` returns, the bridge exits on
+    /// its first `select!` and the ADS server shuts down right after startup.
+    fn retain_xds_shutdown_senders(
+        &self,
+        bridge_tx: tokio::sync::oneshot::Sender<()>,
+        grpc_tx: tokio::sync::oneshot::Sender<()>,
+    ) {
+        let mut guard = self
+            .xds_shutdown_txs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // A repeated start replaces the previous senders, which stops the
+        // previous loops cleanly before new ones are spawned.
+        *guard = vec![bridge_tx, grpc_tx];
     }
 }
 
@@ -649,6 +677,17 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
 
     async fn shutdown(&self) -> anyhow::Result<()> {
         tracing::info!("Consul compatibility plugin shutting down");
+
+        // Signal graceful shutdown before aborting: the sync bridge exits via
+        // its `select!` branch and tonic drains in-flight ADS streams.
+        let mut shutdown_txs = self
+            .xds_shutdown_txs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for tx in shutdown_txs.drain(..) {
+            let _ = tx.send(());
+        }
+        drop(shutdown_txs);
 
         // Abort every long-lived loop started by `start_background_tasks`.
         // Dropping a JoinHandle only detaches the task, so abort explicitly to
@@ -973,26 +1012,39 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // Envoy sidecars bootstrapped via `/v1/connect/proxy/:service_id`
         // connect here to discover backend services.
         let xds_server = create_xds_server();
-        let bridge = Arc::new(ConsulSyncBridge::new(
-            inner.naming_store.clone(),
-            xds_server.clone(),
-        ));
-        let _shutdown_tx = bridge.start();
+        // Give the bridge the discovery-chain compiler so service-router /
+        // service-splitter / service-resolver config entries reach Envoy as
+        // RDS resources instead of staying HTTP-only.
+        let bridge = Arc::new(
+            ConsulSyncBridge::new(inner.naming_store.clone(), xds_server.clone())
+                .with_connect_service(Arc::new(inner.connect.clone())),
+        );
+        // Retain both shutdown senders for the plugin lifetime. Dropping them
+        // here resolves the receivers immediately: the 5-second sync loop
+        // returns and `serve_with_shutdown` stops the ADS server at startup.
+        let bridge_shutdown_tx = bridge.start();
 
         let grpc_port = self.dc_config.grpc_port;
+        let addr: std::net::SocketAddr = format!("0.0.0.0:{}", grpc_port)
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid Consul xDS gRPC address: {e}"))?;
+        // Bind synchronously: a port conflict now fails plugin startup instead
+        // of being swallowed as a log line from a detached background task.
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to bind Consul xDS gRPC port {grpc_port}: {e}"))?;
         let xds_server_clone = xds_server.clone();
-        let (_grpc_shutdown_tx, grpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (grpc_shutdown_tx, grpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        self.retain_xds_shutdown_senders(bridge_shutdown_tx, grpc_shutdown_tx);
+
         spawn_background(&mut handles, async move {
-            let addr = match format!("0.0.0.0:{}", grpc_port).parse() {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::error!("Invalid xDS gRPC address: {}", e);
-                    return;
-                }
-            };
             tracing::info!(port = grpc_port, "Starting Consul Connect xDS gRPC server");
-            if let Err(e) =
-                batata_mesh::start_xds_grpc_server(xds_server_clone, addr, grpc_shutdown_rx).await
+            if let Err(e) = batata_mesh::start_xds_grpc_server_on_listener(
+                xds_server_clone,
+                listener,
+                grpc_shutdown_rx,
+            )
+            .await
             {
                 tracing::error!(error = %e, "Consul Connect xDS gRPC server failed");
             }
@@ -1332,6 +1384,32 @@ mod tests {
             "background tasks must be aborted on shutdown"
         );
         assert!(plugin.background_tasks.lock().unwrap().is_empty());
+    }
+
+    /// Regression: the xDS sync bridge and the ADS gRPC server both use a
+    /// `oneshot::Receiver` as their shutdown signal. Dropping the senders when
+    /// `start_background_tasks()` returns resolves them, so the 5-second sync
+    /// loop returns and tonic's `serve_with_shutdown` stops the server right
+    /// after startup. Both senders must survive until `shutdown()`.
+    #[tokio::test]
+    async fn test_xds_shutdown_senders_survive_startup() {
+        use tokio::sync::oneshot::error::TryRecvError;
+
+        let plugin = create_test_plugin();
+        let (bridge_tx, mut bridge_rx) = tokio::sync::oneshot::channel::<()>();
+        let (grpc_tx, mut grpc_rx) = tokio::sync::oneshot::channel::<()>();
+
+        plugin.retain_xds_shutdown_senders(bridge_tx, grpc_tx);
+        assert_eq!(plugin.xds_shutdown_txs.lock().unwrap().len(), 2);
+        // Success path: neither receiver is resolved while the plugin holds
+        // the senders. If they were dropped, both would be `Closed`.
+        assert!(matches!(bridge_rx.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(grpc_rx.try_recv(), Err(TryRecvError::Empty)));
+
+        plugin.shutdown().await.unwrap();
+        assert!(bridge_rx.try_recv().is_ok());
+        assert!(grpc_rx.try_recv().is_ok());
+        assert!(plugin.xds_shutdown_txs.lock().unwrap().is_empty());
     }
 
     fn create_test_plugin() -> ConsulPlugin {
