@@ -376,23 +376,20 @@ fn service_key(namespace_id: &str, group_name: &str, service_name: &str) -> Stri
     format!("{}@@{}@@{}", namespace_id, group_name, service_name)
 }
 
-/// Sync services to xDS snapshot
-async fn sync_to_xds(
-    services: &Arc<RwLock<HashMap<String, NacosServiceData>>>,
-    xds_server: &Arc<XdsServer>,
+/// Build the Envoy xDS snapshot for a set of Nacos services.
+///
+/// This is the single naming-to-xDS projection used by both `NacosSyncBridge`
+/// (Path A on 15010) and the Istio MCP server on 18848. Keeping one builder
+/// prevents the two ADS endpoints from drifting on cluster, endpoint, listener
+/// or route generation.
+pub fn build_resource_snapshot(
+    nacos_services: &[NacosService],
     config: &SyncBridgeConfig,
-) -> Result<(), anyhow::Error> {
-    let services_guard = services.read().await;
-
-    if services_guard.is_empty() {
+) -> ResourceSnapshot {
+    if nacos_services.is_empty() {
         // Publish an empty snapshot so removed services do not linger in xDS.
-        xds_server.update_snapshot(ResourceSnapshot::new());
-        debug!("No services; publishing empty xDS snapshot");
-        return Ok(());
+        return ResourceSnapshot::new();
     }
-
-    // Convert services to xDS resources
-    let nacos_services: Vec<NacosService> = services_guard.values().map(|s| s.into()).collect();
 
     let clusters: Vec<Cluster> = nacos_services
         .iter()
@@ -404,22 +401,34 @@ async fn sync_to_xds(
         .map(crate::conversion::service_to_cluster_load_assignment)
         .collect();
 
-    // Generate listeners if configured
     let listeners: Vec<Listener> = if config.generate_listeners {
-        generate_listeners(&nacos_services, config)
+        generate_listeners(nacos_services, config)
     } else {
         Vec::new()
     };
 
-    // Generate routes if configured
     let routes: Vec<RouteConfiguration> = if config.generate_routes {
-        generate_routes(&nacos_services)
+        generate_routes(nacos_services)
     } else {
         Vec::new()
     };
 
-    // Create snapshot
-    let snapshot = ResourceSnapshot::with_all_resources(clusters, endpoints, listeners, routes);
+    ResourceSnapshot::with_all_resources(clusters, endpoints, listeners, routes)
+}
+
+/// Sync services to xDS snapshot
+async fn sync_to_xds(
+    services: &Arc<RwLock<HashMap<String, NacosServiceData>>>,
+    xds_server: &Arc<XdsServer>,
+    config: &SyncBridgeConfig,
+) -> Result<(), anyhow::Error> {
+    let services_guard = services.read().await;
+    let nacos_services: Vec<NacosService> = services_guard.values().map(|s| s.into()).collect();
+    let snapshot = build_resource_snapshot(&nacos_services, config);
+    if nacos_services.is_empty() {
+        debug!("No services; publishing empty xDS snapshot");
+    }
+    drop(services_guard);
 
     debug!(
         clusters = snapshot.clusters.len(),
@@ -430,7 +439,6 @@ async fn sync_to_xds(
         "Syncing xDS snapshot"
     );
 
-    // Update xDS server
     xds_server.update_snapshot(snapshot);
 
     Ok(())

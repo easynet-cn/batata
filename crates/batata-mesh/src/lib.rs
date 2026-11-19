@@ -47,4 +47,4 @@ pub use mcp::{
 };
 pub use server::XdsServer;
 pub use snapshot::{DeltaClientState, ResourceSnapshot};
-pub use sync::{Debouncer, NacosSyncBridge, SyncBridgeConfig};
+pub use sync::{Debouncer, NacosSyncBridge, SyncBridgeConfig, build_resource_snapshot};

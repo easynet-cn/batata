@@ -16,6 +16,7 @@ use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info, warn};
 
+use crate::snapshot::ResourceSnapshot;
 use crate::xds::generated::mcp::resource_source_server::ResourceSource;
 use crate::xds::generated::mcp::{RequestResources, Resources};
 
@@ -23,7 +24,7 @@ use super::encode::{SERVICE_ENTRY_COLLECTION, encode_resources};
 use super::server::McpServer;
 use super::types::ServiceEntry;
 
-/// Snapshot published to all connected MCP sinks.
+/// Snapshot published to all connected MCP and config-source ADS sinks.
 #[derive(Clone, Debug)]
 pub struct McpSnapshot {
     /// Monotonic native version from [`McpServer`].
@@ -32,11 +33,27 @@ pub struct McpSnapshot {
     pub entries: Vec<ServiceEntry>,
     /// Nonce paired with this response.
     pub nonce: String,
+    /// Naming-derived Envoy resources served through the config-source ADS
+    /// stream on the same port. Kept separate from the MCP version because
+    /// upstream uses one resource-snapshot version for CDS/EDS/LDS/RDS.
+    pub xds: Arc<ResourceSnapshot>,
+}
+
+impl Default for McpSnapshot {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            entries: Vec::new(),
+            nonce: String::new(),
+            xds: Arc::new(ResourceSnapshot::new()),
+        }
+    }
 }
 
 struct McpInner {
     server: Arc<McpServer>,
     snapshot_tx: broadcast::Sender<Arc<McpSnapshot>>,
+    xds_snapshot: parking_lot::RwLock<Arc<ResourceSnapshot>>,
     nonce_counter: AtomicU64,
 }
 
@@ -54,6 +71,7 @@ impl BatataMcpService {
             inner: Arc::new(McpInner {
                 server,
                 snapshot_tx,
+                xds_snapshot: parking_lot::RwLock::new(Arc::new(ResourceSnapshot::new())),
                 nonce_counter: AtomicU64::new(0),
             }),
         }
@@ -81,12 +99,27 @@ impl BatataMcpService {
         }
     }
 
+    /// Replace the Envoy xDS snapshot and publish one combined full-state
+    /// update. Updating and broadcasting under one call avoids an ADS stream
+    /// observing ServiceEntry state from one naming batch with CDS/EDS/LDS/RDS
+    /// state from another.
+    pub fn publish_snapshot_with_xds(&self, xds: ResourceSnapshot) {
+        *self.inner.xds_snapshot.write() = Arc::new(xds);
+        self.publish_snapshot();
+    }
+
+    /// Current naming-derived Envoy xDS snapshot used by config-source ADS.
+    pub fn current_xds_snapshot(&self) -> Arc<ResourceSnapshot> {
+        self.inner.xds_snapshot.read().clone()
+    }
+
     /// Build a snapshot from the current native cache and a fresh nonce.
     pub(crate) fn current_snapshot(&self) -> McpSnapshot {
         McpSnapshot {
             version: self.inner.server.version(),
             entries: self.inner.server.get_service_entries(),
             nonce: self.next_nonce(),
+            xds: self.current_xds_snapshot(),
         }
     }
 

@@ -19,9 +19,11 @@ use tracing::{error, info};
 use batata_api::naming::NamingServiceProvider;
 use batata_common::build_service_key;
 use batata_mesh::conversion::NacosService;
+use batata_mesh::sync::SyncBridgeConfig;
 use batata_mesh::sync::{NacosServiceData, ServiceChangeEvent};
 use batata_mesh::{
-    BatataMcpService, McpServer, McpServerConfig, start_istio_mcp_grpc_server_on_listener,
+    BatataMcpService, McpServer, McpServerConfig, build_resource_snapshot,
+    start_istio_mcp_grpc_server_on_listener,
 };
 
 use super::xds_nacos_source::spawn_nacos_source;
@@ -96,6 +98,7 @@ pub async fn start_istio_mcp_service(
 
     let bridge_server = mcp_server.clone();
     let bridge_service = service.clone();
+    let xds_sync_config = SyncBridgeConfig::default();
     let bridge_handle = tokio::spawn(async move {
         let mut cache: HashMap<String, NacosServiceData> = HashMap::new();
         while let Some(event) = event_rx.recv().await {
@@ -117,7 +120,8 @@ pub async fn start_istio_mcp_service(
 
             let services: Vec<NacosService> = cache.values().map(NacosService::from).collect();
             bridge_server.sync_services(&services).await;
-            bridge_service.publish_snapshot();
+            let xds_snapshot = build_resource_snapshot(&services, &xds_sync_config);
+            bridge_service.publish_snapshot_with_xds(xds_snapshot);
         }
         info!("Istio MCP naming bridge stopped");
     });
@@ -241,18 +245,25 @@ mod tests {
             instance("127.0.0.1", 9090),
         );
 
-        timeout(Duration::from_secs(2), async {
+        let snapshot = timeout(Duration::from_secs(2), async {
             loop {
                 if let Ok(snapshot) = updates.recv().await
                     && snapshot.entries.len() == 2
                 {
-                    return;
+                    return snapshot;
                 }
                 sleep(Duration::from_millis(20)).await;
             }
         })
         .await
         .expect("second naming update should publish a snapshot");
+
+        assert_eq!(snapshot.xds.clusters.len(), 2);
+        assert_eq!(snapshot.xds.endpoints.len(), 2);
+        assert!(!snapshot.xds.listeners.is_empty());
+        assert_eq!(snapshot.xds.routes.len(), 1);
+        assert!(snapshot.xds.clusters.contains_key("web"));
+        assert!(snapshot.xds.clusters.contains_key("api"));
 
         handle.shutdown().await;
     }

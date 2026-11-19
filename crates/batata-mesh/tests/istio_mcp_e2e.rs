@@ -5,14 +5,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use batata_mesh::conversion::{NacosInstance, NacosService};
+use batata_mesh::xds::generated::cluster as cds_pb;
 use batata_mesh::xds::generated::discovery::DiscoveryRequest;
 use batata_mesh::xds::generated::discovery::aggregated_discovery_service_client::AggregatedDiscoveryServiceClient;
+use batata_mesh::xds::generated::endpoint as eds_pb;
 use batata_mesh::xds::generated::istio;
+use batata_mesh::xds::generated::listener as lds_pb;
 use batata_mesh::xds::generated::mcp::RequestResources;
 use batata_mesh::xds::generated::mcp::Resource;
 use batata_mesh::xds::generated::mcp::resource_source_client::ResourceSourceClient;
+use batata_mesh::xds::generated::route as rds_pb;
 use batata_mesh::{BatataMcpService, start_istio_mcp_grpc_server_on_listener};
 use batata_mesh::{McpServer, McpServerConfig, SERVICE_ENTRY_COLLECTION};
+use batata_mesh::{SyncBridgeConfig, build_resource_snapshot};
 use prost::Message;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -221,6 +226,121 @@ async fn ads_config_source_delivers_service_entry_and_live_update() {
     assert_ne!(second.nonce, first_nonce);
     assert_eq!(second.type_url, "networking.istio.io/v1alpha3/ServiceEntry");
     assert!(second.resources.is_empty());
+
+    drop(request_tx);
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn ads_config_source_delivers_envoy_xds_resources() {
+    let server = Arc::new(McpServer::new(McpServerConfig::default()));
+    server.sync_services(&service_data()).await;
+    let service = BatataMcpService::new(server.clone());
+    service.publish_snapshot_with_xds(build_resource_snapshot(
+        &service_data(),
+        &SyncBridgeConfig::default(),
+    ));
+    let xds_version = service.current_xds_snapshot().version.clone();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let grpc_service = service.clone();
+    let server_task = tokio::spawn(async move {
+        start_istio_mcp_grpc_server_on_listener(grpc_service, listener, shutdown_rx)
+            .await
+            .expect("serve");
+    });
+
+    let mut client = timeout(Duration::from_secs(3), async {
+        loop {
+            match AggregatedDiscoveryServiceClient::connect(format!("http://{addr}")).await {
+                Ok(client) => return client,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+    })
+    .await
+    .expect("connect");
+
+    let (request_tx, request_rx) = mpsc::channel(8);
+    for type_url in [
+        "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+        "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment",
+        "type.googleapis.com/envoy.config.listener.v3.Listener",
+        "type.googleapis.com/envoy.config.route.v3.RouteConfiguration",
+    ] {
+        request_tx
+            .send(DiscoveryRequest {
+                type_url: type_url.to_string(),
+                ..Default::default()
+            })
+            .await
+            .expect("send xDS request");
+    }
+
+    let mut stream = client
+        .stream_aggregated_resources(Request::new(ReceiverStream::new(request_rx)))
+        .await
+        .expect("open ADS stream")
+        .into_inner();
+
+    let mut responses = Vec::new();
+    for _ in 0..4 {
+        responses.push(
+            timeout(Duration::from_secs(3), stream.message())
+                .await
+                .expect("xDS response")
+                .expect("some response")
+                .expect("ok response"),
+        );
+    }
+
+    let cds = &responses[0];
+    assert_eq!(
+        cds.type_url,
+        "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    );
+    assert_eq!(cds.version_info, xds_version);
+    assert_eq!(cds.resources.len(), 1);
+    let any = &cds.resources[0];
+    assert_eq!(
+        any.type_url,
+        "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    );
+    let cluster = cds_pb::Cluster::decode(any.value.as_slice()).expect("decode CDS");
+    assert_eq!(cluster.name, "web");
+
+    let eds = &responses[1];
+    assert_eq!(
+        eds.type_url,
+        "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment"
+    );
+    assert_eq!(eds.version_info, xds_version);
+    let any = &eds.resources[0];
+    let cla = eds_pb::ClusterLoadAssignment::decode(any.value.as_slice()).expect("decode EDS");
+    assert_eq!(cla.cluster_name, "web");
+
+    let lds = &responses[2];
+    assert_eq!(
+        lds.type_url,
+        "type.googleapis.com/envoy.config.listener.v3.Listener"
+    );
+    assert_eq!(lds.version_info, xds_version);
+    let any = &lds.resources[0];
+    let listener = lds_pb::Listener::decode(any.value.as_slice()).expect("decode LDS");
+    assert_eq!(listener.name, "ingress-listener");
+
+    let rds = &responses[3];
+    assert_eq!(
+        rds.type_url,
+        "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+    );
+    assert_eq!(rds.version_info, xds_version);
+    let any = &rds.resources[0];
+    let config = rds_pb::RouteConfiguration::decode(any.value.as_slice()).expect("decode RDS");
+    assert_eq!(config.name, "default-routes");
 
     drop(request_tx);
     let _ = shutdown_tx.send(());

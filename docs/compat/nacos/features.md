@@ -399,8 +399,9 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 > Registered 2026-11-19 from the Nacos 3.3.0 `nacos-istio` source audit
 > (`db1946649`, 3.3.0 revision line). Scope is upstream port 18848: Istio MCP
 > `ResourceSource` plus the config-source ADS stream that a real Istio sink
-> opens on the same port. Full Nacos xDS data-plane ADS and the
-> VirtualService/DestinationRule config-to-RDS path remain deliberately deferred.
+> opens on the same port. Real Envoy CDS/EDS/LDS/RDS resources are served from
+> the same Nacos naming snapshot; VirtualService/DestinationRule config-to-RDS
+> remains deliberately deferred.
 
 | ID | Istio MCP capability | batata impl | Status | Tests | Notes |
 |----|----------------------|-------------|--------|-------|-------|
@@ -410,6 +411,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | F-NAC-ISTIO-004 | Independent naming source, live push and graceful shutdown | `batata-server` | 🟢 | | Batata reuses `xds_nacos_source::spawn_nacos_source` with its own event channel and service cache so a slow MCP sink cannot block the Path A xDS bridge. Each successful sync publishes one full snapshot to all connected streams. `IstioMcpServerHandle` stops the producer first, awaits the bridge, then signals the gRPC server; startup binds before spawning so conflicts are returned synchronously. Tests cover live naming updates, snapshot publication and port-conflict failure. |
 | F-NAC-ISTIO-005 | Istio config-source ADS on port 18848 (`StreamAggregatedResources`) | `crates/batata-mesh/src/mcp/ads.rs` | 🟢 | | Upstream `IstioServer.java:57-80` also registers `NacosXdsService`; Istio's `configSources: xds://host:18848` path opens normal Envoy ADS and requests Pilot GVKs. Batata serves that stream alongside `ResourceSource`: `networking.istio.io/v1alpha3/ServiceEntry` gets full-state outer `Any` values of `type.googleapis.com/istio.mcp.v1alpha1.Resource`, `core/v1alpha1/MeshConfig` is ignored like upstream, other GVKs get empty full-state responses, and delta stays unimplemented. ACK/NACK and nonce checks are handled per GVK; snapshot pushes replace full state. |
 | F-NAC-ISTIO-006 | Opt-in ServiceEntry port override for strict sinks | `crates/batata-server-common/src/model/config.rs`, `crates/batata-mesh/src/mcp/server.rs` | 🟢 | | Upstream fidelity keeps ServiceEntry port 0 and carries real ports in endpoint port maps, but Istio 1.15 rejects port 0 on ingest. Batata adds `batata.istio.mcp.server.service-entry-port` (default 0, hyphen/underscore/env aliases, validated 0..=65535) so operators can opt into a non-zero ServiceEntry port without changing upstream-default wire output. |
+| F-NAC-ISTIO-007 | Envoy CDS/EDS/LDS/RDS data-plane resources on port 18848 | `crates/batata-mesh/src/mcp/ads.rs`, `crates/batata-mesh/src/sync.rs`, `crates/batata-server/src/startup/istio_mcp.rs` | 🟢 | | Upstream `NacosXdsService.java:292-305` answers the four standard Envoy ADS type URLs with real protobuf `Any` resources and the resource-snapshot version; `ApiConstants.java:55-63` defines the exact type URLs. Batata now shares the naming-to-xDS projection between Path A and 18848 (`build_resource_snapshot`), carries the resulting `ResourceSnapshot` in each MCP/ADS snapshot, and emits protobuf-encoded Cluster, ClusterLoadAssignment, Listener and RouteConfiguration resources with the xDS snapshot version. MeshConfig is still ignored, ServiceEntry keeps its MCP wrapper, and unknown/SDS/Runtime GVKs stay on the empty generator. |
 
 ---
 
@@ -438,8 +440,8 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | B.8 Maintainer SDK | 9 | 0 | 0 | 1 | 0 | 10 | 90% |
 | B.9 Client SDK gaps | 7 | 0 | 0 | 1 | 0 | 8 | 88% |
 | B.10 Server AI ADMIN | 2 | 0 | 0 | 0 | 1 | 3 | 67% |
-| B.11 Istio MCP | 6 | 0 | 0 | 0 | 0 | 6 | 100% |
-| **Total** | 197 | 0 | 0 | 2 | 4 | 203 | 97% |
+| B.11 Istio MCP | 7 | 0 | 0 | 0 | 0 | 7 | 100% |
+| **Total** | 198 | 0 | 0 | 2 | 4 | 204 | 97% |
 
 > Recomputed from the F-ID rows on 2026-11-10 (`scripts/compat_check.py` enforces
 > this table). Initial verification was 2025-08-08; the maintainer SDK rows were
