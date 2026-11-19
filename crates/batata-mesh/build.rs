@@ -21,6 +21,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/rbac.proto",
                 "proto/rbac_filter.proto",
                 "proto/tls.proto",
+                "proto/mcp.proto",
+                "proto/mcp_metadata.proto",
+                "proto/mcp_resource.proto",
+                "proto/istio_service_entry.proto",
             ],
             &["proto/"],
         )?;

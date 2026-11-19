@@ -80,7 +80,7 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | **Built-in Circuit Breaker** | Resilience pattern for cluster health checks |
 | **OpenTelemetry Tracing** | OTLP export for distributed tracing (Jaeger, Zipkin, etc.) |
 | **Multi-datacenter Support** | Locality-aware replication with local-first sync |
-| **Service Mesh (xDS)** | Consul Connect path: EDS, CDS, LDS, RDS, ADS (real Envoy verified); Nacos Istio/MCP path not ported |
+| **Service Mesh (xDS)** | Consul Connect path: EDS, CDS, LDS, RDS, ADS (real Envoy verified); Nacos Istio MCP `ServiceEntry` collection on 18848 (Nacos xDS ADS on the same port deferred) |
 | **AI Integration** | MCP Server Registry and A2A Agent Registry — mirrors the upstream Nacos AI module rather than being Batata-only (see `docs/compat/nacos/ai/`) |
 | **Distributed Lock** | Raft-based distributed locking mechanism |
 | **Kubernetes Sync** | Bidirectional service sync with Kubernetes |

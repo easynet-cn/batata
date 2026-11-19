@@ -750,6 +750,7 @@ data:
 
     # If turn on the Istio MCP server
     #batata.istio.mcp.server.enabled: false
+    #batata.istio.mcp.server.port: 18848
 
     # =============================================================================
     # Kubernetes Sync

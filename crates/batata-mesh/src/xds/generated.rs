@@ -64,3 +64,15 @@ pub mod rbac {
 pub mod tls {
     tonic::include_proto!("envoy.extensions.transport_sockets.tls.v3");
 }
+
+/// Istio MCP v1alpha1 stream messages (`istio.mcp.v1alpha1`).
+/// Wire-compatible subset of the Nacos 3.3.0 MCP server protocol.
+pub mod mcp {
+    tonic::include_proto!("istio.mcp.v1alpha1");
+}
+
+/// Istio ServiceEntry wire model (`istio.networking.v1alpha3`).
+/// Wire-compatible subset used as the Any body of MCP resources.
+pub mod istio {
+    tonic::include_proto!("istio.networking.v1alpha3");
+}

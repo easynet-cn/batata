@@ -35,7 +35,8 @@ use tracing::{error, info, warn};
 use crate::context::DeploymentMode;
 use crate::model::common::{AppState, Configuration, DEPLOYMENT_TYPE_CONSOLE};
 use crate::startup::{
-    self, AIServices, GracefulShutdown, OtelConfig, XdsServerHandle, start_xds_service,
+    self, AIServices, GracefulShutdown, IstioMcpServerHandle, OtelConfig, XdsServerHandle,
+    start_istio_mcp_service, start_xds_service,
 };
 
 /// Application builder - orchestrates the full initialization sequence
@@ -88,8 +89,9 @@ pub struct AppBuilder {
     grpc_servers: Option<startup::GrpcServers>,
     server_registry: Option<Arc<batata_core::ServerRegistry>>,
 
-    // Phase 10: xDS
+    // Phase 10: xDS and Istio MCP
     xds_handle: Option<XdsServerHandle>,
+    istio_mcp_handle: Option<IstioMcpServerHandle>,
 }
 
 impl AppBuilder {
@@ -128,6 +130,7 @@ impl AppBuilder {
             grpc_servers: None,
             server_registry: None,
             xds_handle: None,
+            istio_mcp_handle: None,
         }
     }
 
@@ -865,7 +868,10 @@ impl AppBuilder {
         let xds_handle = start_xds_if_enabled(app_state, grpc_servers).await;
         self.xds_handle = xds_handle;
 
-        info!("Phase 10 complete - xDS service initialized");
+        let istio_mcp_handle = start_istio_mcp_if_enabled(app_state, grpc_servers).await?;
+        self.istio_mcp_handle = istio_mcp_handle;
+
+        info!("Phase 10 complete - xDS and Istio MCP services initialized");
         Ok(self)
     }
 
@@ -1026,6 +1032,7 @@ impl AppBuilder {
         let app_state = self.app_state.as_ref().unwrap();
         let grpc_servers = self.grpc_servers.as_ref().unwrap();
         let xds_handle = self.xds_handle.take();
+        let istio_mcp_handle = self.istio_mcp_handle.take();
         let persistence_ctx = self.persistence_ctx.as_ref().unwrap();
         let server_registry = self.server_registry.as_ref().unwrap();
 
@@ -1035,6 +1042,7 @@ impl AppBuilder {
             app_state,
             grpc_servers,
             xds_handle,
+            istio_mcp_handle,
             persistence_ctx.server_member_manager.as_ref(),
             persistence_ctx.database_connection.clone(),
             server_registry,
@@ -1446,6 +1454,24 @@ async fn start_xds_if_enabled(
     }
 }
 
+/// Start the Istio MCP server if enabled.
+async fn start_istio_mcp_if_enabled(
+    app_state: &Arc<AppState>,
+    grpc_servers: &startup::GrpcServers,
+) -> Result<Option<IstioMcpServerHandle>, Box<dyn std::error::Error>> {
+    let configuration = &app_state.configuration;
+    if !configuration.istio_mcp_server_enabled() {
+        return Ok(None);
+    }
+
+    let port = configuration.istio_mcp_server_port();
+    info!(port = port, "Starting Istio MCP server");
+    match start_istio_mcp_service(true, port, grpc_servers.naming_provider()).await {
+        Ok(handle) => Ok(handle),
+        Err(error) => Err(Box::new(std::io::Error::other(error.to_string()))),
+    }
+}
+
 /// Run in console-remote mode (only console HTTP server).
 async fn run_console_remote(
     app_state: Arc<AppState>,
@@ -1767,6 +1793,7 @@ async fn graceful_shutdown_sequence(
     app_state: &Arc<AppState>,
     grpc_servers: &startup::GrpcServers,
     xds_handle: Option<XdsServerHandle>,
+    istio_mcp_handle: Option<IstioMcpServerHandle>,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
     database_connection: Option<sea_orm::DatabaseConnection>,
     server_registry: &Arc<batata_core::ServerRegistry>,
@@ -1804,6 +1831,12 @@ async fn graceful_shutdown_sequence(
         info!("Stopping xDS service...");
         handle.shutdown().await;
         info!("xDS service stopped");
+    }
+
+    if let Some(handle) = istio_mcp_handle {
+        info!("Stopping Istio MCP service...");
+        handle.shutdown().await;
+        info!("Istio MCP service stopped");
     }
 
     if app_state.health_check_manager.is_some() {

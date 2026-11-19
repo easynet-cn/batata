@@ -85,6 +85,7 @@ fn validate_typed_config(typed: &typed_config::BatataTypedConfig) -> anyhow::Res
             typed.mesh.xds.default.listener.port,
         ),
         ("batata.ai.mcp.registry.port", typed.ai.mcp.registry.port),
+        ("batata.istio.mcp.server.port", typed.istio.mcp.server.port),
     ] {
         if !(0..=max_port).contains(&value) {
             anyhow::bail!("{key} must be in 0..=65535, got {value}");
@@ -1413,6 +1414,23 @@ impl Configuration {
             tls_cert_path: self.xds_tls_cert_path().map(std::path::PathBuf::from),
             tls_key_path: self.xds_tls_key_path().map(std::path::PathBuf::from),
         }
+    }
+
+    // ========================================================================
+    // Istio MCP Configuration (Nacos-compatible port 18848)
+    // ========================================================================
+
+    /// Check if the Istio MCP server is enabled (default: false).
+    pub fn istio_mcp_server_enabled(&self) -> bool {
+        self.typed.istio.mcp.server.enabled
+    }
+
+    /// Get the Istio MCP gRPC port (default: 18848).
+    pub fn istio_mcp_server_port(&self) -> u16 {
+        port_to_u16(
+            self.typed.istio.mcp.server.port,
+            "batata.istio.mcp.server.port",
+        )
     }
 
     // ========================================================================
@@ -3137,6 +3155,35 @@ mod tests {
         assert!(cfg.xds_enabled());
         assert_eq!(cfg.xds_server_port(), 16010);
         assert_eq!(cfg.xds_server_id(), "custom-xds");
+    }
+
+    // ========================================================================
+    // Typed Config: Istio MCP
+    // ========================================================================
+
+    #[test]
+    fn test_typed_istio_mcp_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.istio_mcp_server_enabled());
+        assert_eq!(cfg.istio_mcp_server_port(), 18848);
+    }
+
+    #[test]
+    fn test_istio_mcp_port_validation() {
+        let mut typed = typed_config::BatataTypedConfig::default();
+        typed.istio.mcp.server.port = 65_536;
+        let error = validate_typed_config(&typed).expect_err("invalid port");
+        assert!(error.to_string().contains("batata.istio.mcp.server.port"));
+    }
+
+    #[test]
+    fn test_typed_istio_mcp_overrides() {
+        let cfg = build_config(vec![
+            ("batata.istio.mcp.server.enabled", true.into()),
+            ("batata.istio.mcp.server.port", 18849_i64.into()),
+        ]);
+        assert!(cfg.istio_mcp_server_enabled());
+        assert_eq!(cfg.istio_mcp_server_port(), 18849);
     }
 
     // ========================================================================

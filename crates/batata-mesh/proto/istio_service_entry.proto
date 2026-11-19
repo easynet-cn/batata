@@ -1,0 +1,51 @@
+// Istio ServiceEntry wire model, minimal wire-compatible subset of upstream
+// networking/v1alpha3 protos used by Nacos 3.3.0 MCP ServiceEntry generation.
+// Field numbers were checked against:
+//   service_entry.proto: ServiceEntry 1-8
+//   gateway.proto:       Port 1-4
+//   workload_entry.proto: WorkloadEntry 1-7
+// Unknown upstream fields (validations, gogoproto options, workload_selector)
+// are omitted.
+
+syntax = "proto3";
+
+package istio.networking.v1alpha3;
+
+message ServiceEntry {
+  enum Location {
+    MESH_EXTERNAL = 0;
+    MESH_INTERNAL = 1;
+  }
+
+  enum Resolution {
+    NONE = 0;
+    STATIC = 1;
+    DNS = 2;
+  }
+
+  repeated string hosts = 1;
+  repeated string addresses = 2;
+  repeated Port ports = 3;
+  Location location = 4;
+  Resolution resolution = 5;
+  repeated WorkloadEntry endpoints = 6;
+  repeated string export_to = 7;
+  repeated string subject_alt_names = 8;
+}
+
+message Port {
+  uint32 number = 1;
+  string protocol = 2;
+  string name = 3;
+  uint32 target_port = 4;
+}
+
+message WorkloadEntry {
+  string address = 1;
+  map<string, uint32> ports = 2;
+  map<string, string> labels = 3;
+  string network = 4;
+  string locality = 5;
+  uint32 weight = 6;
+  string service_account = 7;
+}

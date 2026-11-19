@@ -80,13 +80,20 @@ Nacos files into `conf/`.
 | `nacos.ai.mcp.registry.enabled` | `batata.ai.mcp.registry.enabled` | |
 | `nacos.ai.registry.port` (Nacos 3.x) / `nacos.ai.mcp.registry.port` | `batata.ai.mcp.registry.port` | both default `9080` |
 
+### Istio MCP
+
+| Nacos | Batata | Notes |
+|---|---|---|
+| `nacos.istio.mcp.server.enabled` | `batata.istio.mcp.server.enabled` | both default `false`; enables the MCP `ResourceSource` gRPC server only, not Nacos xDS ADS on 18848 |
+| `nacos.istio.mcp.server.port` | `batata.istio.mcp.server.port` | both default `18848` |
+| `nacos.istio.domain.suffix` | configured through `McpServerConfig::domain_suffix` | both default `nacos` (no leading dot); not yet exposed as a flat `batata.*` key |
+
 ### Not ported
 
 | Nacos | Status |
 |---|---|
 | `nacos.security.ignore.urls` | Batata derives public paths in code |
 | `nacos.naming.empty-service.*` | Batata handles empty-service cleanup internally |
-| `nacos.istio.mcp.server.enabled` | **Not ported** — no Nacos Istio MCP/18848 server. `batata.mesh.xds.*` powers a separate Consul Connect→Envoy path on 8502, not a drop-in replacement. |
 | `nacos.k8s.sync.*` | Batata K8s sync is part of `batata-plugin-cloud` |
 | Oracle / Derby datasources | **Not supported** — Batata supports only SeaORM-backed databases (MySQL, PostgreSQL) plus embedded RocksDB |
 

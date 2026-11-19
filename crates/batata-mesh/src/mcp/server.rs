@@ -23,6 +23,9 @@ pub struct McpServerConfig {
     pub default_namespace: String,
     /// Export to namespaces (empty = all)
     pub export_to: Vec<String>,
+    /// Host suffix appended to the Nacos service key. Upstream default is
+    /// `nacos` without a leading dot (see `IstioConfig.domainSuffix`).
+    pub domain_suffix: String,
     /// Whether to generate VirtualServices
     pub generate_virtual_services: bool,
     /// Whether to generate DestinationRules
@@ -35,6 +38,7 @@ impl Default for McpServerConfig {
             server_id: "batata-mcp-server".to_string(),
             default_namespace: "default".to_string(),
             export_to: vec!["*".to_string()],
+            domain_suffix: "nacos".to_string(),
             generate_virtual_services: true,
             generate_destination_rules: true,
         }
@@ -244,12 +248,9 @@ impl McpServer {
         let name = self.service_entry_name(service);
         let host = self.service_host(service);
 
-        // Determine port from instances
-        let port = service
-            .instances
-            .first()
-            .map(|i| i.port as u32)
-            .unwrap_or(80);
+        // Upstream Nacos sets ServiceEntry port 0 and carries the real port in
+        // each WorkloadEntry port map.
+        let port = 0;
 
         // Determine protocol from metadata
         let protocol = service
@@ -264,48 +265,51 @@ impl McpServer {
             })
             .unwrap_or(Protocol::Http);
 
-        // Build endpoints from instances
-        let endpoints: Vec<WorkloadEntry> = service
+        let build_endpoint = |instance: &crate::conversion::NacosInstance| {
+            let mut ports = HashMap::new();
+            ports.insert("http".to_string(), instance.port as u32);
+
+            let locality = if instance.cluster_name.is_empty() || instance.cluster_name == "DEFAULT"
+            {
+                None
+            } else {
+                Some(instance.cluster_name.clone())
+            };
+
+            let weight = Some((instance.weight as u32).clamp(1, 128));
+
+            let labels: HashMap<String, String> = instance
+                .metadata
+                .iter()
+                .filter(|(k, _)| k.starts_with("istio.") || k.starts_with("app."))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+
+            WorkloadEntry {
+                address: Some(instance.ip.clone()),
+                ports,
+                labels,
+                locality,
+                weight,
+                ..Default::default()
+            }
+        };
+
+        let mut endpoints: Vec<WorkloadEntry> = service
             .instances
             .iter()
             .filter(|i| i.enabled && i.healthy)
-            .map(|instance| {
-                let mut ports = HashMap::new();
-                ports.insert("http".to_string(), instance.port as u32);
-
-                let locality =
-                    if instance.cluster_name.is_empty() || instance.cluster_name == "DEFAULT" {
-                        None
-                    } else {
-                        Some(instance.cluster_name.clone())
-                    };
-
-                let weight = Some((instance.weight as u32).clamp(1, 128));
-
-                // Copy relevant labels
-                let labels: HashMap<String, String> = instance
-                    .metadata
-                    .iter()
-                    .filter(|(k, _)| k.starts_with("istio.") || k.starts_with("app."))
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
-
-                WorkloadEntry {
-                    address: Some(instance.ip.clone()),
-                    ports,
-                    labels,
-                    locality,
-                    weight,
-                    ..Default::default()
-                }
-            })
+            .map(&build_endpoint)
             .collect();
 
-        let resolution = if endpoints.is_empty() {
-            Resolution::Dns
-        } else {
-            Resolution::Static
-        };
+        // Upstream "panic mode": if no endpoint passes health/enabled
+        // filtering, fall back to every registered instance.
+        if endpoints.is_empty() {
+            endpoints = service.instances.iter().map(&build_endpoint).collect();
+        }
+
+        // Upstream always emits STATIC ServiceEntries.
+        let resolution = Resolution::Static;
 
         ServiceEntry {
             metadata: ResourceMetadata {
@@ -521,17 +525,13 @@ impl McpServer {
 
     /// Generate service host from Nacos service
     fn service_host(&self, service: &NacosService) -> String {
-        // Use DNS-style name: service.namespace.svc.cluster.local
-        let service_part = if service.group_name.is_empty() || service.group_name == "DEFAULT_GROUP"
-        {
-            service.service_name.clone()
-        } else {
-            format!("{}.{}", service.service_name, service.group_name)
-        };
-
+        // Match upstream Nacos: the MCP map key is used as the host prefix and
+        // the configured suffix is concatenated verbatim. The default suffix
+        // is `nacos`, so `web` becomes `webnacos`.
         format!(
-            "{}.{}.svc.cluster.local",
-            service_part, self.config.default_namespace
+            "{}{}",
+            self.service_entry_name(service),
+            self.config.domain_suffix
         )
     }
 
@@ -710,9 +710,23 @@ mod tests {
         let se = server.nacos_to_service_entry(&service);
 
         assert_eq!(se.metadata.name, "test-service");
-        assert_eq!(se.spec.ports[0].number, 8080);
+        assert_eq!(se.spec.ports[0].number, 0);
         assert_eq!(se.spec.endpoints.len(), 2);
         assert!(se.spec.endpoints[0].address.is_some());
+    }
+
+    #[test]
+    fn test_nacos_to_service_entry_panic_mode() {
+        let server = McpServer::new(McpServerConfig::default());
+        let mut service = create_test_service();
+        for instance in &mut service.instances {
+            instance.healthy = false;
+        }
+
+        let se = server.nacos_to_service_entry(&service);
+
+        assert_eq!(se.spec.endpoints.len(), 2);
+        assert_eq!(se.spec.resolution, Resolution::Static);
     }
 
     #[test]

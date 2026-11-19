@@ -9,6 +9,7 @@ mod console_gateway;
 mod dns;
 mod grpc;
 mod http;
+mod istio_mcp;
 /// `logging` module.
 pub mod logging;
 /// `persistence` module.
@@ -30,6 +31,8 @@ pub use grpc::{GrpcServers, start_grpc_servers};
 pub use http::plugin_http_server;
 /// Re-exported item.
 pub use http::{AIServices, console_server, health_routes, main_server, mcp_registry_server};
+/// Re-exported item.
+pub use istio_mcp::{IstioMcpServerHandle, start_istio_mcp_service};
 /// Re-exported item.
 pub use logging::{LogRotation, LoggingConfig, LoggingGuard, init_file_logging, init_logging};
 /// Re-exported item.

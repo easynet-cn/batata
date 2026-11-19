@@ -236,10 +236,12 @@ batata.mesh.xds.default.listener.port: 15001
 
 **Scope:** the active path is Consul Connect → Envoy ADS on port 8502
 (CDS/EDS/LDS/RDS/ADS; L4/L7 intentions compiled to network/HTTP RBAC filters).
-The Nacos `nacos.istio.mcp.server.enabled` / 18848 path is **not ported**;
-`batata.mesh.xds.*` on 15010 has no production naming-data bridge. Istio is not
-itself an xDS client, so this is Envoy v3 xDS compatibility, not Istio
-control-plane compatibility.
+`batata.mesh.xds.*` on 15010 is Path A and is fed from the Nacos naming provider.
+`batata.istio.mcp.server.enabled/port` (default `false` / `18848`) starts the
+Nacos-compatible Istio MCP `ServiceEntry` stream, mapped from
+`nacos.istio.mcp.server.*`; Nacos xDS ADS on the same upstream port is deferred.
+Istio is not itself an xDS client, so the xDS paths are Envoy v3 compatibility,
+not Istio control-plane compatibility.
 
 ## Metrics
 

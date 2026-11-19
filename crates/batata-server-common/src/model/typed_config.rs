@@ -329,6 +329,9 @@ fn default_mesh_xds_sync_interval_ms() -> i64 {
 fn default_mesh_xds_default_listener_port() -> i64 {
     15_001
 }
+fn default_istio_mcp_server_port() -> i64 {
+    18_848
+}
 fn default_raft_election_timeout_ms() -> i64 {
     1000
 }
@@ -3811,12 +3814,24 @@ pub struct IstioMcpConfig {
     pub server: IstioMcpServerConfig,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 /// Configuration for `IstioMcpServerConfig`.
 pub struct IstioMcpServerConfig {
     #[serde(default)]
     /// Whether the Istio MCP server is enabled.
     pub enabled: bool,
+    #[serde(default = "default_istio_mcp_server_port")]
+    /// Istio MCP gRPC port; upstream Nacos defaults to 18848.
+    pub port: i64,
+}
+
+impl Default for IstioMcpServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_istio_mcp_server_port(),
+        }
+    }
 }
 
 // ============================================================================

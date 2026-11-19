@@ -1,0 +1,42 @@
+// Istio MCP v1alpha1 wire messages, minimal wire-compatible subset.
+// Field numbers follow upstream Nacos 3.3.0
+// istio/src/main/resources/proto/mcp/v1alpha1/mcp.proto.
+// `sink_node` is omitted because it is not consumed; unknown fields are skipped.
+
+syntax = "proto3";
+
+package istio.mcp.v1alpha1;
+
+import "mcp_resource.proto";
+
+// Wire-compatible subset of google.rpc.Status for MCP NACK detection.
+message Status {
+  int32 code = 1;
+  string message = 2;
+}
+
+// A request from an MCP sink, either initial/subscribe or ACK/NACK.
+message RequestResources {
+  // collection = 1 is `sink_node` upstream and is intentionally omitted.
+  string collection = 2;
+  map<string, string> initial_resource_versions = 3;
+  string response_nonce = 4;
+  Status error_detail = 5;
+  bool incremental = 6;
+}
+
+// A full-state MCP response. Upstream Nacos ignores incremental requests and
+// always fills this shape with the whole collection and no removed resources.
+message Resources {
+  string system_version_info = 1;
+  string collection = 2;
+  repeated Resource resources = 3;
+  repeated string removed_resources = 4;
+  string nonce = 5;
+  bool incremental = 6;
+}
+
+// Source-side MCP service implemented by Nacos on port 18848.
+service ResourceSource {
+  rpc EstablishResourceStream(stream RequestResources) returns (stream Resources);
+}

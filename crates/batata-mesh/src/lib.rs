@@ -40,7 +40,10 @@ pub use grpc::{
     AggregatedDiscoveryServiceImpl, create_ads_service, start_xds_grpc_server,
     start_xds_grpc_server_on_listener,
 };
-pub use mcp::{McpServer, McpServerConfig};
+pub use mcp::{
+    BatataMcpService, McpServer, McpServerConfig, SERVICE_ENTRY_COLLECTION, SERVICE_ENTRY_TYPE_URL,
+    start_istio_mcp_grpc_server_on_listener,
+};
 pub use server::XdsServer;
 pub use snapshot::{DeltaClientState, ResourceSnapshot};
 pub use sync::{Debouncer, NacosSyncBridge, SyncBridgeConfig};

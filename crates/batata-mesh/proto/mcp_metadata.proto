@@ -1,0 +1,14 @@
+// MCP resource metadata, minimal wire-compatible subset of upstream
+// istio/src/main/resources/proto/mcp/v1alpha1/metadata.proto.
+// `create_time` (field 2) is omitted because upstream Nacos does not set it.
+
+syntax = "proto3";
+
+package istio.mcp.v1alpha1;
+
+message Metadata {
+  string name = 1;
+  string version = 3;
+  map<string, string> labels = 4;
+  map<string, string> annotations = 5;
+}

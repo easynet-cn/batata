@@ -597,6 +597,10 @@ gap register in `docs/compat/review-report.md`.
 | T-NAC-MAINT-005-02 | F-NAC-MAINT-005 | AgentMaintainerServiceMaintainerSdkITCase | shouldApplyEveryListFilterBeforePaging | SDK_CLIENT | ⬜ |
 | T-NAC-MAINT-005-03 | F-NAC-MAINT-005 | AgentMaintainerServiceMaintainerSdkITCase | shouldManageDraftLifecycleInExplicitNamespace | SDK_CLIENT | ⬜ |
 | T-NAC-MAINT-005-04 | F-NAC-MAINT-005 | AgentMaintainerServiceMaintainerSdkITCase | shouldMapValidationErrorsWithoutBreakingLegacyDelegate | SDK_CLIENT | ⬜ |
+| T-NAC-ISTIO-001-01 | F-NAC-ISTIO-001 | NacosResourceManagerInitialSnapshotTest | establishes full-state ServiceEntry MCP stream on first request | GRPC_API | ✅ |
+| T-NAC-ISTIO-001-02 | F-NAC-ISTIO-001 | istio_mcp_e2e | delivers live full-state replacement with a fresh nonce | GRPC_API | ✅ |
+| T-NAC-ISTIO-002-01 | F-NAC-ISTIO-002 | ServiceEntryGeneratorConcurrencyTest | generates one ServiceEntry per Nacos service with upstream wire fields | INTERNAL | ✅ |
+| T-NAC-ISTIO-003-01 | F-NAC-ISTIO-003 | IstioEnabledFilterTest | gates the MCP server and binds the configured default port | INTERNAL | ✅ |
 
 ---
 
@@ -613,7 +617,8 @@ enforces these totals.
 | 4. Java SDK (gRPC) | 57 | 0 | 46 | 11 |
 | 5. Lock Service (gRPC) | 61 | 0 | 61 | 0 |
 | 6. Maintainer SDK (HTTP) | 38 | 0 | 38 | 0 |
-| **Total** | **401** | **0** | **380** | **21** |
+| 7. Istio MCP (gRPC) | 4 | 4 | 0 | 0 |
+| **Total** | **405** | **4** | **380** | **21** |
 
 > The 21 `⏭️` rows are **not** skipped because a feature is missing. They reference
 > `F-NAC-ADM-AUTH-001`, `F-NAC-ADM-AI-008`, `F-NAC-CLIENT-010`,

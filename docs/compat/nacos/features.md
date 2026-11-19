@@ -394,6 +394,21 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | F-NAC-AISRV-002 | `/v3/admin/ai/import` resource-import controller | crates/batata-console/src/v3/ai_import.rs | 🟢 | | **Batch 6 audit correction**: the batch 5 audit grepped only `crates/batata-ai` and wrongly reported 0/4. All four GA endpoints (`GET /sources`, `POST /search`, `POST /validate`, `POST /execute`) are implemented in `crates/batata-console/src/v3/ai_import.rs::admin_routes()` and mounted by `crates/batata-server/src/api/v3/admin/ai/route.rs`; `crates/batata-server/tests/ai_import_routes.rs` has 18 route tests covering source filtering, form validation, unknown-source 404, registry-backed search/execute and the console mount `/v3/console/ai/import`. The capability is also registered as `F-NAC-ADM-AI-008` (B.7.5); this row is kept as an audit trail. |
 | F-NAC-AISRV-003 | `/v3/admin/ai/pipelines` by-id and legacy collection reads | batata-ai | ⛔ | | **Batch 6 audit correction — won't support.** GA `PipelineAdminController.java` marks both `GET /{pipelineId}` (`@Deprecated(since = "3.2.1", forRemoval = true)`) and the parameterless `GET` as deprecated; both call `CompatibilityHelper.check`, which throws HTTP **410** / `ErrorCode.API_DEPRECATED` (40000) unless `nacos.core.api.compatibility.enabled=true` — **disabled by default** (`core/.../CompatibilityHelper.java:29-46`). The two canonical reads (`GET /list`, `GET /detail?pipelineId=`) are already 🟢. Batata is unreleased and intentionally does not ship endpoints GA refuses to serve by default (documented at the top of `crates/batata-ai/src/api/pipeline.rs`). |
 
+## B.11. Istio MCP server (`F-NAC-ISTIO-`)
+
+> Registered 2026-11-19 from the Nacos 3.3.0 `nacos-istio` source audit
+> (`db1946649`, 3.3.0 revision line). Scope is the MCP `ResourceSource` gRPC
+> service on upstream port 18848 only. The same upstream port also hosts Nacos
+> xDS ADS; that path and the VirtualService/DestinationRule config-to-RDS path
+> remain deliberately deferred.
+
+| ID | Istio MCP capability | batata impl | Status | Tests | Notes |
+|----|----------------------|-------------|--------|-------|-------|
+| F-NAC-ISTIO-001 | `istio.mcp.v1alpha1.ResourceSource` bidi stream and `istio/networking/v1alpha3/serviceentries` full-state collection | `batata-mesh`, `batata-server` | 🟢 | | Upstream `IstioServer.java:57-80` opens plaintext gRPC on 18848 and registers `NacosMcpService`; `NacosMcpService.java:62-200` answers with full-state `Mcp.Resources`, a UUID nonce and no `removed_resources`, logging `incremental` but never honoring it. Batata adds hand-written minimal protos (`mcp.proto`, `mcp_resource.proto`, `mcp_metadata.proto`, `istio_service_entry.proto`) with upstream-verified field numbers, a tonic `ResourceSource` service (`mcp/grpc.rs`) with nonce/ACK/NACK handling and full-state replacement, and a caller-bound listener (`start_istio_mcp_grpc_server_on_listener`) so port conflicts fail startup. Real tonic stream test covers initial response and live full-state update. |
+| F-NAC-ISTIO-002 | Nacos naming → Istio `ServiceEntry` generation | `batata-mesh` | 🟢 | | Upstream `NacosServiceInfoResourceWatcher` + `ServiceEntryMcpGenerator` keep healthy/enabled endpoints, apply panic mode when none qualify, use `name.group.namespace` as the key/host prefix, concatenate `nacos.istio.domain.suffix` verbatim (default `nacos`), emit ServiceEntry port 0 with endpoint port maps, and set `registryType=nacos` / `virtual=1`. Batata reuses `McpServer::sync_services`, adds `domain_suffix` (default `nacos`), panic mode, port 0, and wire encoding into `google.protobuf.Any` with `type.googleapis.com/istio.networking.v1alpha3.ServiceEntry`. Byte-level regression anchors the upstream field numbers. |
+| F-NAC-ISTIO-003 | Enable/port config keys and upstream mapping | `batata-server-common` | 🟢 | | Upstream `IstioConfig.java:31-34` binds `nacos.istio.mcp.server.enabled=false` and `nacos.istio.mcp.server.port=18848`; `IstioEnabledFilter.java:40,57` adds a module gate. Batata keeps the canonical keys `batata.istio.mcp.server.enabled/port` (default false / 18848) in the existing typed-config path; the `nacos.*` form is documented as the upstream mapping only. Env `BATATA_ISTIO_MCP_SERVER_*` and dotted CLI overrides work through the existing config pipeline; invalid ports fail typed-config validation. |
+| F-NAC-ISTIO-004 | Independent naming source, live push and graceful shutdown | `batata-server` | 🟢 | | Batata reuses `xds_nacos_source::spawn_nacos_source` with its own event channel and service cache so a slow MCP sink cannot block the Path A xDS bridge. Each successful sync publishes one full snapshot to all connected streams. `IstioMcpServerHandle` stops the producer first, awaits the bridge, then signals the gRPC server; startup binds before spawning so conflicts are returned synchronously. Tests cover live naming updates, snapshot publication and port-conflict failure. |
+
 ---
 
 # Summary (auto-updated)
@@ -421,7 +436,8 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | B.8 Maintainer SDK | 9 | 0 | 0 | 1 | 0 | 10 | 90% |
 | B.9 Client SDK gaps | 7 | 0 | 0 | 1 | 0 | 8 | 88% |
 | B.10 Server AI ADMIN | 2 | 0 | 0 | 0 | 1 | 3 | 67% |
-| **Total** | 191 | 0 | 0 | 2 | 4 | 197 | 97% |
+| B.11 Istio MCP | 4 | 0 | 0 | 0 | 0 | 4 | 100% |
+| **Total** | 195 | 0 | 0 | 2 | 4 | 201 | 97% |
 
 > Recomputed from the F-ID rows on 2026-11-10 (`scripts/compat_check.py` enforces
 > this table). Initial verification was 2025-08-08; the maintainer SDK rows were
