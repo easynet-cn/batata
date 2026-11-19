@@ -3036,7 +3036,7 @@ The full P2 / P2-C / Phase 0 mesh checkpoint was committed on user instruction (
 
 ### 37.15 B round: Delta wire fix and full L4/L7 intentions → Envoy RBAC (2026-11-19)
 
-Continuation of #508 after the user chose "B" and then "L4+L7 完整转换". Backend-only; `batata-ui` untouched; no commit, push, tag or version bump; no `--full`, matrix, SDK or perf run — the frontend task still owns the ports and the clean full remains explicitly deferred.
+Continuation of #508 after the user chose "B" and then "L4+L7 完整转换". Backend-only; `batata-ui` untouched; no tag or version bump; no `--full`, matrix, SDK or perf run — the frontend task still owns the ports and the clean full remains explicitly deferred. The code/docs checkpoint was committed as `2b3cee29` and dual-pushed to gitee/origin; see §37.16.
 
 **Audit correction that changed the edit surface.** Three read-only audits (intentions→RBAC, SDS/CA, Delta xDS) were cross-checked against source. The only registered ADS service is `ads.rs::BatataAdsService`; `grpc.rs::AggregatedDiscoveryServiceImpl` and the P2-C delta arms there are dead code, so true Delta work must edit `ads.rs` / `server.rs` / `snapshot.rs` / `connect.rs:1006`, not `grpc.rs`. The Connect CA data layer is already complete (`connect_ca.rs`: intentions, actions, HTTP permissions, `check_intention`, `evaluate_intention_permissions`, SPIFFE identities and CA HTTP handlers). What was missing was the xDS translation, not the HTTP/intention store.
 
@@ -3056,3 +3056,9 @@ Continuation of #508 after the user chose "B" and then "L4+L7 完整转换". Bac
 **Gates.** `cargo fmt --all`, `cargo fmt --all -- --check`, `git diff --check` rc=0; `cargo clippy --workspace --all-targets -- -D warnings` rc=0 (989 build units, no warnings); `python3 scripts/compat_check.py` rc=0 (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent); `cargo test --workspace --exclude batata-integration-tests` = **4167 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+12 over the 4155 Phase 0 baseline). `cargo test` still prints `warning: unused dependency serde_json` for `batata-mesh`; that declaration is already present at HEAD `4afcb37e`, all current uses are in `#[cfg(test)]` modules, and no dependency was changed in this round. No compat F-ID / T-ID status or total changed.
 
 **Remaining #508 work.** `service-intentions` config entry → legacy intention store conversion and structural validation; SDS / Connect CA lifecycle wiring (including CA private-key persistence, leaf URI SAN, caching/rotation and TLS `TransportSocket`); true incremental Delta / `DELTA_GRPC` on the live ADS path; Path A Nacos naming→bridge wiring; and the P0/P1 kernel-correctness items from the mechanism audit.
+
+### 37.16 RBAC checkpoint committed and dual-pushed (2026-11-19)
+
+On user confirmation ("先提交检查点"), the B-round work was committed as `2b3cee29` (`feat(mesh): compile Consul intentions into Envoy RBAC`), 21 files, +1403/-33. It includes the RBAC protos/encoder/bridge wiring, the Delta field-7 wire fix, the §37.6 documentation corrections and the §37.15 report entry.
+
+Both remotes were verified at `2b3cee2980dc8600cdec1624680ce195c4820c85` via `git ls-remote` after HTTP/1.1 pushes to gitee and origin; the working tree was clean before this docs-only follow-up. No tag, version bump, `--full`, matrix, SDK or perf run; `batata-ui` untouched.
