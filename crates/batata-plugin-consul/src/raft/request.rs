@@ -25,6 +25,14 @@ pub enum ConsulRaftRequest {
         session_index_cleanup: Option<String>,
     },
 
+    /// Delete a key only when its committed ModifyIndex matches
+    KVCasDelete {
+        /// The `item` field.
+        key: String,
+        /// The `item` field.
+        expected_modify_index: u64,
+    },
+
     /// Delete all keys with a given prefix
     KVDeletePrefix {
         #[doc = "The `prefix` field."]
@@ -383,6 +391,7 @@ impl ConsulRaftRequest {
             // KV
             Self::KVPut { .. } => "KVPut",
             Self::KVDelete { .. } => "KVDelete",
+            Self::KVCasDelete { .. } => "KVCasDelete",
             Self::KVDeletePrefix { .. } => "KVDeletePrefix",
             Self::KVAcquireSession { .. } => "KVAcquireSession",
             Self::KVReleaseSessionKey { .. } => "KVReleaseSessionKey",

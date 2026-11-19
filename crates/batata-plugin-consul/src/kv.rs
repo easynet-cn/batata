@@ -958,6 +958,55 @@ impl ConsulKVService {
         Ok(true)
     }
 
+    /// Checked CAS delete. `Ok(false)` means the committed ModifyIndex did not
+    /// match; `Err` means the conditional delete was not replicated.
+    pub async fn try_cas_delete(&self, key: &str, expected_index: u64) -> Result<bool, String> {
+        #[cfg(test)]
+        if self
+            .fail_raft_writes
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err("injected Raft write failure".to_string());
+        }
+
+        if self.raft_node.is_some() {
+            let applied = self
+                .replicate(ConsulRaftRequest::KVCasDelete {
+                    key: key.to_string(),
+                    expected_modify_index: expected_index,
+                })
+                .await?;
+            if applied {
+                self.notify.notify_waiters();
+            }
+            return Ok(applied);
+        }
+
+        let Some(stored) = self.get_stored(key) else {
+            return Ok(expected_index == 0);
+        };
+        if stored.pair.modify_index != expected_index {
+            return Ok(false);
+        }
+
+        let Some(cf) = self.db.cf_handle(CF_CONSUL_KV) else {
+            return Ok(false);
+        };
+        let mut batch = WriteBatch::default();
+        batch.delete_cf(cf, key.as_bytes());
+        if let Some(ref session_id) = stored.pair.session
+            && let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS)
+        {
+            let idx_key = format!("kidx:{}:{}", session_id, key);
+            batch.delete_cf(cf_sessions, idx_key.as_bytes());
+        }
+        self.db
+            .write(batch)
+            .map_err(|e| format!("failed to CAS delete KV '{}': {}", key, e))?;
+        self.notify.notify_waiters();
+        Ok(true)
+    }
+
     /// Checked `delete_prefix`.
     pub async fn try_delete_prefix(&self, prefix: &str) -> Result<u32, String> {
         if self.raft_node.is_some() {
@@ -1290,70 +1339,6 @@ impl ConsulKVService {
             }
             self.notify.notify_waiters();
         }
-    }
-
-    /// Delete all KV keys held by a session (Consul "delete" behavior).
-    ///
-    /// When a session with `Behavior=delete` is destroyed, all KV keys
-    /// locked by that session are deleted (not just released).
-    /// Matches Consul's `session.go:378-409` behavior.
-    pub async fn delete_session_keys(&self, session_id: &str) {
-        let Some(cf_kv) = self.db.cf_handle(CF_CONSUL_KV) else {
-            return;
-        };
-        let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
-            return;
-        };
-
-        let idx_prefix = format!("kidx:{}:", session_id);
-        let iter = self.db.iterator_cf(
-            cf_sessions,
-            rocksdb::IteratorMode::From(idx_prefix.as_bytes(), rocksdb::Direction::Forward),
-        );
-
-        let mut keys_to_delete: Vec<String> = Vec::new();
-        let mut index_keys_to_delete: Vec<String> = Vec::new();
-
-        for item in iter.flatten() {
-            let (idx_key_bytes, _) = item;
-            let idx_key = match String::from_utf8(idx_key_bytes.to_vec()) {
-                Ok(k) => k,
-                Err(_) => continue,
-            };
-            if !idx_key.starts_with(&idx_prefix) {
-                break;
-            }
-
-            let kv_key = &idx_key[idx_prefix.len()..];
-
-            // Only delete if actually held by this session
-            if let Ok(Some(kv_bytes)) = self.db.get_cf(cf_kv, kv_key.as_bytes())
-                && let Ok(stored) = serde_json::from_slice::<StoredKV>(&kv_bytes)
-                && stored.pair.session.as_deref() == Some(session_id)
-            {
-                keys_to_delete.push(kv_key.to_string());
-            }
-
-            index_keys_to_delete.push(idx_key);
-        }
-
-        if keys_to_delete.is_empty() && index_keys_to_delete.is_empty() {
-            return;
-        }
-
-        // For now, handle standalone mode only (Raft path can be added later)
-        let mut batch = WriteBatch::default();
-        for kv_key in &keys_to_delete {
-            batch.delete_cf(cf_kv, kv_key.as_bytes());
-        }
-        for idx_key in &index_keys_to_delete {
-            batch.delete_cf(cf_sessions, idx_key.as_bytes());
-        }
-        if let Err(e) = self.db.write(batch) {
-            error!("Failed to delete session keys for '{}': {}", session_id, e);
-            return;
-        }
-        self.notify.notify_waiters();
     }
 
     /// Delete a key
@@ -1980,32 +1965,34 @@ pub async fn delete_kv(
 
     let recurse = query.recurse.unwrap_or(false);
 
-    // CAS delete: only delete if ModifyIndex matches
-    if let Some(cas_index) = query.cas {
-        if let Some(existing) = kv_service.get(&key) {
-            if existing.modify_index != cas_index {
-                let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
-                return consul_ok(&meta).json(false);
-            }
-        } else if cas_index != 0 {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
-            return consul_ok(&meta).json(false);
-        }
+    // Upstream rejects `?cas` together with `?recurse`; a CAS delete is a
+    // single-key operation and the FSM cannot apply one index to a tree.
+    if recurse && query.cas.is_some() {
+        crate::api_metrics::incr_endpoint("kv_delete", "error");
+        return HttpResponse::BadRequest().consul_error("Conflicting flags: cas and recurse");
     }
 
-    let outcome: Result<(), String> = if recurse {
-        kv_service.try_delete_prefix(&key).await.map(|_| ())
+    let cas_delete = query.cas.is_some();
+    let outcome: Result<bool, String> = if let Some(cas_index) = query.cas {
+        // The index check belongs in the FSM: another proposer can write
+        // between this handler's read and the unconditional delete.
+        kv_service.try_cas_delete(&key, cas_index).await
+    } else if recurse {
+        kv_service.try_delete_prefix(&key).await.map(|_| true)
     } else {
-        kv_service.try_delete(&key).await.map(|_| ())
+        kv_service.try_delete(&key).await
     };
-    if let Err(e) = outcome {
-        return raft_write_unavailable("kv_delete", &e);
-    }
+    let applied = match outcome {
+        Ok(applied) => applied,
+        Err(e) => return raft_write_unavailable("kv_delete", &e),
+    };
     crate::api_metrics::incr_endpoint("kv_delete", "success");
 
-    index_provider.increment(ConsulTable::KVS);
+    if applied {
+        index_provider.increment(ConsulTable::KVS);
+    }
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
-    consul_ok(&meta).json(true)
+    consul_ok(&meta).json(if cas_delete { applied } else { true })
 }
 
 /// PUT /v1/txn

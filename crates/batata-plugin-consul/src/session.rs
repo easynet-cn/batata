@@ -308,22 +308,19 @@ impl ConsulSessionService {
                 }
             }
         } else {
-            let cf = match self.db.cf_handle(CF_CONSUL_SESSIONS) {
-                Some(cf) => cf,
-                None => return false,
-            };
-
-            // Check if session exists
-            match self.db.get_cf(cf, session_id.as_bytes()) {
-                Ok(Some(_)) => {
-                    if let Err(e) = self.db.delete_cf(cf, session_id.as_bytes()) {
-                        error!("Failed to delete session '{}': {}", session_id, e);
-                        return false;
-                    }
-                    true
-                }
-                _ => false,
+            // Preserve the standalone API contract: destroying an unknown
+            // session is false. Raft uses upstream's idempotent success.
+            if self.get_stored(session_id).is_none() {
+                return false;
             }
+            // Standalone uses the same FSM helper as Raft apply so `release`
+            // and `delete` behave identically in both deployment modes.
+            crate::raft::plugin_handler::apply_session_destroy(
+                &self.db,
+                session_id,
+                current_unix_secs(),
+            )
+            .success
         }
     }
 
@@ -455,18 +452,18 @@ impl ConsulSessionService {
     /// critical state — producing divergent views and potentially dual
     /// destroys (race between leader and follower local deletes).
     ///
-    /// This method fixes that by:
-    /// 1. Gating on leader status so only one node initiates the cascade
-    /// 2. Releasing KV locks via the Raft-aware `kv.release_session`
-    /// 3. Calling `destroy_session` which writes `SessionDestroy` through
-    ///    Raft — all nodes apply the same deletion in the same order
+    /// This method fixes that by calling `destroy_session`, which writes
+    /// `SessionDestroy` through Raft. The FSM applies the session's own
+    /// `Behavior` to held KV keys in the same state transition, so every node
+    /// sees the same release/delete decision without a separate client-side
+    /// KV call.
     ///
     /// Returns the list of sessions that were invalidated (for telemetry).
     /// On followers this returns an empty vec without touching storage.
     pub async fn invalidate_sessions_for_check_via_raft(
         &self,
         check_id: &str,
-        kv: &crate::kv::ConsulKVService,
+        _kv: &crate::kv::ConsulKVService,
     ) -> Vec<Session> {
         // No leader gate here: in cluster mode the health check TTL update
         // arrives at whichever Consul node received the HTTP request, which
@@ -485,15 +482,8 @@ impl ConsulSessionService {
                 session.id, session.name, check_id
             );
 
-            // Release KV locks first (behavior="release") or delete the
-            // held keys (behavior="delete"). Both paths are Raft-replicated.
-            if session.behavior == "delete" {
-                kv.delete_session_keys(&session.id).await;
-            } else {
-                kv.release_session(&session.id).await;
-            }
-
-            // Destroy the session via Raft so followers see the deletion.
+            // The SessionDestroy FSM reads the committed behavior and
+            // cascades it to KV on every node; no separate KV request here.
             if self.destroy_session(&session.id).await {
                 invalidated.push(session);
             }
@@ -571,13 +561,14 @@ impl ConsulSessionService {
     ///
     /// Leader-only: scan for expired session IDs, then route each destroy
     /// through `destroy_session` so the `SessionDestroy` Raft entry
-    /// replicates to all followers. Also calls `kv.release_session` so any
-    /// KV locks held by the expired session are released via Raft.
+    /// replicates to all followers. The FSM applies the stored behavior to
+    /// held KV keys, so TTL expiry honors `Behavior=delete` as well as the
+    /// default `release`.
     ///
     /// Returns the number of sessions successfully destroyed. A return
     /// value of 0 means either no expirations or the local node is not
     /// the leader.
-    pub async fn cleanup_expired_via_raft(&self, kv: &crate::kv::ConsulKVService) -> usize {
+    pub async fn cleanup_expired_via_raft(&self, _kv: &crate::kv::ConsulKVService) -> usize {
         if !self.is_leader() {
             return 0;
         }
@@ -587,11 +578,8 @@ impl ConsulSessionService {
         }
         let mut destroyed = 0usize;
         for id in &expired {
-            // Release KV locks first so they're gone when the session
-            // destroy entry applies. Both calls are Raft-replicated; if
-            // one fails we log and continue — the lazy-expire path in
-            // `get_session` is the final safety net.
-            kv.release_session(id).await;
+            // SessionDestroy carries the whole cascade in the FSM, so a
+            // single committed entry releases or deletes the held keys.
             if self.destroy_session(id).await {
                 destroyed += 1;
             }
@@ -755,7 +743,7 @@ pub async fn create_session(
 pub async fn destroy_session(
     req: HttpRequest,
     session_service: web::Data<ConsulSessionService>,
-    kv_service: web::Data<ConsulKVService>,
+    _kv_service: web::Data<ConsulKVService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -768,24 +756,15 @@ pub async fn destroy_session(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
-    // Get session behavior before destroying (needed to handle KV keys correctly)
-    let behavior = session_service
-        .get_session(&session_id)
-        .map(|s| s.behavior.clone())
-        .unwrap_or_else(|| "release".to_string());
-
-    // Handle KV keys based on session behavior (matches Consul's session.go:378-409)
-    if behavior == "delete" {
-        // Delete behavior: delete all KV keys held by this session
-        kv_service.delete_session_keys(&session_id).await;
-    } else {
-        // Release behavior (default): release locks but keep keys
-        kv_service.release_session(&session_id).await;
-    }
-    // Increment KVS index to wake blocking queries (e.g., Go SDK Lock monitor)
-    index_provider.increment(ConsulTable::KVS);
-
+    // The FSM applies the session's Behavior to held KV keys as part of
+    // SessionDestroy, on every node. No client-side KV mutation here.
     let destroyed = session_service.destroy_session(&session_id).await;
+    if destroyed {
+        // Wake local blocking queries (e.g., Go SDK Lock monitor). In
+        // cluster mode the FSM also advances the replicated KVS index.
+        index_provider.increment(ConsulTable::KVS);
+        index_provider.increment(ConsulTable::Sessions);
+    }
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
     consul_ok(&meta).json(destroyed)
 }
@@ -1034,6 +1013,45 @@ mod tests {
         };
         let session = service.create_session(req).await;
         assert_eq!(session.behavior, "delete");
+    }
+
+    #[tokio::test]
+    async fn test_destroy_session_delete_behavior_deletes_locked_keys() {
+        let (db, _dir) = crate::kv::open_temp_consul_db();
+        let sessions = ConsulSessionService::with_rocks(db.clone());
+        let kv = ConsulKVService::with_rocks(db);
+        let session = sessions
+            .create_session(SessionCreateRequest {
+                behavior: Some("delete".to_string()),
+                ..Default::default()
+            })
+            .await;
+        kv.put("locked/key".to_string(), "value", None).await;
+        assert!(kv.acquire_session("locked/key", &session.id).await);
+
+        assert!(sessions.destroy_session(&session.id).await);
+
+        assert!(kv.get("locked/key").is_none());
+        assert!(sessions.get_session(&session.id).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_destroy_session_release_behavior_keeps_key() {
+        let (db, _dir) = crate::kv::open_temp_consul_db();
+        let sessions = ConsulSessionService::with_rocks(db.clone());
+        let kv = ConsulKVService::with_rocks(db);
+        let session = sessions
+            .create_session(SessionCreateRequest::default())
+            .await;
+        kv.put("locked/key".to_string(), "value", None).await;
+        assert!(kv.acquire_session("locked/key", &session.id).await);
+
+        assert!(sessions.destroy_session(&session.id).await);
+
+        let stored = kv.get("locked/key").expect("released key survives");
+        assert!(stored.session.is_none());
+        assert_eq!(stored.decoded_value(), Some("value".to_string()));
+        assert!(sessions.get_session(&session.id).is_none());
     }
 
     #[tokio::test]

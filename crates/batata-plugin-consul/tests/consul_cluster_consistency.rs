@@ -12,8 +12,11 @@
 
 mod cluster;
 
+use batata_consistency::raft::plugin::RaftPluginHandler;
+use batata_plugin_consul::constants::{CF_CONSUL_KV, CF_CONSUL_SESSIONS};
 use batata_plugin_consul::naming_store::ConsulNamingStore;
 use batata_plugin_consul::raft::ConsulRaftRequest;
+use serde_json::{Value, json};
 
 use cluster::{ConsulCluster, check, check_key, service};
 
@@ -340,5 +343,208 @@ fn namespace_isolation_holds_on_every_node() {
         // Same service ID, different namespaces: both must survive.
         assert!(c.has_service(i, "team-a", "web-1"));
         assert!(c.has_service(i, "team-b", "web-1"));
+    }
+}
+
+fn acquire_json(session: &str, lock_index: u64) -> String {
+    json!({
+        "pair": {
+            "Key": "lock/key",
+            "CreateIndex": 10u64,
+            "ModifyIndex": 10u64,
+            "LockIndex": lock_index,
+            "Flags": 0u64,
+            "Session": session,
+        },
+        "created_at": 1i64,
+        "modified_at": 1i64,
+    })
+    .to_string()
+}
+
+/// Two concurrent `?acquire` proposers must not both succeed. The client-side
+/// holder check can be stale; the FSM must reject the second commit on every
+/// node and leave the first holder's entry untouched.
+#[test]
+fn concurrent_kv_acquires_keep_single_holder_on_every_node() {
+    let mut c = ConsulCluster::three();
+    let key = "lock/key";
+    c.commit(ConsulRaftRequest::KVAcquireSession {
+        key: key.to_string(),
+        session_id: "session-1".to_string(),
+        stored_kv_json: acquire_json("session-1", 1),
+    });
+
+    // A stale proposer read the key as free before session-1 committed.
+    let stale = ConsulRaftRequest::KVAcquireSession {
+        key: key.to_string(),
+        session_id: "session-2".to_string(),
+        stored_kv_json: acquire_json("session-2", 1),
+    };
+    let payload = serde_json::to_vec(&stale).expect("serialize stale acquire");
+    let log_index = c.log_index() + 1;
+
+    for i in 0..3 {
+        let node = c.node(i);
+        let response = node
+            .handler
+            .apply(node.db().as_ref(), "consul_write", &payload, log_index);
+        assert!(!response.success, "node {i} accepted a stale acquire");
+
+        let bytes = node
+            .db()
+            .get_cf(node.db().cf_handle(CF_CONSUL_KV).unwrap(), key.as_bytes())
+            .expect("read committed KV")
+            .expect("KV exists");
+        let stored: Value = serde_json::from_slice(&bytes).expect("valid stored KV JSON");
+        assert_eq!(stored["pair"]["Session"], "session-1");
+        assert_eq!(stored["pair"]["LockIndex"], 1);
+    }
+}
+
+fn cas_delete_json(key: &str, modify_index: u64) -> String {
+    json!({
+        "pair": {
+            "Key": key,
+            "CreateIndex": modify_index,
+            "ModifyIndex": modify_index,
+            "LockIndex": 0u64,
+            "Flags": 0u64,
+        },
+        "created_at": 1i64,
+        "modified_at": 1i64,
+    })
+    .to_string()
+}
+
+/// A concurrent writer can make the HTTP-layer CAS read stale before the
+/// delete is proposed. Every node's FSM must reject the stale index and only
+/// a matching index may remove the key.
+#[test]
+fn cas_delete_checks_committed_index_on_every_node() {
+    let mut c = ConsulCluster::three();
+    let key = "cas/delete/key";
+    c.commit(ConsulRaftRequest::KVPut {
+        key: key.to_string(),
+        stored_kv_json: cas_delete_json(key, 1),
+        session_index_key: None,
+    });
+
+    let node0 = c.node(0);
+    let bytes = node0
+        .db()
+        .get_cf(node0.db().cf_handle(CF_CONSUL_KV).unwrap(), key.as_bytes())
+        .expect("read committed KV")
+        .expect("KV exists");
+    let stored: Value = serde_json::from_slice(&bytes).expect("valid stored KV JSON");
+    let committed_index = stored["pair"]["ModifyIndex"]
+        .as_u64()
+        .expect("numeric ModifyIndex");
+
+    let stale = ConsulRaftRequest::KVCasDelete {
+        key: key.to_string(),
+        expected_modify_index: committed_index.saturating_sub(1),
+    };
+    let stale_payload = serde_json::to_vec(&stale).expect("serialize stale CAS delete");
+    let log_index = c.log_index() + 1;
+    for i in 0..3 {
+        let node = c.node(i);
+        let response = node.handler.apply(
+            node.db().as_ref(),
+            "consul_write",
+            &stale_payload,
+            log_index,
+        );
+        assert!(!response.success, "node {i} accepted a stale CAS delete");
+
+        let bytes = node
+            .db()
+            .get_cf(node.db().cf_handle(CF_CONSUL_KV).unwrap(), key.as_bytes())
+            .expect("read committed KV")
+            .expect("stale CAS delete removed the key");
+        let stored: Value = serde_json::from_slice(&bytes).expect("valid stored KV JSON");
+        assert_eq!(stored["pair"]["ModifyIndex"], committed_index);
+    }
+
+    let matching = ConsulRaftRequest::KVCasDelete {
+        key: key.to_string(),
+        expected_modify_index: committed_index,
+    };
+    let matching_payload = serde_json::to_vec(&matching).expect("serialize matching CAS delete");
+    for i in 0..3 {
+        let node = c.node(i);
+        let response = node.handler.apply(
+            node.db().as_ref(),
+            "consul_write",
+            &matching_payload,
+            log_index + 1,
+        );
+        assert!(response.success, "node {i} rejected a matching CAS delete");
+        assert!(
+            node.db()
+                .get_cf(node.db().cf_handle(CF_CONSUL_KV).unwrap(), key.as_bytes())
+                .expect("read KV")
+                .is_none(),
+            "node {i} kept the key after a matching CAS delete"
+        );
+    }
+}
+
+fn session_create_json(behavior: &str) -> String {
+    json!({
+        "session": {
+            "ID": "session-1",
+            "Behavior": behavior,
+        },
+        "created_at_unix": 1u64,
+        "ttl_secs": 0u64,
+        "last_renewed_unix": 1u64,
+    })
+    .to_string()
+}
+
+/// `Behavior=delete` must be applied by the FSM, not only by the HTTP node
+/// that handled the destroy. Every node must see the held key and its session
+/// index disappear with the committed `SessionDestroy`.
+#[test]
+fn session_destroy_delete_replicates_kv_deletion_to_every_node() {
+    let mut c = ConsulCluster::three();
+    c.commit(ConsulRaftRequest::SessionCreate {
+        session_id: "session-1".to_string(),
+        stored_session_json: session_create_json("delete"),
+    });
+    c.commit(ConsulRaftRequest::KVPut {
+        key: "lock/key".to_string(),
+        stored_kv_json: acquire_json("session-1", 1),
+        session_index_key: Some("kidx:session-1:lock/key".to_string()),
+    });
+    c.commit(ConsulRaftRequest::SessionDestroy {
+        session_id: "session-1".to_string(),
+    });
+
+    for i in 0..3 {
+        let node = c.node(i);
+        let db = node.db();
+        assert!(
+            db.get_cf(db.cf_handle(CF_CONSUL_KV).unwrap(), b"lock/key")
+                .expect("read KV")
+                .is_none(),
+            "node {i} kept the deleted key"
+        );
+        assert!(
+            db.get_cf(db.cf_handle(CF_CONSUL_SESSIONS).unwrap(), b"session-1")
+                .expect("read session")
+                .is_none(),
+            "node {i} kept the destroyed session"
+        );
+        assert!(
+            db.get_cf(
+                db.cf_handle(CF_CONSUL_SESSIONS).unwrap(),
+                b"kidx:session-1:lock/key"
+            )
+            .expect("read session index")
+            .is_none(),
+            "node {i} kept the stale session index"
+        );
     }
 }

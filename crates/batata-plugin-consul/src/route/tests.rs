@@ -334,6 +334,83 @@ async fn test_http_kv_cas() {
     assert_eq!(body, "false");
 }
 
+#[actix_web::test]
+async fn test_http_kv_cas_delete() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/kv/http-cas-delete/key1")
+        .set_payload("initial")
+        .to_request();
+    test::call_service(&app, req).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/kv/http-cas-delete/key1")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let modify_index = body[0]["ModifyIndex"].as_u64().unwrap();
+
+    // Stale index: upstream returns 200 false and leaves the key untouched.
+    let req = test::TestRequest::delete()
+        .uri(&format!(
+            "/v1/kv/http-cas-delete/key1?cas={}",
+            modify_index + 1000
+        ))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(test::read_body(resp).await, "false");
+
+    let req = test::TestRequest::get()
+        .uri("/v1/kv/http-cas-delete/key1")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 200);
+
+    // Matching index removes the key.
+    let req = test::TestRequest::delete()
+        .uri(&format!("/v1/kv/http-cas-delete/key1?cas={}", modify_index))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(test::read_body(resp).await, "true");
+
+    let req = test::TestRequest::get()
+        .uri("/v1/kv/http-cas-delete/key1")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 404);
+
+    // Upstream treats CAS=0 against a missing key as a successful no-op.
+    let req = test::TestRequest::delete()
+        .uri("/v1/kv/http-cas-delete/key1?cas=0")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(test::read_body(resp).await, "true");
+}
+
+#[actix_web::test]
+async fn test_http_kv_cas_delete_rejects_recurse_flag() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/kv/http-cas-delete/conflict")
+        .set_payload("value")
+        .to_request();
+    test::call_service(&app, req).await;
+
+    let req = test::TestRequest::delete()
+        .uri("/v1/kv/http-cas-delete/conflict?cas=1&recurse=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+
+    let req = test::TestRequest::get()
+        .uri("/v1/kv/http-cas-delete/conflict")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 200);
+}
+
 // ========================================================================
 // Health Check HTTP Tests
 // ========================================================================

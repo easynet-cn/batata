@@ -78,14 +78,14 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 |----|------------------------------|-------------|--------|-------|-------|
 | F-CON-KV-001 | GET `/v1/kv/{key}` | | 🟢 | | single; `?recurse` list; `?keys=` names; `?raw` raw; 404=missing; blockable |
 | F-CON-KV-002 | PUT `/v1/kv/{key}?flags=&cas=&acquire=&release=` | | 🟢 | | write; returns true/false; session lock |
-| F-CON-KV-003 | DELETE `/v1/kv/{key}?cas=&recurse=` | | 🟢 | | delete |
+| F-CON-KV-003 | DELETE `/v1/kv/{key}?cas=&recurse=` | | 🟢 | | delete; CAS checked in FSM; `cas`+`recurse` rejected |
 
 ## 5. Session (`F-CON-SES-`)
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
 | F-CON-SES-001 | PUT `/v1/session/create` | | 🟢 | | returns id |
-| F-CON-SES-002 | PUT `/v1/session/destroy/{id}` | | 🟢 | | |
+| F-CON-SES-002 | PUT `/v1/session/destroy/{id}` | | 🟢 | | release/delete behavior applied in FSM |
 | F-CON-SES-003 | PUT `/v1/session/renew/{id}` | | 🟢 | | TTL renew |
 | F-CON-SES-004 | GET `/v1/session/info/{id}` | | 🟢 | | blockable |
 | F-CON-SES-005 | GET `/v1/session/node/{node}` | | 🟢 | | blockable |

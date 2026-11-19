@@ -329,6 +329,7 @@ fn apply_consul_request(
             // KV
             ConsulRaftRequest::KVPut { .. }
             | ConsulRaftRequest::KVDelete { .. }
+            | ConsulRaftRequest::KVCasDelete { .. }
             | ConsulRaftRequest::KVDeletePrefix { .. }
             | ConsulRaftRequest::KVAcquireSession { .. }
             | ConsulRaftRequest::KVReleaseSessionKey { .. }
@@ -390,6 +391,10 @@ fn apply_consul_request(
             // Internal
             ConsulRaftRequest::Noop => ConsulTable::KVS,
         };
+    // Session destroy mutates KV as well as the session row. Upstream does
+    // both in one state-store transaction; advance the KVS watch index too
+    // so blocking queries see the cascaded release/delete.
+    let session_destroy = matches!(&request, ConsulRaftRequest::SessionDestroy { .. });
 
     let resp = match request {
         ConsulRaftRequest::KVPut {
@@ -407,6 +412,10 @@ fn apply_consul_request(
             key,
             session_index_cleanup,
         } => apply_kv_delete(db, &key, session_index_cleanup.as_deref(), log_index),
+        ConsulRaftRequest::KVCasDelete {
+            key,
+            expected_modify_index,
+        } => apply_kv_cas_delete(db, &key, expected_modify_index),
         ConsulRaftRequest::KVDeletePrefix { prefix } => {
             apply_kv_delete_prefix(db, &prefix, log_index)
         }
@@ -643,6 +652,9 @@ fn apply_consul_request(
 
     // Update table index AFTER apply
     table_index.update(table, log_index);
+    if session_destroy && resp.success {
+        table_index.update(ConsulTable::KVS, log_index);
+    }
 
     resp
 }
@@ -701,6 +713,68 @@ fn apply_kv_delete(
     }
 }
 
+/// Delete a key only when the committed ModifyIndex still matches the
+/// caller's CAS index. Consul performs this check inside the state store so a
+/// concurrent write cannot slip between the HTTP read and the FSM apply.
+fn apply_kv_cas_delete(db: &DB, key: &str, expected_modify_index: u64) -> ConsulRaftResponse {
+    let cf_kv = cf_kv(db);
+
+    let committed = match db.get_cf(cf_kv, key.as_bytes()) {
+        Ok(bytes) => bytes,
+        Err(e) => return ConsulRaftResponse::failure(format!("KV CAS delete read failed: {}", e)),
+    };
+
+    let Some(committed) = committed else {
+        // Upstream `kvsDeleteCASTxn` returns true for CAS=0 against a missing
+        // key without deleting anything, and false for any other stale index.
+        return if expected_modify_index == 0 {
+            ConsulRaftResponse::success()
+        } else {
+            ConsulRaftResponse::failure("CAS failed: key not found".into())
+        };
+    };
+
+    let stored: serde_json::Value = match serde_json::from_slice(&committed) {
+        Ok(value) => value,
+        Err(e) => {
+            return ConsulRaftResponse::failure(format!(
+                "KV CAS delete failed: corrupt committed state for '{}': {}",
+                key, e
+            ));
+        }
+    };
+
+    let Some(current_index) = stored
+        .get("pair")
+        .and_then(|pair| pair.get("ModifyIndex"))
+        .and_then(|index| index.as_u64())
+    else {
+        return ConsulRaftResponse::failure(format!(
+            "KV CAS delete failed: missing ModifyIndex for '{}'",
+            key
+        ));
+    };
+
+    if current_index != expected_modify_index {
+        return ConsulRaftResponse::failure("CAS failed: index mismatch".into());
+    }
+
+    let mut batch = WriteBatch::default();
+    batch.delete_cf(cf_kv, key.as_bytes());
+
+    if let Some(session_id) = stored
+        .get("pair")
+        .and_then(|pair| pair.get("Session"))
+        .and_then(|session| session.as_str())
+        && !session_id.is_empty()
+    {
+        let idx_key = format!("kidx:{}:{}", session_id, key);
+        batch.delete_cf(cf_sessions(db), idx_key.as_bytes());
+    }
+
+    write_batch(db, batch, "KV CAS delete")
+}
+
 fn apply_kv_delete_prefix(db: &DB, prefix: &str, _log_index: u64) -> ConsulRaftResponse {
     let cf_k = cf_kv(db);
     let cf_s = cf_sessions(db);
@@ -751,7 +825,10 @@ fn apply_kv_acquire_session(
     stored_kv_json: &str,
     log_index: u64,
 ) -> ConsulRaftResponse {
-    let json = rewrite_kv_indexes(db, key, stored_kv_json, log_index);
+    let json = match rewrite_acquire_indexes(db, key, stored_kv_json, session_id, log_index) {
+        Ok(json) => json,
+        Err(reason) => return ConsulRaftResponse::failure(reason),
+    };
 
     let mut batch = WriteBatch::default();
     batch.put_cf(cf_kv(db), key.as_bytes(), json.as_bytes());
@@ -878,11 +955,137 @@ fn apply_session_create(
     }
 }
 
-fn apply_session_destroy(db: &DB, session_id: &str, _log_index: u64) -> ConsulRaftResponse {
-    match db.delete_cf(cf_sessions(db), session_id.as_bytes()) {
-        Ok(_) => ConsulRaftResponse::success(),
-        Err(e) => ConsulRaftResponse::failure(format!("Session destroy failed: {}", e)),
+/// Destroy a session and apply its `Behavior` to every key it holds.
+///
+/// Upstream `Store::deleteSessionTxn` looks up the session, walks the KV
+/// session index, and either clears `Session` (`release`) or deletes the key
+/// (`delete`) in the same state-store transaction as the session removal.
+/// Doing this in the FSM gives every node the same atomic decision and closes
+/// the old gap where `Behavior=delete` was applied only on the node that
+/// handled the HTTP request.
+pub(crate) fn apply_session_destroy(
+    db: &DB,
+    session_id: &str,
+    log_index: u64,
+) -> ConsulRaftResponse {
+    let cf_sessions = cf_sessions(db);
+    let cf_kv = cf_kv(db);
+
+    let stored_bytes = match db.get_cf(cf_sessions, session_id.as_bytes()) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return ConsulRaftResponse::success(),
+        Err(e) => {
+            return ConsulRaftResponse::failure(format!("Session destroy read failed: {}", e));
+        }
+    };
+    let stored: serde_json::Value = match serde_json::from_slice(&stored_bytes) {
+        Ok(value) => value,
+        Err(e) => {
+            return ConsulRaftResponse::failure(format!(
+                "Session destroy failed: corrupt stored session '{}': {}",
+                session_id, e
+            ));
+        }
+    };
+
+    let raw_behavior = stored
+        .get("session")
+        .and_then(|session| session.get("Behavior").or_else(|| session.get("behavior")))
+        .and_then(|behavior| behavior.as_str())
+        .unwrap_or_default();
+    let behavior = if raw_behavior.is_empty() {
+        "release"
+    } else {
+        raw_behavior
+    };
+    if behavior != "release" && behavior != "delete" {
+        return ConsulRaftResponse::failure(format!(
+            "Session destroy failed: unknown behavior '{}'",
+            behavior
+        ));
     }
+
+    let idx_prefix = format!("kidx:{}:", session_id);
+    let mut indexed_keys = Vec::new();
+    let iter = db.iterator_cf(
+        cf_sessions,
+        rocksdb::IteratorMode::From(idx_prefix.as_bytes(), rocksdb::Direction::Forward),
+    );
+    for item in iter.flatten() {
+        let (idx_key_bytes, _) = item;
+        let idx_key = String::from_utf8_lossy(&idx_key_bytes).into_owned();
+        if !idx_key.starts_with(&idx_prefix) {
+            break;
+        }
+        let kv_key = idx_key[idx_prefix.len()..].to_string();
+        indexed_keys.push((idx_key, kv_key));
+    }
+
+    let mut batch = WriteBatch::default();
+    batch.delete_cf(cf_sessions, session_id.as_bytes());
+
+    for (idx_key, kv_key) in indexed_keys {
+        let kv_bytes = match db.get_cf(cf_kv, kv_key.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return ConsulRaftResponse::failure(format!(
+                    "Session destroy failed to read '{}': {}",
+                    kv_key, e
+                ));
+            }
+        };
+
+        if let Some(bytes) = kv_bytes {
+            let mut stored_kv: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(value) => value,
+                Err(e) => {
+                    return ConsulRaftResponse::failure(format!(
+                        "Session destroy failed: corrupt KV '{}': {}",
+                        kv_key, e
+                    ));
+                }
+            };
+            let holder = stored_kv
+                .get("pair")
+                .and_then(|pair| pair.get("Session"))
+                .and_then(|session| session.as_str())
+                .unwrap_or_default();
+
+            if holder == session_id {
+                if behavior == "delete" {
+                    batch.delete_cf(cf_kv, kv_key.as_bytes());
+                } else {
+                    let Some(pair) = stored_kv
+                        .get_mut("pair")
+                        .and_then(|pair| pair.as_object_mut())
+                    else {
+                        return ConsulRaftResponse::failure(format!(
+                            "Session destroy failed: corrupt KV pair '{}'",
+                            kv_key
+                        ));
+                    };
+                    pair.remove("Session");
+                    let updated = match serde_json::to_string(&stored_kv) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            return ConsulRaftResponse::failure(format!(
+                                "Session destroy failed to encode '{}': {}",
+                                kv_key, e
+                            ));
+                        }
+                    };
+                    let rewritten = rewrite_kv_indexes(db, &kv_key, &updated, log_index);
+                    batch.put_cf(cf_kv, kv_key.as_bytes(), rewritten.as_bytes());
+                }
+            }
+        }
+
+        // Drop the index entry even when the KV entry was already gone or
+        // re-acquired by another session; it no longer describes this holder.
+        batch.delete_cf(cf_sessions, idx_key.as_bytes());
+    }
+
+    write_batch(db, batch, "session destroy")
 }
 
 fn apply_session_renew(
@@ -934,6 +1137,67 @@ fn rewrite_kv_indexes(db: &DB, key: &str, stored_kv_json: &str, log_index: u64) 
     }
 
     serde_json::to_string(&val).unwrap_or_else(|_| stored_kv_json.to_string())
+}
+
+/// Validate a session acquire against committed FSM state and rewrite indexes.
+///
+/// The client-side holder check in `try_put_and_acquire` is not sufficient:
+/// two concurrent proposers can both observe a free key. Upstream performs the
+/// check inside the state transaction, so the FSM must be authoritative too.
+fn rewrite_acquire_indexes(
+    db: &DB,
+    key: &str,
+    stored_kv_json: &str,
+    session_id: &str,
+    log_index: u64,
+) -> Result<String, String> {
+    let existing_bytes = db
+        .get_cf(cf_kv(db), key.as_bytes())
+        .map_err(|e| format!("KV acquire read failed for '{}': {}", key, e))?;
+
+    let (existing_pair, create_index) = match existing_bytes.as_deref() {
+        Some(bytes) => {
+            let value: serde_json::Value = serde_json::from_slice(bytes)
+                .map_err(|e| format!("Invalid stored KV for '{}': {}", key, e))?;
+            let pair = value.get("pair").cloned();
+            let index = pair
+                .as_ref()
+                .and_then(|p| p.get("CreateIndex"))
+                .and_then(|v| v.as_u64());
+            (pair, index)
+        }
+        None => (None, None),
+    };
+
+    let mut authoritative_lock_index = None;
+    if let Some(pair) = existing_pair.as_ref() {
+        let holder = pair
+            .get("Session")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if !holder.is_empty() && holder != session_id {
+            return Err(format!("Lock is held by session {}", holder));
+        }
+        if let Some(index) = pair.get("LockIndex").and_then(|v| v.as_u64()) {
+            authoritative_lock_index = Some(if holder.is_empty() {
+                index.saturating_add(1)
+            } else {
+                index
+            });
+        }
+    }
+
+    let mut value: serde_json::Value = serde_json::from_str(stored_kv_json)
+        .map_err(|e| format!("Invalid acquired KV for '{}': {}", key, e))?;
+    if let Some(pair) = value.get_mut("pair") {
+        pair["CreateIndex"] = serde_json::json!(create_index.unwrap_or(log_index));
+        pair["ModifyIndex"] = serde_json::json!(log_index);
+        if let Some(index) = authoritative_lock_index {
+            pair["LockIndex"] = serde_json::json!(index);
+        }
+    }
+    serde_json::to_string(&value)
+        .map_err(|e| format!("Failed to encode acquired KV for '{}': {}", key, e))
 }
 
 fn get_existing_create_index(db: &DB, key: &str) -> Option<u64> {
@@ -1222,5 +1486,377 @@ impl ConsulRaftWriter {
     /// Used by consistent-read redirect path.
     pub fn leader_addr(&self) -> Option<String> {
         self.core_raft.leader_addr()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use serde_json::{Value, json};
+
+    use crate::kv::open_temp_consul_db;
+
+    fn stored_json(session: Option<&str>, lock_index: u64, create_index: u64) -> String {
+        let mut pair = json!({
+            "Key": "lock/key",
+            "CreateIndex": create_index,
+            "ModifyIndex": create_index,
+            "LockIndex": lock_index,
+            "Flags": 0u64,
+        });
+        if let Some(session_id) = session {
+            pair["Session"] = json!(session_id);
+        }
+        json!({
+            "pair": pair,
+            "created_at": 1i64,
+            "modified_at": 1i64,
+        })
+        .to_string()
+    }
+
+    fn committed_kv(db: &DB, key: &str) -> Value {
+        let bytes = db
+            .get_cf(cf_kv(db), key.as_bytes())
+            .expect("read committed KV")
+            .expect("KV exists");
+        serde_json::from_slice(&bytes).expect("valid stored KV JSON")
+    }
+
+    #[test]
+    fn apply_kv_acquire_rejects_key_held_by_another_session() {
+        let (db, _dir) = open_temp_consul_db();
+        let key = "lock/key";
+        db.put_cf(
+            cf_kv(&db),
+            key.as_bytes(),
+            stored_json(Some("session-1"), 3, 10).as_bytes(),
+        )
+        .expect("seed held KV");
+
+        let response = apply_kv_acquire_session(
+            &db,
+            key,
+            "session-2",
+            &stored_json(Some("session-2"), 99, 10),
+            42,
+        );
+
+        assert!(!response.success);
+        let stored = committed_kv(&db, key);
+        assert_eq!(stored["pair"]["Session"], "session-1");
+        assert_eq!(stored["pair"]["LockIndex"], 3);
+        assert_eq!(stored["pair"]["ModifyIndex"], 10);
+        assert!(
+            db.get_cf(cf_sessions(&db), b"kidx:session-2:lock/key")
+                .expect("read session index")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_kv_acquire_is_reentrant_for_holding_session() {
+        let (db, _dir) = open_temp_consul_db();
+        let key = "lock/key";
+        db.put_cf(
+            cf_kv(&db),
+            key.as_bytes(),
+            stored_json(Some("session-1"), 3, 10).as_bytes(),
+        )
+        .expect("seed held KV");
+
+        let response = apply_kv_acquire_session(
+            &db,
+            key,
+            "session-1",
+            &stored_json(Some("session-1"), 99, 10),
+            42,
+        );
+
+        assert!(response.success);
+        let stored = committed_kv(&db, key);
+        assert_eq!(stored["pair"]["Session"], "session-1");
+        assert_eq!(stored["pair"]["LockIndex"], 3);
+        assert_eq!(stored["pair"]["CreateIndex"], 10);
+        assert_eq!(stored["pair"]["ModifyIndex"], 42);
+    }
+
+    #[test]
+    fn apply_kv_acquire_bumps_lock_index_for_free_key() {
+        let (db, _dir) = open_temp_consul_db();
+        let key = "lock/key";
+        db.put_cf(
+            cf_kv(&db),
+            key.as_bytes(),
+            stored_json(None, 3, 10).as_bytes(),
+        )
+        .expect("seed free KV");
+
+        let response = apply_kv_acquire_session(
+            &db,
+            key,
+            "session-2",
+            &stored_json(Some("session-2"), 99, 10),
+            42,
+        );
+
+        assert!(response.success);
+        let stored = committed_kv(&db, key);
+        assert_eq!(stored["pair"]["Session"], "session-2");
+        assert_eq!(stored["pair"]["LockIndex"], 4);
+        assert_eq!(stored["pair"]["CreateIndex"], 10);
+        assert_eq!(stored["pair"]["ModifyIndex"], 42);
+    }
+
+    #[test]
+    fn apply_kv_acquire_fails_closed_on_corrupt_committed_state() {
+        let (db, _dir) = open_temp_consul_db();
+        let key = "lock/key";
+        db.put_cf(cf_kv(&db), key.as_bytes(), b"not-json")
+            .expect("seed corrupt KV");
+
+        let response = apply_kv_acquire_session(
+            &db,
+            key,
+            "session-1",
+            &stored_json(Some("session-1"), 1, 10),
+            42,
+        );
+
+        assert!(!response.success);
+        let bytes = db
+            .get_cf(cf_kv(&db), key.as_bytes())
+            .expect("read committed KV")
+            .expect("KV exists");
+        assert_eq!(bytes, b"not-json");
+    }
+
+    #[test]
+    fn apply_kv_cas_delete_rejects_stale_index() {
+        let (db, _dir) = open_temp_consul_db();
+        let key = "lock/key";
+        db.put_cf(
+            cf_kv(&db),
+            key.as_bytes(),
+            stored_json(Some("session-1"), 3, 10).as_bytes(),
+        )
+        .expect("seed KV");
+
+        let response = apply_kv_cas_delete(&db, key, 9);
+
+        assert!(!response.success);
+        committed_kv(&db, key);
+    }
+
+    #[test]
+    fn apply_kv_cas_delete_removes_matching_key_and_session_index() {
+        let (db, _dir) = open_temp_consul_db();
+        let key = "lock/key";
+        db.put_cf(
+            cf_kv(&db),
+            key.as_bytes(),
+            stored_json(Some("session-1"), 3, 10).as_bytes(),
+        )
+        .expect("seed KV");
+        db.put_cf(cf_sessions(&db), b"kidx:session-1:lock/key", b"")
+            .expect("seed session index");
+
+        let response = apply_kv_cas_delete(&db, key, 10);
+
+        assert!(response.success);
+        assert!(
+            db.get_cf(cf_kv(&db), key.as_bytes())
+                .expect("read KV")
+                .is_none()
+        );
+        assert!(
+            db.get_cf(cf_sessions(&db), b"kidx:session-1:lock/key")
+                .expect("read session index")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_kv_cas_delete_zero_index_on_missing_key_is_success_noop() {
+        let (db, _dir) = open_temp_consul_db();
+
+        let response = apply_kv_cas_delete(&db, "missing/key", 0);
+
+        assert!(response.success);
+    }
+
+    #[test]
+    fn apply_kv_cas_delete_fails_closed_on_corrupt_committed_state() {
+        let (db, _dir) = open_temp_consul_db();
+        let key = "lock/key";
+        db.put_cf(cf_kv(&db), key.as_bytes(), b"not-json")
+            .expect("seed corrupt KV");
+
+        let response = apply_kv_cas_delete(&db, key, 0);
+
+        assert!(!response.success);
+        let bytes = db
+            .get_cf(cf_kv(&db), key.as_bytes())
+            .expect("read committed KV")
+            .expect("KV exists");
+        assert_eq!(bytes, b"not-json");
+    }
+
+    fn stored_session_json(behavior: &str) -> String {
+        json!({
+            "session": {
+                "ID": "session-1",
+                "Behavior": behavior,
+            },
+            "created_at_unix": 1u64,
+            "ttl_secs": 0u64,
+            "last_renewed_unix": 1u64,
+        })
+        .to_string()
+    }
+
+    fn seed_locked_session(db: &DB, behavior: &str) {
+        db.put_cf(
+            cf_sessions(db),
+            b"session-1",
+            stored_session_json(behavior).as_bytes(),
+        )
+        .expect("seed session");
+        db.put_cf(
+            cf_kv(db),
+            b"lock/key",
+            stored_json(Some("session-1"), 3, 10).as_bytes(),
+        )
+        .expect("seed held KV");
+        db.put_cf(cf_sessions(db), b"kidx:session-1:lock/key", b"")
+            .expect("seed session index");
+    }
+
+    #[test]
+    fn apply_session_destroy_delete_removes_locked_key_and_index() {
+        let (db, _dir) = open_temp_consul_db();
+        seed_locked_session(&db, "delete");
+
+        let response = apply_session_destroy(&db, "session-1", 42);
+
+        assert!(response.success);
+        assert!(
+            db.get_cf(cf_kv(&db), b"lock/key")
+                .expect("read KV")
+                .is_none()
+        );
+        assert!(
+            db.get_cf(cf_sessions(&db), b"kidx:session-1:lock/key")
+                .expect("read session index")
+                .is_none()
+        );
+        assert!(
+            db.get_cf(cf_sessions(&db), b"session-1")
+                .expect("read session")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_session_destroy_release_keeps_key_and_clears_holder() {
+        let (db, _dir) = open_temp_consul_db();
+        seed_locked_session(&db, "release");
+
+        let response = apply_session_destroy(&db, "session-1", 42);
+
+        assert!(response.success);
+        let stored = committed_kv(&db, "lock/key");
+        assert!(stored["pair"].get("Session").is_none());
+        assert_eq!(stored["pair"]["ModifyIndex"], 42);
+        assert_eq!(stored["pair"]["CreateIndex"], 10);
+        assert!(
+            db.get_cf(cf_sessions(&db), b"kidx:session-1:lock/key")
+                .expect("read session index")
+                .is_none()
+        );
+        assert!(
+            db.get_cf(cf_sessions(&db), b"session-1")
+                .expect("read session")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_session_destroy_rejects_unknown_behavior() {
+        let (db, _dir) = open_temp_consul_db();
+        seed_locked_session(&db, "bogus");
+
+        let response = apply_session_destroy(&db, "session-1", 42);
+
+        assert!(!response.success);
+        assert!(
+            db.get_cf(cf_sessions(&db), b"session-1")
+                .expect("read session")
+                .is_some()
+        );
+        committed_kv(&db, "lock/key");
+    }
+
+    #[test]
+    fn apply_session_destroy_fails_closed_on_corrupt_session() {
+        let (db, _dir) = open_temp_consul_db();
+        seed_locked_session(&db, "delete");
+        db.put_cf(cf_sessions(&db), b"session-1", b"not-json")
+            .expect("seed corrupt session");
+
+        let response = apply_session_destroy(&db, "session-1", 42);
+
+        assert!(!response.success);
+        let bytes = db
+            .get_cf(cf_sessions(&db), b"session-1")
+            .expect("read session")
+            .expect("session exists");
+        assert_eq!(bytes, b"not-json");
+        committed_kv(&db, "lock/key");
+    }
+
+    #[test]
+    fn apply_session_destroy_advances_kvs_watch_index() {
+        let (db, _dir) = open_temp_consul_db();
+        seed_locked_session(&db, "delete");
+        let table_index = ConsulTableIndex::new();
+
+        let response = apply_consul_request(
+            &db,
+            &table_index,
+            ConsulRaftRequest::SessionDestroy {
+                session_id: "session-1".to_string(),
+            },
+            42,
+        );
+
+        assert!(response.success);
+        assert_eq!(table_index.current_index(ConsulTable::Sessions), 42);
+        assert_eq!(table_index.current_index(ConsulTable::KVS), 42);
+    }
+
+    #[test]
+    fn apply_session_destroy_does_not_touch_key_reacquired_by_another_session() {
+        let (db, _dir) = open_temp_consul_db();
+        seed_locked_session(&db, "delete");
+        db.put_cf(
+            cf_kv(&db),
+            b"lock/key",
+            stored_json(Some("session-2"), 4, 10).as_bytes(),
+        )
+        .expect("reacquire KV for another session");
+
+        let response = apply_session_destroy(&db, "session-1", 42);
+
+        assert!(response.success);
+        let stored = committed_kv(&db, "lock/key");
+        assert_eq!(stored["pair"]["Session"], "session-2");
+        assert_eq!(stored["pair"]["LockIndex"], 4);
+        assert!(
+            db.get_cf(cf_sessions(&db), b"kidx:session-1:lock/key")
+                .expect("read session index")
+                .is_none()
+        );
     }
 }
