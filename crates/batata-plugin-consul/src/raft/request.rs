@@ -242,6 +242,14 @@ pub enum ConsulRaftRequest {
         config_json: String,
     },
 
+    /// Set the CA private key used to sign leaf certificates. Stored under
+    /// the reserved `__ca_key__` key in CF_CONSUL_CA_ROOTS so followers can
+    /// refresh their signing material after the apply.
+    CAKeySet {
+        /// PEM-encoded CA private key.
+        key_pem: String,
+    },
+
     /// Create or update an intention
     IntentionUpsert {
         /// The `item` field.
@@ -408,6 +416,7 @@ impl ConsulRaftRequest {
             // ConnectCA
             Self::CARootSet { .. } => "CARootSet",
             Self::CAConfigUpdate { .. } => "CAConfigUpdate",
+            Self::CAKeySet { .. } => "CAKeySet",
             Self::IntentionUpsert { .. } => "IntentionUpsert",
             Self::IntentionDelete { .. } => "IntentionDelete",
             Self::IntentionUpsertExact { .. } => "IntentionUpsertExact",
@@ -481,6 +490,16 @@ mod tests {
         let serialized = serde_json::to_vec(&req).unwrap();
         let deserialized: ConsulRaftRequest = serde_json::from_slice(&serialized).unwrap();
         assert_eq!(deserialized.op_type(), "ACLBindingRuleSet");
+    }
+
+    #[test]
+    fn test_ca_key_set_raft_request_roundtrip() {
+        let req = ConsulRaftRequest::CAKeySet {
+            key_pem: "-----BEGIN PRIVATE KEY-----\n...\n".into(),
+        };
+        let serialized = serde_json::to_vec(&req).unwrap();
+        let deserialized: ConsulRaftRequest = serde_json::from_slice(&serialized).unwrap();
+        assert_eq!(deserialized.op_type(), "CAKeySet");
     }
 
     #[test]

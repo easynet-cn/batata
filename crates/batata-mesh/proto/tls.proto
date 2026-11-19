@@ -1,0 +1,131 @@
+// Transport Socket / Secret Discovery Service (SDS) Protocol Definitions
+// Minimal, wire-compatible subset of Envoy's transport socket TLS API v3.
+//
+// This is NOT a vendored copy of the upstream Envoy protos. Only the messages
+// and fields emitted by `batata-mesh/src/xds/encode.rs` are declared here, and
+// every field number is verified against upstream envoyproxy/envoy v1.38:
+//   api/envoy/extensions/transport_sockets/tls/v3/secret.proto
+//   api/envoy/extensions/transport_sockets/tls/v3/common.proto
+//   api/envoy/extensions/transport_sockets/tls/v3/downstream_tls_context.proto
+//   api/envoy/extensions/transport_sockets/tls/v3/upstream_tls_context.proto
+//   api/envoy/config/core/v3/base.proto          (DataSource, TransportSocket)
+//   api/envoy/config/core/v3/config_source.proto (ConfigSource, ApiVersion)
+//   api/envoy/type/matcher/v3/string.proto       (StringMatcher)
+// Protobuf `Any.value` is decoded by the receiver's own descriptor, so field
+// numbers (not message names) determine whether a real Envoy accepts the
+// bytes. Fields that cannot be represented faithfully are omitted rather than
+// guessed.
+
+syntax = "proto3";
+
+package envoy.extensions.transport_sockets.tls.v3;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/wrappers.proto";
+
+// Subset of envoy.config.core.v3.DataSource.
+message DataSource {
+  oneof specifier {
+    string filename = 1;
+    bytes inline_bytes = 2;
+    string inline_string = 3;
+  }
+}
+
+// Subset of envoy.config.core.v3.AggregatedConfigSource.
+message AggregatedConfigSource {}
+
+// Matches envoy.config.core.v3.ApiVersion.
+enum ApiVersion {
+  AUTO = 0;
+  V2 = 1;
+  V3 = 2;
+}
+
+// Subset of envoy.config.core.v3.ConfigSource.
+message ConfigSource {
+  oneof config_source_specifier {
+    AggregatedConfigSource ads = 3;
+  }
+  ApiVersion resource_api_version = 6;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.SdsSecretConfig.
+message SdsSecretConfig {
+  string name = 1;
+  ConfigSource sds_config = 2;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.TlsCertificate.
+message TlsCertificate {
+  DataSource certificate_chain = 1;
+  DataSource private_key = 2;
+}
+
+// Subset of envoy.type.matcher.v3.StringMatcher.
+message StringMatcher {
+  oneof match_pattern {
+    string exact = 1;
+  }
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.SubjectAltNameMatcher.SanType.
+// The zero value is required by proto3; only URI is emitted by this control
+// plane. Upstream v1.38 numbers are URI = 3 and IP_ADDRESS = 4: using 4 here
+// would make Envoy validate an IP-address SAN instead of a SPIFFE URI SAN.
+enum SanType {
+  SAN_TYPE_UNSPECIFIED = 0;
+  EMAIL = 1;
+  DNS = 2;
+  URI = 3;
+  IP_ADDRESS = 4;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.SubjectAltNameMatcher.
+message SubjectAltNameMatcher {
+  SanType san_type = 1;
+  StringMatcher matcher = 2;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.CertificateValidationContext.
+message CertificateValidationContext {
+  DataSource trusted_ca = 1;
+  repeated SubjectAltNameMatcher match_typed_subject_alt_names = 15;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.CommonTlsContext.
+message CommonTlsContext {
+  repeated TlsCertificate tls_certificates = 2;
+  CertificateValidationContext validation_context = 3;
+  repeated string alpn_protocols = 4;
+  repeated SdsSecretConfig tls_certificate_sds_secret_configs = 6;
+  SdsSecretConfig validation_context_sds_secret_config = 7;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext.
+message DownstreamTlsContext {
+  CommonTlsContext common_tls_context = 1;
+  google.protobuf.BoolValue require_client_certificate = 2;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext.
+message UpstreamTlsContext {
+  CommonTlsContext common_tls_context = 1;
+  string sni = 2;
+}
+
+// Subset of envoy.config.core.v3.TransportSocket. Kept local so the TLS
+// package remains self-contained (only google well-known imports).
+message TransportSocket {
+  string name = 1;
+  google.protobuf.Any typed_config = 3;
+}
+
+// Subset of envoy.extensions.transport_sockets.tls.v3.Secret.
+message Secret {
+  string name = 1;
+  oneof type {
+    TlsCertificate tls_certificate = 2;
+    CertificateValidationContext validation_context = 4;
+  }
+}

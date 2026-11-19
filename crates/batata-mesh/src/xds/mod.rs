@@ -38,6 +38,14 @@ pub mod type_urls {
     /// HTTP RBAC filter (`HttpConnectionManager.HttpFilter.typed_config`) for L7.
     pub const HTTP_RBAC_TYPE: &str =
         "type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC";
+    /// Envoy transport socket extension name used for TLS.
+    pub const TLS_TRANSPORT_SOCKET_NAME: &str = "envoy.transport_sockets.tls";
+    /// Downstream TLS context (`TransportSocket.typed_config`).
+    pub const DOWNSTREAM_TLS_CONTEXT_TYPE: &str =
+        "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext";
+    /// Upstream TLS context (`TransportSocket.typed_config`).
+    pub const UPSTREAM_TLS_CONTEXT_TYPE: &str =
+        "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext";
 }
 
 /// Resource type enumeration

@@ -19,7 +19,7 @@ use prost::Message;
 use crate::xds::ResourceType;
 use crate::xds::generated::{
     cluster as cds, endpoint as eds, http_connection_manager as hcm, listener as lds, route as rds,
-    tcp_proxy as tcp,
+    tcp_proxy as tcp, tls,
 };
 use crate::xds::type_urls;
 use crate::xds::types::{
@@ -27,7 +27,8 @@ use crate::xds::types::{
     FilterChain, FilterChainMatch, HeaderMatchType, HeaderMatcher, HealthStatus, HttpCodecType,
     LbPolicy, Listener, ListenerAddress, ListenerProtocol, Locality, LocalityEndpoints,
     NetworkFilter, NetworkFilterType, PathMatch, Route, RouteAction, RouteConfiguration,
-    RouteDestination, RouteMatch, VirtualHost, WeightedCluster,
+    RouteDestination, RouteMatch, SdsSecret, SdsSecretKind,
+    TransportSocket as NativeTransportSocket, TransportSocketConfig, VirtualHost, WeightedCluster,
 };
 
 /// Envoy network filter name for the HTTP connection manager.
@@ -40,7 +41,7 @@ pub const ROUTER_FILTER_NAME: &str = "envoy.filters.http.router";
 /// Encode a resource into the bytes stored in `google.protobuf.Any.value`.
 ///
 /// Returns `None` when a resource cannot be represented as a valid Envoy
-/// protobuf (SDS/Runtime are still unsupported; a listener with no encodable
+/// protobuf (Runtime is still unsupported; a listener with no encodable
 /// filter is also skipped). Callers must skip those instead of emitting an
 /// invalid `Any` payload, which would make Envoy NACK the whole response.
 pub fn encode_resource(resource_type: ResourceType, native: NativeResource<'_>) -> Option<Vec<u8>> {
@@ -49,6 +50,7 @@ pub fn encode_resource(resource_type: ResourceType, native: NativeResource<'_>) 
         (ResourceType::Endpoint, NativeResource::Endpoints(c)) => Some(encode_endpoints(c)),
         (ResourceType::Listener, NativeResource::Listener(l)) => encode_listener(l),
         (ResourceType::Route, NativeResource::Route(r)) => Some(encode_route(r)),
+        (ResourceType::Secret, NativeResource::Secret(s)) => Some(encode_secret(s)),
         _ => None,
     }
 }
@@ -64,6 +66,8 @@ pub enum NativeResource<'a> {
     Listener(&'a Listener),
     /// An RDS route configuration.
     Route(&'a RouteConfiguration),
+    /// An SDS secret.
+    Secret(&'a SdsSecret),
 }
 
 /// Encode a native [`Cluster`] as `envoy.config.cluster.v3.Cluster`.
@@ -104,6 +108,7 @@ pub fn encode_cluster(c: &Cluster) -> Vec<u8> {
         eds_cluster_config,
         connect_timeout: Some(::prost_types::Duration { seconds, nanos }),
         lb_policy: lb_policy as i32,
+        transport_socket: c.transport_socket.as_ref().map(encode_cds_transport_socket),
         ..Default::default()
     };
 
@@ -116,6 +121,165 @@ pub fn encode_cluster(c: &Cluster) -> Vec<u8> {
 /// real Envoy proxy.
 pub fn decode_cluster(bytes: &[u8]) -> Result<cds::Cluster, prost::DecodeError> {
     cds::Cluster::decode(bytes)
+}
+
+/// Encode a native [`SdsSecret`] as an Envoy TLS `Secret` resource.
+pub fn encode_secret(secret: &SdsSecret) -> Vec<u8> {
+    let kind = match &secret.kind {
+        SdsSecretKind::TlsCertificate {
+            certificate_chain,
+            private_key,
+        } => tls::secret::Type::TlsCertificate(tls::TlsCertificate {
+            certificate_chain: Some(inline_string(certificate_chain)),
+            private_key: Some(inline_string(private_key)),
+        }),
+        SdsSecretKind::ValidationContext { trusted_ca } => {
+            tls::secret::Type::ValidationContext(tls::CertificateValidationContext {
+                trusted_ca: Some(inline_string(trusted_ca)),
+                ..Default::default()
+            })
+        }
+    };
+    tls::Secret {
+        name: secret.name.clone(),
+        r#type: Some(kind),
+    }
+    .encode_to_vec()
+}
+
+/// Decode an `envoy.extensions.transport_sockets.tls.v3.Secret` from `Any.value` bytes.
+pub fn decode_secret(bytes: &[u8]) -> Result<tls::Secret, prost::DecodeError> {
+    tls::Secret::decode(bytes)
+}
+
+fn inline_string(value: &str) -> tls::DataSource {
+    tls::DataSource {
+        specifier: Some(tls::data_source::Specifier::InlineString(value.to_string())),
+    }
+}
+
+fn ads_config_source() -> tls::ConfigSource {
+    tls::ConfigSource {
+        config_source_specifier: Some(tls::config_source::ConfigSourceSpecifier::Ads(
+            tls::AggregatedConfigSource {},
+        )),
+        resource_api_version: tls::ApiVersion::V3 as i32,
+    }
+}
+
+/// Encode a `DownstreamTlsContext` typed_config for a listener transport socket.
+pub fn encode_downstream_tls_context(
+    tls_certificate_secret_name: &str,
+    validation_context_secret_name: &str,
+    require_client_certificate: bool,
+    alpn_protocols: &[String],
+) -> Vec<u8> {
+    tls::DownstreamTlsContext {
+        common_tls_context: Some(tls::CommonTlsContext {
+            tls_certificates: Vec::new(),
+            validation_context: None,
+            alpn_protocols: alpn_protocols.to_vec(),
+            tls_certificate_sds_secret_configs: vec![tls::SdsSecretConfig {
+                name: tls_certificate_secret_name.to_string(),
+                sds_config: Some(ads_config_source()),
+            }],
+            validation_context_sds_secret_config: Some(tls::SdsSecretConfig {
+                name: validation_context_secret_name.to_string(),
+                sds_config: Some(ads_config_source()),
+            }),
+        }),
+        require_client_certificate: Some(require_client_certificate),
+    }
+    .encode_to_vec()
+}
+
+/// Encode an `UpstreamTlsContext` typed_config for a cluster transport socket.
+pub fn encode_upstream_tls_context(
+    certificate_chain: &str,
+    private_key: &str,
+    trusted_ca: &str,
+    san_uri: &str,
+    sni: &str,
+) -> Vec<u8> {
+    let mut validation_context = tls::CertificateValidationContext {
+        trusted_ca: Some(inline_string(trusted_ca)),
+        ..Default::default()
+    };
+    // "Skip rather than guess": no SAN matcher is emitted for an empty URI.
+    if !san_uri.is_empty() {
+        validation_context
+            .match_typed_subject_alt_names
+            .push(tls::SubjectAltNameMatcher {
+                san_type: tls::SanType::Uri as i32,
+                matcher: Some(tls::StringMatcher {
+                    match_pattern: Some(tls::string_matcher::MatchPattern::Exact(
+                        san_uri.to_string(),
+                    )),
+                }),
+            });
+    }
+    tls::UpstreamTlsContext {
+        common_tls_context: Some(tls::CommonTlsContext {
+            tls_certificates: vec![tls::TlsCertificate {
+                certificate_chain: Some(inline_string(certificate_chain)),
+                private_key: Some(inline_string(private_key)),
+            }],
+            validation_context: Some(validation_context),
+            alpn_protocols: Vec::new(),
+            tls_certificate_sds_secret_configs: Vec::new(),
+            validation_context_sds_secret_config: None,
+        }),
+        sni: sni.to_string(),
+    }
+    .encode_to_vec()
+}
+
+/// Build the `Any` carried by a cluster / filter chain transport socket.
+fn transport_socket_typed_config(socket: &NativeTransportSocket) -> ::prost_types::Any {
+    let (type_url, value) = match &socket.config {
+        TransportSocketConfig::DownstreamSds {
+            tls_certificate_secret_name,
+            validation_context_secret_name,
+            require_client_certificate,
+            alpn_protocols,
+        } => (
+            type_urls::DOWNSTREAM_TLS_CONTEXT_TYPE,
+            encode_downstream_tls_context(
+                tls_certificate_secret_name,
+                validation_context_secret_name,
+                *require_client_certificate,
+                alpn_protocols,
+            ),
+        ),
+        TransportSocketConfig::UpstreamInline {
+            certificate_chain,
+            private_key,
+            trusted_ca,
+            san_uri,
+            sni,
+        } => (
+            type_urls::UPSTREAM_TLS_CONTEXT_TYPE,
+            encode_upstream_tls_context(certificate_chain, private_key, trusted_ca, san_uri, sni),
+        ),
+    };
+    ::prost_types::Any {
+        type_url: type_url.to_string(),
+        value,
+    }
+}
+
+fn encode_cds_transport_socket(socket: &NativeTransportSocket) -> cds::TransportSocket {
+    cds::TransportSocket {
+        name: socket.name.clone(),
+        typed_config: Some(transport_socket_typed_config(socket)),
+    }
+}
+
+fn encode_lds_transport_socket(socket: &NativeTransportSocket) -> lds::TransportSocket {
+    lds::TransportSocket {
+        name: socket.name.clone(),
+        typed_config: Some(transport_socket_typed_config(socket)),
+    }
 }
 
 /// Encode a native [`ClusterLoadAssignment`] as
@@ -265,6 +429,10 @@ fn encode_filter_chain(chain: &FilterChain) -> Option<lds::FilterChain> {
             .as_ref()
             .map(encode_filter_chain_match),
         filters,
+        transport_socket: chain
+            .transport_socket
+            .as_ref()
+            .map(encode_lds_transport_socket),
     })
 }
 
@@ -816,9 +984,13 @@ mod tests {
         let decoded = decode_route(&encode_route(&config)).unwrap();
         assert!(decoded.virtual_hosts[0].routes.is_empty());
 
-        // SDS / Runtime remain unsupported.
+        // A mismatched native variant must not be encoded as an SDS resource.
         assert!(
             encode_resource(ResourceType::Secret, NativeResource::Listener(&listener)).is_none()
+        );
+        // Runtime resources remain unsupported.
+        assert!(
+            encode_resource(ResourceType::Runtime, NativeResource::Listener(&listener)).is_none()
         );
     }
 
@@ -829,5 +1001,190 @@ mod tests {
         let cluster = Cluster::new_eds("payments");
         let json = serde_json::to_vec(&cluster).unwrap();
         assert!(cds::Cluster::decode(json.as_slice()).is_err());
+    }
+
+    #[test]
+    fn test_secret_leaf_and_validation_roundtrip_with_exact_type_url() {
+        use prost::Message;
+
+        let leaf = SdsSecret::tls_certificate("server-cert", "CERT-PEM", "KEY-PEM");
+        let ca = SdsSecret::validation_context("root-ca", "CA-PEM");
+
+        for secret in [&leaf, &ca] {
+            let bytes = encode_resource(ResourceType::Secret, NativeResource::Secret(secret))
+                .expect("SDS must be encodable");
+            let decoded = decode_secret(&bytes).expect("must decode as tls.Secret");
+            assert_eq!(decoded.name, secret.name);
+            assert!(decoded.r#type.is_some());
+
+            // The payload must survive a google.protobuf.Any round trip with
+            // the exact Envoy type URL (no short or legacy alias).
+            let any = ::prost_types::Any {
+                type_url: ResourceType::Secret.type_url().to_string(),
+                value: bytes,
+            };
+            let any = ::prost_types::Any::decode(any.encode_to_vec().as_slice()).unwrap();
+            assert_eq!(
+                any.type_url,
+                "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret"
+            );
+            assert!(decode_secret(&any.value).is_ok());
+        }
+
+        match decode_secret(&encode_secret(&leaf))
+            .unwrap()
+            .r#type
+            .unwrap()
+        {
+            tls::secret::Type::TlsCertificate(cert) => {
+                assert_eq!(
+                    cert.certificate_chain.unwrap().specifier,
+                    Some(tls::data_source::Specifier::InlineString(
+                        "CERT-PEM".to_string()
+                    ))
+                );
+                assert_eq!(
+                    cert.private_key.unwrap().specifier,
+                    Some(tls::data_source::Specifier::InlineString(
+                        "KEY-PEM".to_string()
+                    ))
+                );
+            }
+            _ => panic!("expected TLS certificate secret"),
+        }
+        match decode_secret(&encode_secret(&ca)).unwrap().r#type.unwrap() {
+            tls::secret::Type::ValidationContext(ctx) => {
+                assert_eq!(
+                    ctx.trusted_ca.unwrap().specifier,
+                    Some(tls::data_source::Specifier::InlineString(
+                        "CA-PEM".to_string()
+                    ))
+                );
+            }
+            _ => panic!("expected validation context secret"),
+        }
+    }
+
+    #[test]
+    fn test_listener_filter_chain_carries_downstream_sds_transport_socket() {
+        use prost::Message;
+
+        let mut socket = NativeTransportSocket::downstream_sds("server-cert", "root-ca");
+        if let TransportSocketConfig::DownstreamSds {
+            require_client_certificate,
+            alpn_protocols,
+            ..
+        } = &mut socket.config
+        {
+            *require_client_certificate = true;
+            alpn_protocols.push("h2".to_string());
+        }
+        let listener = Listener::new("tls-listener", ListenerAddress::tcp("0.0.0.0", 8443))
+            .with_filter_chain(
+                FilterChain::new("tls")
+                    .with_filter(NetworkFilter::tcp_proxy("payments"))
+                    .with_transport_socket(socket),
+            );
+
+        let bytes = encode_listener(&listener).expect("listener must encode");
+        let decoded = decode_listener(&bytes).unwrap();
+        // Decoding into FilterChain.transport_socket proves the field-6 key.
+        let transport = decoded.filter_chains[0]
+            .transport_socket
+            .as_ref()
+            .expect("FilterChain.transport_socket (field 6)");
+        assert_eq!(transport.name, "envoy.transport_sockets.tls");
+        let any = transport.typed_config.as_ref().expect("typed_config");
+        assert_eq!(any.type_url, type_urls::DOWNSTREAM_TLS_CONTEXT_TYPE);
+        assert_eq!(
+            any.type_url,
+            "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext"
+        );
+
+        let ctx = tls::DownstreamTlsContext::decode(any.value.as_slice()).unwrap();
+        assert_eq!(ctx.require_client_certificate, Some(true));
+        let common = ctx.common_tls_context.unwrap();
+        assert_eq!(common.alpn_protocols, vec!["h2".to_string()]);
+        assert_eq!(
+            common.tls_certificate_sds_secret_configs[0].name,
+            "server-cert"
+        );
+        assert_eq!(
+            common.validation_context_sds_secret_config.unwrap().name,
+            "root-ca"
+        );
+        let source = common.tls_certificate_sds_secret_configs[0]
+            .sds_config
+            .as_ref()
+            .unwrap();
+        assert!(matches!(
+            source.config_source_specifier,
+            Some(tls::config_source::ConfigSourceSpecifier::Ads(_))
+        ));
+        assert_eq!(source.resource_api_version, tls::ApiVersion::V3 as i32);
+    }
+
+    #[test]
+    fn test_cluster_carries_upstream_inline_transport_socket() {
+        use prost::Message;
+
+        let cluster = Cluster::new_static("payments").with_transport_socket(
+            NativeTransportSocket::upstream_inline(
+                "CERT",
+                "KEY",
+                "CA",
+                "spiffe://cluster.local/ns/default/sa/app",
+                "payments.default.svc",
+            ),
+        );
+        let bytes = encode_cluster(&cluster);
+        let decoded = decode_cluster(&bytes).unwrap();
+        // Decoding into Cluster.transport_socket proves the field-24 key.
+        let transport = decoded
+            .transport_socket
+            .expect("Cluster.transport_socket (field 24)");
+        assert_eq!(transport.name, "envoy.transport_sockets.tls");
+        let any = transport.typed_config.expect("typed_config");
+        assert_eq!(any.type_url, type_urls::UPSTREAM_TLS_CONTEXT_TYPE);
+        assert_eq!(
+            any.type_url,
+            "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext"
+        );
+
+        let ctx = tls::UpstreamTlsContext::decode(any.value.as_slice()).unwrap();
+        assert_eq!(ctx.sni, "payments.default.svc");
+        let common = ctx.common_tls_context.unwrap();
+        assert_eq!(common.tls_certificates.len(), 1);
+        assert_eq!(
+            common.tls_certificates[0]
+                .certificate_chain
+                .as_ref()
+                .unwrap()
+                .specifier,
+            Some(tls::data_source::Specifier::InlineString(
+                "CERT".to_string()
+            ))
+        );
+        let validation = common.validation_context.unwrap();
+        assert_eq!(validation.match_typed_subject_alt_names.len(), 1);
+        let matcher = &validation.match_typed_subject_alt_names[0];
+        assert_eq!(matcher.san_type, tls::SanType::Uri as i32);
+        let tls::string_matcher::MatchPattern::Exact(uri) = matcher
+            .matcher
+            .as_ref()
+            .unwrap()
+            .match_pattern
+            .as_ref()
+            .unwrap();
+        assert_eq!(uri, "spiffe://cluster.local/ns/default/sa/app");
+    }
+
+    #[test]
+    fn test_san_type_uri_wire_value_matches_envoy_v138() {
+        // Envoy v1.38 SubjectAltNameMatcher.SanType: URI = 3, IP_ADDRESS = 4.
+        // This is an enum number on the wire, so a local rename cannot hide a
+        // mismatch: 4 would silently validate the wrong SAN class in Envoy.
+        assert_eq!(tls::SanType::Uri as i32, 3);
+        assert_eq!(tls::SanType::IpAddress as i32, 4);
     }
 }

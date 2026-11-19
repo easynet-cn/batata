@@ -55,3 +55,12 @@ pub mod tcp_proxy {
 pub mod rbac {
     tonic::include_proto!("envoy.config.rbac.v3");
 }
+
+/// Transport socket TLS configs and SDS secrets
+/// (`envoy.extensions.transport_sockets.tls.v3`). The messages are a
+/// self-contained, wire-compatible subset; the generated module is used both
+/// for `Secret` resources and for the typed_config carried by transport
+/// sockets.
+pub mod tls {
+    tonic::include_proto!("envoy.extensions.transport_sockets.tls.v3");
+}

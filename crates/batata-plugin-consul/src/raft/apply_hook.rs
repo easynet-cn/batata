@@ -48,6 +48,12 @@ pub trait ConsulApplyHook: Send + Sync {
     /// specific entity changed — blunt invalidation is cheap, and
     /// tracking every variant would double the trait surface.
     fn on_acl_change(&self) {}
+
+    /// Any Connect CA mutation (root set, config update, key set) or
+    /// intention change was committed. Implementations should refresh their
+    /// in-memory CA material from RocksDB so follower-side leaf signing and
+    /// SDS state reflect the committed change within the apply latency.
+    fn on_ca_change(&self) {}
 }
 
 /// Shared slot holding the optional hook. Registered once at plugin

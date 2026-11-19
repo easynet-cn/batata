@@ -26,6 +26,8 @@ pub const CF_CONSUL_CONFIG_ENTRIES: &str = "consul_config_entries";
 pub const CF_CONSUL_CA_ROOTS: &str = "consul_ca_roots";
 /// The `CF_CONSUL_INTENTIONS` constant.
 pub const CF_CONSUL_INTENTIONS: &str = "consul_intentions";
+/// RocksDB key (in `CF_CONSUL_CA_ROOTS`) holding the active CA private key PEM.
+pub(crate) const ROCKS_KEY_CA_KEY: &str = "__ca_key__";
 
 // Network Coordinates
 /// The `CF_CONSUL_COORDINATES` constant.

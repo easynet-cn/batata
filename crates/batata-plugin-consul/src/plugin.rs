@@ -54,12 +54,27 @@ use crate::xds_sync::{ConsulSyncBridge, create_xds_server};
 pub struct NamingStoreApplyHook {
     store: Arc<ConsulNamingStore>,
     registry: Arc<InstanceCheckRegistry>,
+    /// Optional Connect CA service. When present, a committed CA/intention
+    /// change triggers a refresh of follower-side CA material from RocksDB.
+    /// Kept optional so standalone/test callers need not construct a CA.
+    ca: Option<ConsulConnectCAService>,
 }
 
 impl NamingStoreApplyHook {
     /// Build a hook bound to one node's in-memory store and check registry.
     pub fn new(store: Arc<ConsulNamingStore>, registry: Arc<InstanceCheckRegistry>) -> Self {
-        Self { store, registry }
+        Self {
+            store,
+            registry,
+            ca: None,
+        }
+    }
+
+    /// Attach the Connect CA service so CA/intention applies refresh the
+    /// local CA view instead of leaving followers with stale signing state.
+    pub fn with_connect_ca(mut self, ca: ConsulConnectCAService) -> Self {
+        self.ca = Some(ca);
+        self
     }
 }
 
@@ -108,6 +123,15 @@ impl crate::raft::ConsulApplyHook for NamingStoreApplyHook {
         // within the apply latency rather than waiting up to 60 s for
         // the moka TTL to fire.
         crate::acl::invalidate_all_caches();
+    }
+
+    fn on_ca_change(&self) {
+        // CA roots/keys/config and intentions are all committed to RocksDB.
+        // Reload the local CA service so follower leaf signing, roots and SDS
+        // material converge without waiting for a periodic refresh.
+        if let Some(ref ca) = self.ca {
+            ca.refresh_from_rocks();
+        }
     }
 }
 
@@ -305,6 +329,7 @@ impl ConsulPlugin {
         db: Arc<DB>,
         consul_raft: Arc<ConsulRaftWriter>,
         table_index: ConsulTableIndex,
+        connect_ca: ConsulConnectCAService,
     ) -> ConsulPluginInner {
         let index_provider: ConsulIndexProvider = table_index;
         let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone())
@@ -354,7 +379,9 @@ impl ConsulPlugin {
             connect: ConsulConnectService::new()
                 .with_peering_service(peering.clone())
                 .with_config_entry_service(Arc::new(config_entry.clone())),
-            connect_ca: ConsulConnectCAService::with_raft(db.clone(), consul_raft.clone()),
+            // The CA service is constructed by the caller (after Raft setup)
+            // so the same instance can be handed to the apply-back hook.
+            connect_ca,
             coordinate: ConsulCoordinateService::with_raft(
                 db.clone(),
                 consul_raft.clone(),
@@ -456,8 +483,16 @@ impl ConsulPlugin {
             xds_shutdown_txs: std::sync::Mutex::new(Vec::new()),
         };
 
-        let inner =
-            plugin.build_inner_cluster(naming_store, registry, db, consul_raft, table_index);
+        let connect_ca = ConsulConnectCAService::with_raft(db.clone(), consul_raft.clone())
+            .with_datacenter(plugin.dc_config.datacenter.clone());
+        let inner = plugin.build_inner_cluster(
+            naming_store,
+            registry,
+            db,
+            consul_raft,
+            table_index,
+            connect_ca,
+        );
         let _ = plugin.inner.set(inner);
         plugin
     }
@@ -1106,17 +1141,26 @@ impl ConsulPlugin {
         }
         tracing::info!("Consul Raft plugin handler registered with core Raft");
 
+        // Create the CA service before installing the apply-back hook: the
+        // hook holds a clone so it can refresh follower-side CA material from
+        // RocksDB after a committed CA/intention apply.
+        let db = core_raft.db();
+        let consul_writer = Arc::new(ConsulRaftWriter::new(core_raft.clone()));
+        let connect_ca = ConsulConnectCAService::with_raft(db.clone(), consul_writer.clone())
+            .with_datacenter(self.dc_config.datacenter.clone());
+
         // Install the apply-back hook: when the state machine applies a
         // `CatalogRegister`/`CatalogDeregister` log entry, update the
         // in-memory `ConsulNamingStore` on ALL nodes (leader + followers).
         // Without this, followers only see new registrations in RocksDB,
         // and `ConsulNamingStore::get_service_entries` — the actual query
-        // path — returns stale/empty results.
+        // path — returns stale/empty results. CA/intention applies also
+        // refresh the Connect CA service carried by the same hook.
         {
-            let hook: Arc<dyn crate::raft::ConsulApplyHook> = Arc::new(NamingStoreApplyHook::new(
-                consul_naming_store.clone(),
-                consul_registry.clone(),
-            ));
+            let hook: Arc<dyn crate::raft::ConsulApplyHook> = Arc::new(
+                NamingStoreApplyHook::new(consul_naming_store.clone(), consul_registry.clone())
+                    .with_connect_ca(connect_ca.clone()),
+            );
             *apply_hook_slot.write().await = Some(hook);
             tracing::info!("Consul apply-back hook installed (NamingStoreApplyHook)");
         }
@@ -1125,11 +1169,7 @@ impl ConsulPlugin {
         // in-memory naming store from committed catalog data in RocksDB.
         // New applies after this point flow through the hook naturally,
         // so we only need to replay what was already committed.
-        let db = core_raft.db();
         replay_catalog_from_db(&db, &consul_naming_store);
-
-        // Create a writer adapter that routes Consul requests through PluginWrite
-        let consul_writer = Arc::new(ConsulRaftWriter::new(core_raft.clone()));
 
         self.build_inner_cluster(
             consul_naming_store,
@@ -1137,6 +1177,7 @@ impl ConsulPlugin {
             db,
             consul_writer,
             table_index,
+            connect_ca,
         )
     }
 }

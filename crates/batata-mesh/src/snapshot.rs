@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use tracing::{debug, info};
 
 use crate::xds::ResourceType;
-use crate::xds::types::{Cluster, ClusterLoadAssignment, Listener, RouteConfiguration};
+use crate::xds::types::{Cluster, ClusterLoadAssignment, Listener, RouteConfiguration, SdsSecret};
 
 /// Version generator for resource snapshots
 static VERSION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -35,6 +35,8 @@ pub struct ResourceSnapshot {
     pub listeners: HashMap<String, Listener>,
     /// Route resources (RDS)
     pub routes: HashMap<String, RouteConfiguration>,
+    /// Secret resources (SDS)
+    pub secrets: HashMap<String, SdsSecret>,
     /// Creation timestamp
     pub created_at: i64,
 }
@@ -48,6 +50,7 @@ impl ResourceSnapshot {
             endpoints: HashMap::new(),
             listeners: HashMap::new(),
             routes: HashMap::new(),
+            secrets: HashMap::new(),
             created_at: chrono::Utc::now().timestamp_millis(),
         }
     }
@@ -87,6 +90,14 @@ impl ResourceSnapshot {
         snapshot
     }
 
+    /// Add SDS secrets to this snapshot. Other resource types are untouched.
+    pub fn with_secrets(mut self, secrets: Vec<SdsSecret>) -> Self {
+        for secret in secrets {
+            self.add_secret(secret);
+        }
+        self
+    }
+
     /// Get version for a specific resource type
     pub fn version_for(&self, _resource_type: ResourceType) -> &str {
         &self.version
@@ -112,6 +123,11 @@ impl ResourceSnapshot {
         self.routes.get(name)
     }
 
+    /// Get secret by name
+    pub fn get_secret(&self, name: &str) -> Option<&SdsSecret> {
+        self.secrets.get(name)
+    }
+
     /// Get all cluster names
     pub fn cluster_names(&self) -> Vec<String> {
         self.clusters.keys().cloned().collect()
@@ -132,6 +148,11 @@ impl ResourceSnapshot {
         self.routes.keys().cloned().collect()
     }
 
+    /// Get all secret names
+    pub fn secret_names(&self) -> Vec<String> {
+        self.secrets.keys().cloned().collect()
+    }
+
     /// Check if snapshot contains a specific resource
     pub fn contains(&self, resource_type: ResourceType, name: &str) -> bool {
         match resource_type {
@@ -139,6 +160,7 @@ impl ResourceSnapshot {
             ResourceType::Endpoint => self.endpoints.contains_key(name),
             ResourceType::Listener => self.listeners.contains_key(name),
             ResourceType::Route => self.routes.contains_key(name),
+            ResourceType::Secret => self.secrets.contains_key(name),
             _ => false,
         }
     }
@@ -150,6 +172,7 @@ impl ResourceSnapshot {
             ResourceType::Endpoint => self.endpoints.len(),
             ResourceType::Listener => self.listeners.len(),
             ResourceType::Route => self.routes.len(),
+            ResourceType::Secret => self.secrets.len(),
             _ => 0,
         }
     }
@@ -172,6 +195,11 @@ impl ResourceSnapshot {
     /// Add a route configuration to the snapshot
     pub fn add_route(&mut self, route: RouteConfiguration) {
         self.routes.insert(route.name.clone(), route);
+    }
+
+    /// Add a secret to the snapshot
+    pub fn add_secret(&mut self, secret: SdsSecret) {
+        self.secrets.insert(secret.name.clone(), secret);
     }
 }
 
@@ -471,7 +499,7 @@ impl Default for SubscriptionTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xds::types::LbPolicy;
+    use crate::xds::types::{LbPolicy, SdsSecret, SdsSecretKind};
 
     fn create_test_cluster(name: &str) -> Cluster {
         Cluster {
@@ -499,6 +527,36 @@ mod tests {
         assert_eq!(snapshot.endpoints.len(), 2);
         assert!(snapshot.get_cluster("cluster-1").is_some());
         assert!(snapshot.get_endpoints("cluster-1").is_some());
+    }
+
+    #[test]
+    fn test_snapshot_stores_and_counts_secrets() {
+        let leaf = SdsSecret::tls_certificate("server-cert", "CERT", "KEY");
+        let ca = SdsSecret::validation_context("root-ca", "CA");
+
+        let mut snapshot = ResourceSnapshot::with_all_resources(vec![], vec![], vec![], vec![])
+            .with_secrets(vec![leaf, ca]);
+        assert_eq!(snapshot.secrets.len(), 2);
+        assert_eq!(snapshot.resource_count(ResourceType::Secret), 2);
+        assert!(snapshot.contains(ResourceType::Secret, "server-cert"));
+        assert!(snapshot.get_secret("root-ca").is_some());
+        assert!(snapshot.get_secret("missing").is_none());
+        assert_eq!(snapshot.secret_names().len(), 2);
+        assert_eq!(
+            snapshot.get_secret("server-cert").unwrap().kind,
+            SdsSecretKind::TlsCertificate {
+                certificate_chain: "CERT".to_string(),
+                private_key: "KEY".to_string(),
+            }
+        );
+
+        // with_all_resources leaves secrets empty unless explicitly supplied.
+        let empty = ResourceSnapshot::with_all_resources(vec![], vec![], vec![], vec![]);
+        assert!(empty.secrets.is_empty());
+        assert_eq!(empty.resource_count(ResourceType::Secret), 0);
+
+        snapshot.add_secret(SdsSecret::validation_context("new-ca", "CA2"));
+        assert_eq!(snapshot.resource_count(ResourceType::Secret), 3);
     }
 
     #[test]

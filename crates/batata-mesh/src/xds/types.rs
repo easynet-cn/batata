@@ -214,6 +214,8 @@ pub struct Cluster {
     pub circuit_breakers: Option<CircuitBreakerConfig>,
     /// TLS configuration
     pub tls_context: Option<TlsContext>,
+    /// Transport socket (e.g. upstream TLS) for this cluster
+    pub transport_socket: Option<TransportSocket>,
     /// Metadata
     pub metadata: HashMap<String, String>,
 }
@@ -228,6 +230,7 @@ impl Default for Cluster {
             health_checks: Vec::new(),
             circuit_breakers: None,
             tls_context: None,
+            transport_socket: None,
             metadata: HashMap::new(),
         }
     }
@@ -250,6 +253,12 @@ impl Cluster {
             discovery_type: DiscoveryType::Static,
             ..Default::default()
         }
+    }
+
+    /// Attach a transport socket (e.g. upstream TLS) to this cluster.
+    pub fn with_transport_socket(mut self, socket: TransportSocket) -> Self {
+        self.transport_socket = Some(socket);
+        self
     }
 }
 
@@ -478,6 +487,12 @@ impl FilterChain {
         self.filter_chain_match = Some(filter_match);
         self
     }
+
+    /// Attach a transport socket (e.g. downstream TLS) to this filter chain.
+    pub fn with_transport_socket(mut self, socket: TransportSocket) -> Self {
+        self.transport_socket = Some(socket);
+        self
+    }
 }
 
 /// Filter chain match criteria
@@ -618,13 +633,140 @@ pub enum HttpCodecType {
     Http3,
 }
 
-/// Transport socket configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransportSocket {
-    /// Transport socket name
+// =============================================================================
+// Secret Discovery Service (SDS) and transport socket Types
+// =============================================================================
+
+/// A Secret Discovery Service (SDS) resource.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SdsSecret {
+    /// Name used by Envoy to subscribe to this secret over SDS.
     pub name: String,
-    /// TLS context
-    pub tls_context: Option<DownstreamTlsContext>,
+    /// Secret payload kind.
+    pub kind: SdsSecretKind,
+}
+
+impl SdsSecret {
+    /// Build an inline TLS certificate secret.
+    pub fn tls_certificate(
+        name: impl Into<String>,
+        certificate_chain: impl Into<String>,
+        private_key: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            kind: SdsSecretKind::TlsCertificate {
+                certificate_chain: certificate_chain.into(),
+                private_key: private_key.into(),
+            },
+        }
+    }
+
+    /// Build a trusted-CA validation context secret.
+    pub fn validation_context(name: impl Into<String>, trusted_ca: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: SdsSecretKind::ValidationContext {
+                trusted_ca: trusted_ca.into(),
+            },
+        }
+    }
+}
+
+/// Supported SDS secret payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SdsSecretKind {
+    /// An inline PEM certificate chain and private key.
+    TlsCertificate {
+        /// PEM-encoded certificate chain.
+        certificate_chain: String,
+        /// PEM-encoded private key.
+        private_key: String,
+    },
+    /// A trusted CA bundle used to validate the peer certificate.
+    ValidationContext {
+        /// PEM-encoded trusted CA bundle.
+        trusted_ca: String,
+    },
+}
+
+/// Configuration carried by a transport socket's `Any.typed_config`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransportSocketConfig {
+    /// Downstream TLS referencing two SDS secrets, one for the leaf
+    /// certificate and one for the client validation context.
+    DownstreamSds {
+        /// SDS name of the leaf TLS certificate secret.
+        tls_certificate_secret_name: String,
+        /// SDS name of the trusted-CA validation context secret.
+        validation_context_secret_name: String,
+        /// Whether Envoy must request and verify a client certificate.
+        require_client_certificate: bool,
+        /// ALPN protocols offered during the TLS handshake.
+        alpn_protocols: Vec<String>,
+    },
+    /// Upstream TLS with inline certificate material, an optional URI SAN
+    /// matcher and an optional SNI override.
+    UpstreamInline {
+        /// PEM-encoded certificate chain.
+        certificate_chain: String,
+        /// PEM-encoded private key.
+        private_key: String,
+        /// PEM-encoded trusted CA bundle.
+        trusted_ca: String,
+        /// Exact URI SAN to require on the upstream certificate; empty skips it.
+        san_uri: String,
+        /// Server name to send in the TLS SNI extension.
+        sni: String,
+    },
+}
+
+/// A transport socket attached to a listener filter chain or a cluster.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransportSocket {
+    /// Envoy transport socket extension name (`envoy.transport_sockets.tls`).
+    pub name: String,
+    /// Typed TLS configuration carried in the socket's `Any`.
+    pub config: TransportSocketConfig,
+}
+
+impl TransportSocket {
+    /// Build a downstream TLS transport socket backed by SDS secrets.
+    pub fn downstream_sds(
+        tls_certificate_secret_name: impl Into<String>,
+        validation_context_secret_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: crate::xds::type_urls::TLS_TRANSPORT_SOCKET_NAME.to_string(),
+            config: TransportSocketConfig::DownstreamSds {
+                tls_certificate_secret_name: tls_certificate_secret_name.into(),
+                validation_context_secret_name: validation_context_secret_name.into(),
+                require_client_certificate: false,
+                alpn_protocols: Vec::new(),
+            },
+        }
+    }
+
+    /// Build an upstream TLS transport socket with inline certificate material.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upstream_inline(
+        certificate_chain: impl Into<String>,
+        private_key: impl Into<String>,
+        trusted_ca: impl Into<String>,
+        san_uri: impl Into<String>,
+        sni: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: crate::xds::type_urls::TLS_TRANSPORT_SOCKET_NAME.to_string(),
+            config: TransportSocketConfig::UpstreamInline {
+                certificate_chain: certificate_chain.into(),
+                private_key: private_key.into(),
+                trusted_ca: trusted_ca.into(),
+                san_uri: san_uri.into(),
+                sni: sni.into(),
+            },
+        }
+    }
 }
 
 /// Downstream TLS context for listeners

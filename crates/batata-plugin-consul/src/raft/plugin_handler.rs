@@ -22,7 +22,7 @@ use crate::constants::{
     CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CATALOG, CF_CONSUL_CONFIG_ENTRIES,
     CF_CONSUL_COORDINATES, CF_CONSUL_EVENTS, CF_CONSUL_HEALTH_CHECKS, CF_CONSUL_INTENTIONS,
     CF_CONSUL_KV, CF_CONSUL_NAMESPACES, CF_CONSUL_OPERATOR, CF_CONSUL_PARTITIONS,
-    CF_CONSUL_PEERING, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
+    CF_CONSUL_PEERING, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS, ROCKS_KEY_CA_KEY,
 };
 use crate::index_provider::{ConsulTable, ConsulTableIndex};
 
@@ -58,6 +58,10 @@ enum HookDispatch {
     HealthCheckDeregister {
         check_key: String,
     },
+    /// Any Connect CA mutation (root/config/key) or intention change. The
+    /// hook refreshes its CA service from RocksDB — no per-variant data is
+    /// needed because a single refresh picks up every committed CA change.
+    CaChange,
 }
 
 /// Represents `ConsulRaftPluginHandler`.
@@ -180,6 +184,15 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
                     check_key: check_id.clone(),
                 })
             }
+            // Every CA root/config/key write and every intention variant
+            // changes CA state the xDS SDS layer observes, so they all share
+            // one blunt refresh notification.
+            ConsulRaftRequest::CARootSet { .. }
+            | ConsulRaftRequest::CAConfigUpdate { .. }
+            | ConsulRaftRequest::CAKeySet { .. }
+            | ConsulRaftRequest::IntentionUpsert { .. }
+            | ConsulRaftRequest::IntentionDelete { .. }
+            | ConsulRaftRequest::IntentionUpsertExact { .. } => Some(HookDispatch::CaChange),
             _ => None,
         };
 
@@ -208,6 +221,7 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
                 HookDispatch::HealthCheckDeregister { check_key } => {
                     hook.on_health_check_deregister(check_key)
                 }
+                HookDispatch::CaChange => hook.on_ca_change(),
             }
         }
 
@@ -348,6 +362,7 @@ fn apply_consul_request(
             // ConnectCA
             ConsulRaftRequest::CARootSet { .. }
             | ConsulRaftRequest::CAConfigUpdate { .. }
+            | ConsulRaftRequest::CAKeySet { .. }
             | ConsulRaftRequest::IntentionUpsert { .. }
             | ConsulRaftRequest::IntentionDelete { .. }
             | ConsulRaftRequest::IntentionUpsertExact { .. } => ConsulTable::ConnectCA,
@@ -528,6 +543,14 @@ fn apply_consul_request(
             CF_CONSUL_CA_ROOTS,
             "__ca_config__",
             &config_json,
+            log_index,
+        ),
+        // PEM is not JSON, so `apply_generic_put` stores the key verbatim.
+        ConsulRaftRequest::CAKeySet { key_pem } => apply_generic_put(
+            db,
+            CF_CONSUL_CA_ROOTS,
+            ROCKS_KEY_CA_KEY,
+            &key_pem,
             log_index,
         ),
         ConsulRaftRequest::IntentionUpsert { id, intention_json } => {

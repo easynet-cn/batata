@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use tokio::sync::oneshot;
@@ -22,14 +23,16 @@ use batata_mesh::xds::rbac::{
 use batata_mesh::xds::types::{
     Cluster, ClusterLoadAssignment, Endpoint, FilterChain, HeaderMatchType, HeaderMatcher,
     HealthStatus, LbPolicy, Listener, ListenerAddress, Locality, NetworkFilter, PathMatch, Route,
-    RouteAction, RouteConfiguration, RouteDestination, RouteMatch, VirtualHost, WeightedCluster,
+    RouteAction, RouteConfiguration, RouteDestination, RouteMatch, SdsSecret, SdsSecretKind,
+    TransportSocket, TransportSocketConfig, VirtualHost, WeightedCluster,
 };
 
 use crate::connect::{
     CompiledDiscoveryChain, ConsulConnectService, DiscoveryGraphNodeType, DiscoveryRouteMatch,
 };
 use crate::connect_ca::{
-    ConsulConnectCAService, IntentionAction as CaIntentionAction, IntentionPermission,
+    ConnectMaterial, ConsulConnectCAService, IntentionAction as CaIntentionAction,
+    IntentionPermission,
 };
 use crate::model::AgentServiceRegistration;
 use crate::namespace::DEFAULT_NAMESPACE;
@@ -42,6 +45,17 @@ use crate::naming_store::ConsulNamingStore;
 /// A stable synthetic port per service keeps the default LDS deterministic and
 /// answerable. Per-node connect-proxy snapshots use their own bind ports.
 const DEFAULT_LISTENER_BASE_PORT: u16 = 15001;
+
+/// Standard SDS secret names published to every connect-proxy. The names are
+/// fixed (not per-service) so the same `envoy.transport_sockets.tls` config can
+/// be reused by all sidecars; Envoy resolves them through the SDS subscription
+/// backed by this snapshot.
+const SDS_CONNECT_LEAF: &str = "connect-leaf";
+const SDS_CONNECT_ROOT: &str = "connect-root";
+
+/// Name of the Envoy TLS transport socket extension. Used for both the
+/// downstream (SDS) and upstream (inline) socket configs.
+const TLS_TRANSPORT_SOCKET_NAME: &str = "envoy.transport_sockets.tls";
 
 /// Convert batata's Connect intentions into the dependency-free RBAC input
 /// consumed by `batata-mesh`. Only the fields batata actually stores are
@@ -117,6 +131,10 @@ pub struct ConsulSyncBridge {
     /// Last observed Connect intention revision. Intention changes do not
     /// bump the naming-store revision, so RBAC filters need their own key.
     last_intention_revision: std::sync::atomic::AtomicU64,
+    /// Last observed Connect CA revision. CA root/key/config rotations do not
+    /// bump the naming-store or intention revisions, but they change the SDS
+    /// secrets, so snapshots must be rebuilt when this advances.
+    last_ca_revision: AtomicU64,
 }
 
 impl ConsulSyncBridge {
@@ -131,6 +149,7 @@ impl ConsulSyncBridge {
             datacenter: "dc1".to_string(),
             last_revision: std::sync::atomic::AtomicU64::new(0),
             last_intention_revision: std::sync::atomic::AtomicU64::new(0),
+            last_ca_revision: AtomicU64::new(0),
         }
     }
 
@@ -218,7 +237,16 @@ impl ConsulSyncBridge {
         let last_intention = self
             .last_intention_revision
             .load(std::sync::atomic::Ordering::Relaxed);
-        let changed = current != last || current_intention != last_intention;
+        let current_ca = self
+            .connect_ca
+            .as_ref()
+            .map(|ca| ca.ca_revision())
+            .unwrap_or(0);
+        let last_ca = self
+            .last_ca_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let changed =
+            current != last || current_intention != last_intention || current_ca != last_ca;
 
         // Always refresh per-node snapshots for connected proxies, even when the
         // store revision is unchanged: a proxy may connect after the last sync.
@@ -234,8 +262,11 @@ impl ConsulSyncBridge {
             .store(current, std::sync::atomic::Ordering::Relaxed);
         self.last_intention_revision
             .store(current_intention, std::sync::atomic::Ordering::Relaxed);
+        self.last_ca_revision
+            .store(current_ca, std::sync::atomic::Ordering::Relaxed);
         debug!(
             revision = current,
+            ca_revision = current_ca,
             "Published xDS snapshot from Consul naming store"
         );
     }
@@ -267,6 +298,14 @@ impl ConsulSyncBridge {
 
     /// Build a per-proxy xDS snapshot scoped to a single connect-proxy's local
     /// service and upstreams.
+    ///
+    /// When the Connect CA has live material for the destination service the
+    /// snapshot also carries the standard SDS secrets and mTLS transport
+    /// sockets: the public (inbound) listener requires a client certificate,
+    /// and each upstream cluster presents this proxy's leaf certificate while
+    /// pinning the upstream's SPIFFE URI. The local service cluster and all
+    /// app-facing (outbound) listeners stay plaintext so the application-side
+    /// path is unchanged.
     pub fn build_proxy_snapshot(&self, proxy_reg: &AgentServiceRegistration) -> ResourceSnapshot {
         let mut snapshot = ResourceSnapshot::new();
 
@@ -284,12 +323,28 @@ impl ConsulSyncBridge {
             .and_then(|v| v.as_u64())
             .map(|p| p as u16);
 
+        // Live CA material for the service this proxy fronts. The same leaf
+        // identity is reused as the client certificate on upstream clusters.
+        let material = self
+            .connect_ca
+            .as_ref()
+            .and_then(|ca| ca.get_connect_material_sync(&destination));
+
+        if let Some(ref material) = material {
+            add_connect_sds_secrets(&mut snapshot, material);
+        }
+        // Only enable mTLS on the inbound listener when real CA material is
+        // available — an SDS socket referencing missing secrets would stall
+        // the ADS handshake for proxies without a CA.
+        let downstream_socket = material.as_ref().map(|_| downstream_sds_socket());
+
         // ---- CDS + EDS for the local service ----
         if let Some(cluster) = self.build_service_cluster_and_endpoints(&destination, &mut snapshot)
         {
             // ---- Inbound listener: proxy port -> local service cluster ----
+            // The local cluster itself is deliberately left plaintext.
             if let Some(proxy_port) = proxy_reg.port {
-                let inbound = consul_to_inbound_listener(proxy_port, &cluster);
+                let inbound = build_inbound_listener(proxy_port, &cluster, downstream_socket);
                 snapshot.add_listener(inbound);
             }
             let _ = local_port; // reserved for explicit local-address listeners later
@@ -319,25 +374,27 @@ impl ConsulSyncBridge {
                 .build_service_cluster_and_endpoints(dest_name, &mut snapshot)
                 .is_some()
             {
+                // Inline TLS is attached ONLY to upstream clusters. Applying
+                // it to the local service cluster would break the plaintext
+                // app-facing path.
+                if let Some(ref material) = material {
+                    let socket = upstream_inline_socket(
+                        material,
+                        dest_name,
+                        &self.datacenter,
+                        &self.spiffe_trust_domain,
+                    );
+                    if let Some(cluster) = snapshot.clusters.get_mut(dest_name) {
+                        cluster.transport_socket = Some(socket);
+                    }
+                }
+
                 // HTTP services get a discovery-chain-derived route table and
                 // an HCM listener that subscribes to it over RDS; TCP services
-                // keep the original tcp_proxy listener.
-                if let Some(route_config) = self.build_discovery_route_config(dest_name) {
-                    let route_name = route_config.name.clone();
-                    snapshot.add_route(route_config);
-                    let chain = FilterChain::new(format!("http-outbound:{}", dest_name))
-                        .with_filter(NetworkFilter::http_connection_manager(&route_name));
-                    snapshot.add_listener(
-                        Listener::new(
-                            format!("outbound_listener:{}", bind_port),
-                            ListenerAddress::tcp("127.0.0.1", bind_port),
-                        )
-                        .with_filter_chain(chain),
-                    );
-                } else {
-                    let outbound = consul_to_outbound_listener(bind_port, dest_name);
-                    snapshot.add_listener(outbound);
-                }
+                // keep the original tcp_proxy listener. Both outbound
+                // listeners remain plaintext.
+                let route_config = self.build_discovery_route_config(dest_name);
+                add_outbound_listener(&mut snapshot, bind_port, dest_name, route_config);
             }
         }
 
@@ -571,15 +628,115 @@ pub fn consul_to_endpoint(ip: &str, port: i32, healthy: bool) -> Option<Endpoint
     Some(ep)
 }
 
-/// Build an inbound listener for a connect-proxy.
+/// Add the two standard Connect SDS secrets (leaf certificate + validation
+/// context) built from a service's live CA material to a snapshot.
+fn add_connect_sds_secrets(snapshot: &mut ResourceSnapshot, material: &ConnectMaterial) {
+    snapshot.add_secret(SdsSecret {
+        name: SDS_CONNECT_LEAF.to_string(),
+        kind: SdsSecretKind::TlsCertificate {
+            certificate_chain: material.leaf_cert_pem.clone(),
+            private_key: material.private_key_pem.clone(),
+        },
+    });
+    snapshot.add_secret(SdsSecret {
+        name: SDS_CONNECT_ROOT.to_string(),
+        kind: SdsSecretKind::ValidationContext {
+            trusted_ca: material.root_pem.clone(),
+        },
+    });
+}
+
+/// Build the downstream SDS transport socket applied to a connect-proxy's
+/// public (inbound) listener. Envoy resolves `connect-leaf`/`connect-root`
+/// through SDS; requiring a client certificate is what makes the path mTLS.
+fn downstream_sds_socket() -> TransportSocket {
+    TransportSocket {
+        name: TLS_TRANSPORT_SOCKET_NAME.to_string(),
+        config: TransportSocketConfig::DownstreamSds {
+            tls_certificate_secret_name: SDS_CONNECT_LEAF.to_string(),
+            validation_context_secret_name: SDS_CONNECT_ROOT.to_string(),
+            require_client_certificate: true,
+            alpn_protocols: vec!["h2".to_string(), "http/1.1".to_string()],
+        },
+    }
+}
+
+/// Build an inline TLS transport socket for an upstream cluster. The proxy
+/// presents its own leaf/key, validates the upstream against the CA root, and
+/// pins the upstream service's SPIFFE URI as the SAN.
+fn upstream_inline_socket(
+    material: &ConnectMaterial,
+    upstream: &str,
+    datacenter: &str,
+    trust_domain: &str,
+) -> TransportSocket {
+    TransportSocket {
+        name: TLS_TRANSPORT_SOCKET_NAME.to_string(),
+        config: TransportSocketConfig::UpstreamInline {
+            certificate_chain: material.leaf_cert_pem.clone(),
+            private_key: material.private_key_pem.clone(),
+            trusted_ca: material.root_pem.clone(),
+            san_uri: format!(
+                "spiffe://{}/ns/default/dc/{}/svc/{}",
+                trust_domain, datacenter, upstream
+            ),
+            sni: upstream.to_string(),
+        },
+    }
+}
+
+/// Build an inbound listener for a connect-proxy, optionally carrying a
+/// downstream transport socket on its filter chain.
 ///
 /// The listener binds to `0.0.0.0:{proxy_port}` and forwards traffic to the
 /// local service cluster via the `envoy.filters.network.tcp_proxy` filter.
-pub fn consul_to_inbound_listener(proxy_port: u16, local_cluster: &str) -> Listener {
-    let name = format!("inbound_listener:{}", proxy_port);
-    let filter_chain =
+fn build_inbound_listener(
+    proxy_port: u16,
+    local_cluster: &str,
+    transport_socket: Option<TransportSocket>,
+) -> Listener {
+    let mut filter_chain =
         FilterChain::new("inbound").with_filter(NetworkFilter::tcp_proxy(local_cluster));
-    Listener::new(name, ListenerAddress::tcp("0.0.0.0", proxy_port)).with_filter_chain(filter_chain)
+    if let Some(socket) = transport_socket {
+        filter_chain.transport_socket = Some(socket);
+    }
+    Listener::new(
+        format!("inbound_listener:{}", proxy_port),
+        ListenerAddress::tcp("0.0.0.0", proxy_port),
+    )
+    .with_filter_chain(filter_chain)
+}
+
+/// Build an inbound listener for a connect-proxy without mTLS. Kept as the
+/// public entry point for callers/tests that do not have CA material.
+pub fn consul_to_inbound_listener(proxy_port: u16, local_cluster: &str) -> Listener {
+    build_inbound_listener(proxy_port, local_cluster, None)
+}
+
+/// Attach an outbound (app-facing) listener for an upstream, using an HCM/RDS
+/// filter chain for HTTP services and a plain tcp_proxy listener otherwise.
+/// App-facing listeners stay plaintext in both cases.
+fn add_outbound_listener(
+    snapshot: &mut ResourceSnapshot,
+    bind_port: u16,
+    dest_name: &str,
+    route_config: Option<RouteConfiguration>,
+) {
+    let Some(route_config) = route_config else {
+        snapshot.add_listener(consul_to_outbound_listener(bind_port, dest_name));
+        return;
+    };
+    let route_name = route_config.name.clone();
+    snapshot.add_route(route_config);
+    let chain = FilterChain::new(format!("http-outbound:{}", dest_name))
+        .with_filter(NetworkFilter::http_connection_manager(&route_name));
+    snapshot.add_listener(
+        Listener::new(
+            format!("outbound_listener:{}", bind_port),
+            ListenerAddress::tcp("127.0.0.1", bind_port),
+        )
+        .with_filter_chain(chain),
+    );
 }
 
 /// Build an outbound listener for a connect-proxy upstream.
@@ -1138,6 +1295,207 @@ mod tests {
         assert_eq!(snapshot.listeners.len(), 2);
         assert!(snapshot.listeners.contains_key("inbound_listener:20000"));
         assert!(snapshot.listeners.contains_key("outbound_listener:9090"));
+    }
+
+    /// Register "web" (local service), "api" (upstream) and a connect-proxy
+    /// registration for web with one upstream. Shared by the mTLS snapshot
+    /// tests so they exercise the exact same fixture.
+    fn proxy_fixture() -> (Arc<ConsulNamingStore>, AgentServiceRegistration) {
+        let naming_store = Arc::new(ConsulNamingStore::new());
+        for (name, port) in [("web", 8080u16), ("api", 9090u16)] {
+            let id = format!("{}-1", name);
+            let reg = AgentServiceRegistration {
+                name: name.to_string(),
+                id: Some(id.clone()),
+                address: Some("127.0.0.1".to_string()),
+                port: Some(port),
+                ..Default::default()
+            };
+            naming_store
+                .register(
+                    &ConsulNamingStore::build_key(DEFAULT_NAMESPACE, name, &id),
+                    serde_json::to_vec(&reg).unwrap().into(),
+                )
+                .unwrap();
+        }
+        let proxy_reg = AgentServiceRegistration {
+            name: "web-sidecar-proxy".to_string(),
+            id: Some("web-sidecar-proxy-1".to_string()),
+            kind: Some("connect-proxy".to_string()),
+            address: Some("127.0.0.1".to_string()),
+            port: Some(20000),
+            proxy: Some(serde_json::json!({
+                "DestinationServiceName": "web",
+                "LocalServicePort": 8080,
+                "Upstreams": [
+                    { "DestinationName": "api", "LocalBindPort": 9090 }
+                ]
+            })),
+            ..Default::default()
+        };
+        (naming_store, proxy_reg)
+    }
+
+    #[test]
+    fn test_proxy_snapshot_has_connect_sds_secrets() {
+        let (store, proxy) = proxy_fixture();
+        let bridge = ConsulSyncBridge::new(store, create_xds_server()).with_connect_ca(
+            ConsulConnectCAService::new(),
+            "consul",
+            "dc1",
+        );
+        let snapshot = bridge.build_proxy_snapshot(&proxy);
+
+        assert!(snapshot.secrets.contains_key(SDS_CONNECT_LEAF));
+        assert!(snapshot.secrets.contains_key(SDS_CONNECT_ROOT));
+        match &snapshot.secrets[SDS_CONNECT_LEAF].kind {
+            SdsSecretKind::TlsCertificate {
+                certificate_chain,
+                private_key,
+            } => {
+                assert!(!certificate_chain.is_empty());
+                assert!(!private_key.is_empty());
+            }
+            _ => panic!("connect-leaf must be a TLS certificate secret"),
+        }
+        match &snapshot.secrets[SDS_CONNECT_ROOT].kind {
+            SdsSecretKind::ValidationContext { trusted_ca } => {
+                assert!(!trusted_ca.is_empty());
+            }
+            _ => panic!("connect-root must be a validation context secret"),
+        }
+    }
+
+    #[test]
+    fn test_proxy_inbound_listener_has_downstream_sds_socket() {
+        let (store, proxy) = proxy_fixture();
+        let bridge = ConsulSyncBridge::new(store, create_xds_server()).with_connect_ca(
+            ConsulConnectCAService::new(),
+            "consul",
+            "dc1",
+        );
+        let snapshot = bridge.build_proxy_snapshot(&proxy);
+
+        let listener = snapshot.listeners.get("inbound_listener:20000").unwrap();
+        let socket = listener.filter_chains[0]
+            .transport_socket
+            .as_ref()
+            .expect("inbound listener must carry a downstream TLS socket");
+        match &socket.config {
+            TransportSocketConfig::DownstreamSds {
+                tls_certificate_secret_name,
+                validation_context_secret_name,
+                require_client_certificate,
+                alpn_protocols,
+            } => {
+                assert_eq!(tls_certificate_secret_name, SDS_CONNECT_LEAF);
+                assert_eq!(validation_context_secret_name, SDS_CONNECT_ROOT);
+                assert!(*require_client_certificate);
+                assert_eq!(alpn_protocols, &["h2".to_string(), "http/1.1".to_string()]);
+            }
+            _ => panic!("inbound socket must be a downstream SDS config"),
+        }
+    }
+
+    #[test]
+    fn test_proxy_upstream_cluster_has_inline_tls_socket() {
+        let (store, proxy) = proxy_fixture();
+        let bridge = ConsulSyncBridge::new(store, create_xds_server()).with_connect_ca(
+            ConsulConnectCAService::new(),
+            "consul",
+            "dc1",
+        );
+        let snapshot = bridge.build_proxy_snapshot(&proxy);
+
+        let cluster = snapshot.clusters.get("api").unwrap();
+        let socket = cluster
+            .transport_socket
+            .as_ref()
+            .expect("upstream cluster must carry an inline TLS socket");
+        match &socket.config {
+            TransportSocketConfig::UpstreamInline {
+                certificate_chain,
+                private_key,
+                trusted_ca,
+                san_uri,
+                ..
+            } => {
+                assert!(!certificate_chain.is_empty());
+                assert!(!private_key.is_empty());
+                assert!(!trusted_ca.is_empty());
+                assert_eq!(san_uri, "spiffe://consul/ns/default/dc/dc1/svc/api");
+            }
+            _ => panic!("upstream socket must be an inline TLS config"),
+        }
+    }
+
+    #[test]
+    fn test_proxy_local_cluster_and_outbound_listener_stay_plaintext() {
+        let (store, proxy) = proxy_fixture();
+        let bridge = ConsulSyncBridge::new(store, create_xds_server()).with_connect_ca(
+            ConsulConnectCAService::new(),
+            "consul",
+            "dc1",
+        );
+        let snapshot = bridge.build_proxy_snapshot(&proxy);
+
+        // The local service cluster feeds the plaintext app-facing path.
+        let local = snapshot.clusters.get("web").unwrap();
+        assert!(
+            local.transport_socket.is_none(),
+            "local service cluster must stay plaintext"
+        );
+        // App-facing (outbound) listeners must not carry a transport socket.
+        let outbound = snapshot.listeners.get("outbound_listener:9090").unwrap();
+        assert!(
+            outbound.filter_chains[0].transport_socket.is_none(),
+            "outbound app-facing listener must stay plaintext"
+        );
+    }
+
+    #[test]
+    fn test_ca_revision_triggers_snapshot_rebuild() {
+        use std::sync::atomic::Ordering;
+
+        let (store, _proxy) = proxy_fixture();
+        let xds_server = create_xds_server();
+        let ca = ConsulConnectCAService::new();
+        let bridge = ConsulSyncBridge::new(store, xds_server.clone()).with_connect_ca(
+            ca.clone(),
+            "consul",
+            "dc1",
+        );
+
+        // First sync establishes a baseline and records every revision.
+        bridge.maybe_sync();
+        let v0 = xds_server
+            .snapshot_cache()
+            .get_snapshot("")
+            .unwrap()
+            .version
+            .clone();
+        assert_eq!(
+            bridge.last_ca_revision.load(Ordering::Relaxed),
+            ca.ca_revision()
+        );
+
+        // Make only the CA revision stale: naming-store and intention
+        // revisions stay current, so the CA key alone must force a rebuild.
+        bridge
+            .last_ca_revision
+            .store(ca.ca_revision().wrapping_add(1), Ordering::Relaxed);
+        bridge.maybe_sync();
+        let v1 = xds_server
+            .snapshot_cache()
+            .get_snapshot("")
+            .unwrap()
+            .version
+            .clone();
+        assert_ne!(v0, v1, "a changed CA revision must rebuild the snapshot");
+        assert_eq!(
+            bridge.last_ca_revision.load(Ordering::Relaxed),
+            ca.ca_revision()
+        );
     }
 
     #[test]

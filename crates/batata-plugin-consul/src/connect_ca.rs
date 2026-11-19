@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::constants::{CF_CONSUL_CA_ROOTS, CF_CONSUL_INTENTIONS};
+use crate::constants::{CF_CONSUL_CA_ROOTS, CF_CONSUL_INTENTIONS, ROCKS_KEY_CA_KEY};
 
 use crate::acl::{AclService, ResourceType};
 use crate::agent::ConsulAgentService;
@@ -397,6 +397,44 @@ pub struct ServiceIdentityQueryParams {
 const ROCKS_KEY_CA_CONFIG: &str = "__ca_config__";
 /// RocksDB key for the active root ID (stored in CF_CONSUL_CA_ROOTS)
 const ROCKS_KEY_ACTIVE_ROOT: &str = "__active_root__";
+/// CA config state entry holding the fingerprint of the active CA private key.
+///
+/// Stored alongside the config so a follower can tell whether the key it
+/// loaded from RocksDB actually belongs to the loaded CA root.
+const CA_KEY_ID_STATE_KEY: &str = "ca_key_id";
+/// Default leaf certificate lifetime used when the CA config does not carry
+/// a parseable `LeafCertTTL`.
+const DEFAULT_LEAF_CERT_TTL: chrono::Duration = chrono::Duration::hours(72);
+/// Fraction of the leaf lifetime after which a cached leaf is rotated.
+const LEAF_SOFT_EXPIRY_RATIO: f64 = 0.6;
+
+/// Complete mTLS material for one service, assembled from the leaf cache and
+/// the active CA root chain. Returned by [`ConsulConnectCAService::get_connect_material_sync`].
+#[derive(Debug, Clone)]
+pub struct ConnectMaterial {
+    /// Leaf certificate in PEM format.
+    pub leaf_cert_pem: String,
+    /// Private key matching the leaf certificate, in PEM format.
+    pub private_key_pem: String,
+    /// Concatenated CA root PEMs (active root first), each ending with a newline.
+    pub root_pem: String,
+    /// SPIFFE ID encoded as the leaf's URI SAN.
+    pub service_uri: String,
+    /// Leaf expiry timestamp (RFC3339), used by SDS to schedule rotation.
+    pub valid_before: String,
+}
+
+/// A cached leaf plus the conditions under which it may still be served.
+#[derive(Debug, Clone)]
+struct CachedLeaf {
+    /// The last generated leaf response.
+    leaf: LeafCert,
+    /// Moment after which the leaf must be regenerated (60% of its TTL).
+    soft_expiry: chrono::DateTime<Utc>,
+    /// Fingerprint of the CA key that signed this leaf. A changed CA key
+    /// invalidates the cached leaf immediately.
+    ca_key_id: String,
+}
 
 // ============================================================================
 // Service (In-Memory + optional RocksDB persistence)
@@ -408,22 +446,29 @@ pub struct ConsulConnectCAService {
     /// CA roots
     roots: Arc<DashMap<String, CARoot>>,
     /// Active root ID
-    active_root_id: Arc<tokio::sync::RwLock<String>>,
+    active_root_id: Arc<std::sync::RwLock<String>>,
     /// CA configuration
-    ca_config: Arc<tokio::sync::RwLock<CAConfig>>,
+    ca_config: Arc<std::sync::RwLock<CAConfig>>,
     /// Intentions
     intentions: Arc<DashMap<String, Intention>>,
-    /// Index counter
+    /// Index counter shared by intentions and legacy table indexing
     index: Arc<std::sync::atomic::AtomicU64>,
+    /// Revision bumped whenever CA material (root/key/config/leaf) changes.
+    /// Kept separate from `index` so xDS can watch CA state independently.
+    ca_revision: Arc<std::sync::atomic::AtomicU64>,
+    /// Cached leaf certificates, keyed by service name
+    leaf_cache: Arc<DashMap<String, CachedLeaf>>,
     /// Trust domain
     trust_domain: String,
     /// Datacenter name
     datacenter: String,
-    /// CA certificate PEM (for signing leaf certs)
+    /// CA certificate PEM of the active root (kept in sync for followers).
+    /// Leaf signing derives issuer details from the key, so this is currently
+    /// only written, not read.
     #[allow(dead_code)]
-    ca_cert_pem: String,
+    ca_cert_pem: Arc<std::sync::RwLock<String>>,
     /// CA private key PEM (for signing leaf certs)
-    ca_key_pem: String,
+    ca_key_pem: Arc<std::sync::RwLock<String>>,
     /// Optional RocksDB for write-through persistence
     rocks_db: Option<Arc<DB>>,
     /// Optional Raft writer for cluster-mode replication
@@ -447,54 +492,46 @@ impl ConsulConnectCAService {
             modify_index: 1,
         };
 
-        let config = CAConfig {
-            provider: "consul".to_string(),
-            config: {
-                let mut m = std::collections::HashMap::new();
-                m.insert(
-                    "LeafCertTTL".to_string(),
-                    serde_json::Value::String("72h".to_string()),
-                );
-                m.insert(
-                    "RootCertTTL".to_string(),
-                    serde_json::Value::String("87600h".to_string()),
-                );
-                m
-            },
-            state: std::collections::HashMap::new(),
-            force_without_cross_signing: false,
-            create_index: 1,
-            modify_index: 1,
-        };
+        let mut config = Self::default_ca_config();
+        config.state.insert(
+            CA_KEY_ID_STATE_KEY.to_string(),
+            Self::ca_key_id(&ca_key_pem),
+        );
 
         let roots = DashMap::new();
         roots.insert(root_id.clone(), root);
 
         Self {
             roots: Arc::new(roots),
-            active_root_id: Arc::new(tokio::sync::RwLock::new(root_id)),
-            ca_config: Arc::new(tokio::sync::RwLock::new(config)),
+            active_root_id: Arc::new(std::sync::RwLock::new(root_id)),
+            ca_config: Arc::new(std::sync::RwLock::new(config)),
             intentions: Arc::new(DashMap::new()),
             index: Arc::new(std::sync::atomic::AtomicU64::new(2)),
+            ca_revision: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            leaf_cache: Arc::new(DashMap::new()),
             trust_domain: "consul".to_string(),
             datacenter: "dc1".to_string(),
-            ca_cert_pem,
-            ca_key_pem,
+            ca_cert_pem: Arc::new(std::sync::RwLock::new(ca_cert_pem)),
+            ca_key_pem: Arc::new(std::sync::RwLock::new(ca_key_pem)),
             rocks_db: None,
             raft_node: None,
         }
     }
 
     /// Create a Connect CA service backed by an existing RocksDB instance.
-    /// Loads CA roots from CF_CONSUL_CA_ROOTS and intentions from CF_CONSUL_INTENTIONS.
+    /// Loads CA roots/config/active root/key from CF_CONSUL_CA_ROOTS and
+    /// intentions from CF_CONSUL_INTENTIONS. When roots are present but their
+    /// private key is missing or does not match the recorded key id, a fresh
+    /// root/key pair is generated and written back to RocksDB.
     pub fn with_rocks(db: Arc<DB>) -> Self {
         let roots = Arc::new(DashMap::new());
         let intentions = Arc::new(DashMap::new());
         let mut max_index = 0u64;
         let mut loaded_active_root_id: Option<String> = None;
         let mut loaded_ca_config: Option<CAConfig> = None;
+        let mut loaded_ca_key_pem: Option<String> = None;
 
-        // Load CA roots
+        // Load CA roots, config, active root ID and the CA private key
         if let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS) {
             let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
             let mut root_count = 0u64;
@@ -517,6 +554,11 @@ impl ConsulConnectCAService {
                     } else if key == ROCKS_KEY_ACTIVE_ROOT {
                         if let Ok(id) = String::from_utf8(value_bytes.to_vec()) {
                             loaded_active_root_id = Some(id);
+                        }
+                    } else if key == ROCKS_KEY_CA_KEY {
+                        match String::from_utf8(value_bytes.to_vec()) {
+                            Ok(pem) => loaded_ca_key_pem = Some(pem),
+                            Err(e) => error!("Failed to read CA key from RocksDB: {}", e),
                         }
                     } else {
                         match serde_json::from_slice::<CARoot>(&value_bytes) {
@@ -574,64 +616,115 @@ impl ConsulConnectCAService {
             );
         }
 
-        // If no roots were loaded from RocksDB, generate a fresh CA root
-        let (ca_cert_pem, ca_key_pem) = Self::generate_ca_root_cert();
-        if roots.is_empty() {
+        // The stored key must parse and match the fingerprint recorded in the
+        // CA config. Otherwise the loaded key cannot sign valid leaves.
+        let loaded_key_usable = loaded_ca_key_pem
+            .as_deref()
+            .filter(|pem| rcgen::KeyPair::from_pem(pem).is_ok());
+        let recorded_key_id = loaded_ca_config
+            .as_ref()
+            .and_then(|c| c.state.get(CA_KEY_ID_STATE_KEY))
+            .cloned();
+        let key_matches = loaded_key_usable
+            .map(|pem| match recorded_key_id.as_deref() {
+                // Without a recorded id there is nothing to compare against;
+                // a parseable key is the best evidence available.
+                None => true,
+                Some(id) => id == Self::ca_key_id(pem).as_str(),
+            })
+            .unwrap_or(false);
+
+        // Generate and persist a fresh root/key pair when no usable material
+        // was loaded. The previously active roots stay in the bundle but are
+        // demoted so there is only ever one active signing root.
+        let mut generated_material: Option<(String, CARoot, String, CAConfig)> = None;
+        if roots.is_empty() || !key_matches {
+            let (cert_pem, key_pem) = Self::generate_ca_root_cert();
             let root_id = uuid::Uuid::new_v4().to_string();
+            let mut next_index = max_index.saturating_add(1);
+            for mut entry in roots.iter_mut() {
+                if entry.value().active {
+                    entry.value_mut().active = false;
+                    entry.value_mut().modify_index = next_index;
+                    next_index = next_index.saturating_add(1);
+                }
+            }
             let root = CARoot {
                 id: root_id.clone(),
                 name: "Consul CA Root Cert".to_string(),
-                root_cert: ca_cert_pem.clone(),
+                root_cert: cert_pem.clone(),
                 active: true,
-                create_index: 1,
-                modify_index: 1,
+                create_index: next_index,
+                modify_index: next_index,
             };
-            roots.insert(root_id.clone(), root);
-            loaded_active_root_id = Some(root_id);
+            roots.insert(root_id.clone(), root.clone());
+
+            let mut config = loaded_ca_config.unwrap_or_else(Self::default_ca_config);
+            config
+                .state
+                .insert(CA_KEY_ID_STATE_KEY.to_string(), Self::ca_key_id(&key_pem));
+            config.modify_index = next_index.saturating_add(1);
+
+            loaded_active_root_id = Some(root_id.clone());
+            loaded_ca_config = Some(config.clone());
+            loaded_ca_key_pem = Some(key_pem.clone());
+            generated_material = Some((root_id, root, key_pem, config));
         }
 
-        let active_root_id = loaded_active_root_id.unwrap_or_else(|| {
-            // Fallback: find the first active root
-            roots
-                .iter()
-                .find(|r| r.value().active)
-                .map(|r| r.key().clone())
-                .unwrap_or_default()
-        });
+        let active_root_id = loaded_active_root_id
+            .filter(|id| roots.contains_key(id))
+            .or_else(|| {
+                roots
+                    .iter()
+                    .find(|r| r.value().active)
+                    .map(|r| r.key().clone())
+            })
+            .unwrap_or_default();
+        let ca_cert_pem = roots
+            .get(&active_root_id)
+            .map(|r| r.value().root_cert.clone())
+            .unwrap_or_default();
+        let ca_key_pem = loaded_ca_key_pem.unwrap_or_default();
+        let ca_config = loaded_ca_config.unwrap_or_else(Self::default_ca_config);
 
-        let ca_config = loaded_ca_config.unwrap_or_else(|| CAConfig {
-            provider: "consul".to_string(),
-            config: {
-                let mut m = std::collections::HashMap::new();
-                m.insert(
-                    "LeafCertTTL".to_string(),
-                    serde_json::Value::String("72h".to_string()),
-                );
-                m.insert(
-                    "RootCertTTL".to_string(),
-                    serde_json::Value::String("87600h".to_string()),
-                );
-                m
-            },
-            state: std::collections::HashMap::new(),
-            force_without_cross_signing: false,
-            create_index: 1,
-            modify_index: 1,
-        });
-
-        Self {
+        let svc = Self {
             roots,
-            active_root_id: Arc::new(tokio::sync::RwLock::new(active_root_id)),
-            ca_config: Arc::new(tokio::sync::RwLock::new(ca_config)),
+            active_root_id: Arc::new(std::sync::RwLock::new(active_root_id.clone())),
+            ca_config: Arc::new(std::sync::RwLock::new(ca_config)),
             intentions,
-            index: Arc::new(std::sync::atomic::AtomicU64::new(max_index + 1)),
+            index: Arc::new(std::sync::atomic::AtomicU64::new(
+                max_index.saturating_add(2),
+            )),
+            ca_revision: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            leaf_cache: Arc::new(DashMap::new()),
             trust_domain: "consul".to_string(),
             datacenter: "dc1".to_string(),
-            ca_cert_pem,
-            ca_key_pem,
+            ca_cert_pem: Arc::new(std::sync::RwLock::new(ca_cert_pem)),
+            ca_key_pem: Arc::new(std::sync::RwLock::new(ca_key_pem)),
             rocks_db: Some(db),
             raft_node: None,
+        };
+
+        if let Some((root_id, root, key_pem, config)) = generated_material {
+            // Persist demoted roots too, otherwise they would remain active
+            // in RocksDB after a restart.
+            for entry in svc.roots.iter() {
+                if !entry.value().active {
+                    svc.persist_root_to_rocks(entry.key(), entry.value());
+                }
+            }
+            svc.persist_root_to_rocks(&root_id, &root);
+            svc.persist_active_root_to_rocks(&root_id);
+            svc.persist_ca_key_to_rocks(&key_pem);
+            svc.persist_ca_config_to_rocks(&config);
+            svc.bump_ca_revision();
+        } else {
+            // A valid key was loaded; make sure the active root pointer is
+            // present in RocksDB for future followers.
+            svc.persist_active_root_to_rocks(&active_root_id);
         }
+
+        svc
     }
 
     /// Create a Connect CA service with Raft-replicated storage (cluster mode).
@@ -696,6 +789,16 @@ impl ConsulConnectCAService {
         }
     }
 
+    /// Persist the active CA private key PEM to RocksDB
+    fn persist_ca_key_to_rocks(&self, key_pem: &str) {
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS)
+            && let Err(e) = db.put_cf(cf, ROCKS_KEY_CA_KEY.as_bytes(), key_pem.as_bytes())
+        {
+            error!("Failed to persist CA key to RocksDB: {}", e);
+        }
+    }
+
     /// Persist the CA configuration to RocksDB
     fn persist_ca_config_to_rocks(&self, config: &CAConfig) {
         if let Some(ref db) = self.rocks_db
@@ -746,6 +849,52 @@ impl ConsulConnectCAService {
     // CA certificate generation
     // ========================================================================
 
+    /// Default CA configuration used by in-memory and freshly persisted CAs.
+    fn default_ca_config() -> CAConfig {
+        CAConfig {
+            provider: "consul".to_string(),
+            config: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "LeafCertTTL".to_string(),
+                    serde_json::Value::String("72h".to_string()),
+                );
+                m.insert(
+                    "RootCertTTL".to_string(),
+                    serde_json::Value::String("87600h".to_string()),
+                );
+                m
+            },
+            state: std::collections::HashMap::new(),
+            force_without_cross_signing: false,
+            create_index: 1,
+            modify_index: 1,
+        }
+    }
+
+    /// Stable identifier for a CA private key, used to detect that a cached
+    /// leaf was signed by a key which is no longer active.
+    fn ca_key_id(key_pem: &str) -> String {
+        use base64::Engine as _;
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(key_pem.as_bytes());
+        base64::engine::general_purpose::STANDARD.encode(digest)
+    }
+
+    /// Read the CA key, recovering from a poisoned lock rather than panicking.
+    fn read_ca_key_pem(&self) -> String {
+        self.ca_key_pem
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Advance the CA revision observed by the xDS sync bridge.
+    fn bump_ca_revision(&self) {
+        self.ca_revision
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Generate a self-signed CA root certificate using rcgen
     fn generate_ca_root_cert() -> (String, String) {
         use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair};
@@ -773,7 +922,11 @@ impl ConsulConnectCAService {
 
     /// The `get_roots` method.
     pub async fn get_roots(&self) -> CARootList {
-        let active_id = self.active_root_id.read().await.clone();
+        let active_id = self
+            .active_root_id
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let roots: Vec<CARoot> = self.roots.iter().map(|r| r.value().clone()).collect();
         CARootList {
             active_root_id: active_id,
@@ -784,7 +937,10 @@ impl ConsulConnectCAService {
 
     /// The `get_ca_config` method.
     pub async fn get_ca_config(&self) -> CAConfig {
-        self.ca_config.read().await.clone()
+        self.ca_config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// The `set_ca_config` method.
@@ -811,19 +967,84 @@ impl ConsulConnectCAService {
         } else {
             self.persist_ca_config_to_rocks(&config);
         }
-        *self.ca_config.write().await = config;
+        *self.ca_config.write().unwrap_or_else(|e| e.into_inner()) = config;
+        self.bump_ca_revision();
         Ok(())
     }
 
-    /// The `get_leaf_cert` method.
+    /// Parse a Consul-style duration string (e.g. "72h", "30m", "1h30m").
+    /// Returns `None` when the string has no recognised time component.
+    fn parse_duration(value: &str) -> Option<chrono::Duration> {
+        let bytes = value.as_bytes();
+        let mut total_seconds: i64 = 0;
+        let mut i = 0;
+        let mut found = false;
+
+        while i < bytes.len() {
+            if bytes[i].is_ascii_whitespace() {
+                i += 1;
+                continue;
+            }
+            let number_start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if number_start == i {
+                return None;
+            }
+            let amount: i64 = value[number_start..i].parse().ok()?;
+            if i >= bytes.len() {
+                return None;
+            }
+            let multiplier = match bytes[i] {
+                b's' | b'S' => 1,
+                b'm' | b'M' => 60,
+                b'h' | b'H' => 3600,
+                b'd' | b'D' => 86400,
+                _ => return None,
+            };
+            total_seconds = total_seconds.checked_add(amount.checked_mul(multiplier)?)?;
+            found = true;
+            i += 1;
+        }
+
+        found.then(|| chrono::Duration::seconds(total_seconds))
+    }
+
+    /// Effective leaf lifetime from the CA configuration.
+    fn leaf_cert_ttl(&self) -> chrono::Duration {
+        let config = self.ca_config.read().unwrap_or_else(|e| e.into_inner());
+        config
+            .config
+            .get("LeafCertTTL")
+            .and_then(|v| v.as_str())
+            .and_then(Self::parse_duration)
+            .unwrap_or(DEFAULT_LEAF_CERT_TTL)
+    }
+
+    /// Return the cached leaf while it is valid and signed by the current CA
+    /// key; otherwise generate a fresh leaf and refresh the cache.
+    ///
+    /// Kept synchronous because existing SDS/xDS handlers call it directly.
     pub fn get_leaf_cert(&self, service: &str) -> LeafCert {
+        let ca_key_id = Self::ca_key_id(&self.read_ca_key_pem());
         let now = Utc::now();
-        let valid_before = now + chrono::Duration::hours(72);
+
+        if let Some(cached) = self.leaf_cache.get(service)
+            && cached.ca_key_id == ca_key_id
+            && now < cached.soft_expiry
+        {
+            return cached.leaf.clone();
+        }
+
+        let service_uri = format!(
+            "spiffe://{}/ns/default/dc/{}/svc/{}",
+            self.trust_domain, self.datacenter, service
+        );
+        let ttl = self.leaf_cert_ttl();
+        let (cert_pem, private_key_pem) = self.generate_leaf_cert(service, &service_uri);
         let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-        let (cert_pem, private_key_pem) = self.generate_leaf_cert(service);
-
-        LeafCert {
+        let leaf = LeafCert {
             serial_number: format!(
                 "{:02x}:{:02x}:{:02x}:{:02x}",
                 rand_byte(),
@@ -834,15 +1055,26 @@ impl ConsulConnectCAService {
             cert_pem,
             private_key_pem,
             service: service.to_string(),
-            service_uri: format!(
-                "spiffe://{}/ns/default/dc/{}/svc/{}",
-                self.trust_domain, self.datacenter, service
-            ),
+            service_uri,
             valid_after: now.to_rfc3339(),
-            valid_before: valid_before.to_rfc3339(),
+            valid_before: (now + ttl).to_rfc3339(),
             create_index: index,
             modify_index: index,
-        }
+        };
+        let soft_expiry = now
+            + chrono::Duration::milliseconds(
+                (ttl.num_milliseconds() as f64 * LEAF_SOFT_EXPIRY_RATIO) as i64,
+            );
+        self.leaf_cache.insert(
+            service.to_string(),
+            CachedLeaf {
+                leaf: leaf.clone(),
+                soft_expiry,
+                ca_key_id,
+            },
+        );
+        self.bump_ca_revision();
+        leaf
     }
 
     /// Get the full service identity (leaf cert + CA roots + SPIFFE ID) for a
@@ -867,8 +1099,9 @@ impl ConsulConnectCAService {
         }
     }
 
-    /// Generate a leaf certificate signed by the CA for a given service
-    fn generate_leaf_cert(&self, service: &str) -> (String, String) {
+    /// Generate a leaf certificate signed by the CA for a given service.
+    /// The SPIFFE ID is embedded as a URI SAN so proxies can verify identity.
+    fn generate_leaf_cert(&self, service: &str, service_uri: &str) -> (String, String) {
         use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 
         // Generate leaf key pair
@@ -882,9 +1115,16 @@ impl ConsulConnectCAService {
         leaf_params
             .distinguished_name
             .push(DnType::OrganizationName, "Batata Consul Service");
+        leaf_params.subject_alt_names.push(rcgen::SanType::URI(
+            service_uri
+                .to_string()
+                .try_into()
+                .expect("SPIFFE ID must be a valid IA5 URI SAN"),
+        ));
 
         // Reconstruct CA params and issuer from stored key for signing
-        let ca_key = KeyPair::from_pem(&self.ca_key_pem).expect("Failed to parse CA key");
+        let ca_key_pem = self.read_ca_key_pem();
+        let ca_key = KeyPair::from_pem(&ca_key_pem).expect("Failed to parse CA key");
         let mut ca_params = CertificateParams::default();
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         ca_params
@@ -1262,6 +1502,186 @@ impl ConsulConnectCAService {
         }
     }
 
+    /// Monotonic revision of CA material. Bumped on root/key/config changes,
+    /// fresh leaf generation and follower refreshes so the xDS sync bridge can
+    /// rebuild SDS resources when CA state changes.
+    pub fn ca_revision(&self) -> u64 {
+        self.ca_revision.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Assemble the complete SDS material for a service from the leaf cache
+    /// and the CA trust bundle. Returns `None` only when no CA material exists.
+    pub fn get_connect_material_sync(&self, service: &str) -> Option<ConnectMaterial> {
+        if self.roots.is_empty() || self.read_ca_key_pem().is_empty() {
+            return None;
+        }
+
+        let leaf = self.get_leaf_cert(service);
+        let active_id = self
+            .active_root_id
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut roots: Vec<CARoot> = self.roots.iter().map(|r| r.value().clone()).collect();
+        // Active root first, followed by the rest of the trust bundle.
+        roots.sort_by(|a, b| {
+            (b.id == active_id)
+                .cmp(&(a.id == active_id))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+
+        let mut root_pem = String::new();
+        for root in &roots {
+            if root.root_cert.is_empty() {
+                continue;
+            }
+            root_pem.push_str(&root.root_cert);
+            if !root_pem.ends_with('\n') {
+                root_pem.push('\n');
+            }
+        }
+        if root_pem.is_empty() {
+            return None;
+        }
+
+        Some(ConnectMaterial {
+            leaf_cert_pem: leaf.cert_pem,
+            private_key_pem: leaf.private_key_pem,
+            root_pem,
+            service_uri: leaf.service_uri,
+            valid_before: leaf.valid_before,
+        })
+    }
+
+    /// Re-read CA roots, config, active root, private key and intentions from
+    /// RocksDB, replacing the in-memory state on a follower. Missing column
+    /// families and corrupt records are skipped rather than causing a panic.
+    pub fn refresh_from_rocks(&self) {
+        let Some(ref db) = self.rocks_db else {
+            return;
+        };
+
+        let new_roots = DashMap::new();
+        let new_intentions = DashMap::new();
+        let mut loaded_active_root_id: Option<String> = None;
+        let mut loaded_ca_config: Option<CAConfig> = None;
+        let mut loaded_ca_key_pem: Option<String> = None;
+        let mut saw_ca_records = false;
+        let mut saw_intention_records = false;
+        let mut max_index = 0u64;
+
+        if let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS) {
+            saw_ca_records = true;
+            for item in db.iterator_cf(cf, rocksdb::IteratorMode::Start).flatten() {
+                let (key_bytes, value_bytes) = item;
+                let Ok(key) = String::from_utf8(key_bytes.to_vec()) else {
+                    continue;
+                };
+                if key == ROCKS_KEY_CA_CONFIG {
+                    match serde_json::from_slice::<CAConfig>(&value_bytes) {
+                        Ok(config) => {
+                            max_index = max_index.max(config.modify_index);
+                            loaded_ca_config = Some(config);
+                        }
+                        Err(e) => error!("Failed to deserialize CA config from RocksDB: {}", e),
+                    }
+                } else if key == ROCKS_KEY_ACTIVE_ROOT {
+                    if let Ok(id) = String::from_utf8(value_bytes.to_vec()) {
+                        loaded_active_root_id = Some(id);
+                    }
+                } else if key == ROCKS_KEY_CA_KEY {
+                    if let Ok(pem) = String::from_utf8(value_bytes.to_vec()) {
+                        loaded_ca_key_pem = Some(pem);
+                    }
+                } else {
+                    match serde_json::from_slice::<CARoot>(&value_bytes) {
+                        Ok(root) => {
+                            max_index = max_index.max(root.modify_index);
+                            new_roots.insert(key, root);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize CA root '{}' from RocksDB: {}",
+                                key, e
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(cf) = db.cf_handle(CF_CONSUL_INTENTIONS) {
+            saw_intention_records = true;
+            for item in db.iterator_cf(cf, rocksdb::IteratorMode::Start).flatten() {
+                let (key_bytes, value_bytes) = item;
+                let Ok(key) = String::from_utf8(key_bytes.to_vec()) else {
+                    continue;
+                };
+                match serde_json::from_slice::<Intention>(&value_bytes) {
+                    Ok(intention) => {
+                        max_index = max_index.max(intention.modify_index);
+                        new_intentions.insert(key, intention);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to deserialize intention '{}' from RocksDB: {}",
+                            key, e
+                        )
+                    }
+                }
+            }
+        }
+
+        // Only replace in-memory CA state when the DB actually supplied some;
+        // an empty/corrupt DB must not drop the current signing material.
+        if saw_ca_records
+            && (!new_roots.is_empty() || loaded_ca_key_pem.is_some() || loaded_ca_config.is_some())
+        {
+            let active_id = loaded_active_root_id
+                .filter(|id| new_roots.contains_key(id))
+                .or_else(|| {
+                    new_roots
+                        .iter()
+                        .find(|r| r.value().active)
+                        .map(|r| r.key().clone())
+                })
+                .unwrap_or_default();
+            if let Some(root) = new_roots.get(&active_id) {
+                *self.ca_cert_pem.write().unwrap_or_else(|e| e.into_inner()) =
+                    root.value().root_cert.clone();
+            }
+            if let Some(key_pem) = loaded_ca_key_pem {
+                *self.ca_key_pem.write().unwrap_or_else(|e| e.into_inner()) = key_pem;
+            }
+            if let Some(config) = loaded_ca_config {
+                *self.ca_config.write().unwrap_or_else(|e| e.into_inner()) = config;
+            }
+            *self
+                .active_root_id
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = active_id;
+            self.roots.clear();
+            for (id, root) in new_roots.into_iter() {
+                self.roots.insert(id, root);
+            }
+            self.index.fetch_max(
+                max_index.saturating_add(1),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+
+        if saw_intention_records {
+            self.intentions.clear();
+            for (id, intention) in new_intentions.into_iter() {
+                self.intentions.insert(id, intention);
+            }
+        }
+
+        // Leaves signed by a previous CA key must not be served after refresh.
+        self.leaf_cache.clear();
+        self.bump_ca_revision();
+    }
+
     /// Monotonic revision incremented on every intention create/update/delete.
     /// The xDS sync bridge uses this to rebuild RBAC filters when intentions
     /// change (naming-store revision alone would miss intention-only changes).
@@ -1474,7 +1894,7 @@ pub async fn get_ca_roots(
             .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
-            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .wait_for_change(ConsulTable::ConnectCA, target_index, timeout)
             .await;
     }
 
@@ -1549,7 +1969,9 @@ pub async fn get_leaf_cert(
     path: web::Path<String>,
     query: web::Query<LeafCertQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
+    let service = path.into_inner();
+    // Leaf certificates contain private key material, so require service:write.
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, &service, true);
     if !authz.allowed {
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
@@ -1561,11 +1983,10 @@ pub async fn get_leaf_cert(
             .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
-            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .wait_for_change(ConsulTable::ConnectCA, target_index, timeout)
             .await;
     }
 
-    let service = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(ca_service.get_leaf_cert(&service))
 }
@@ -1895,7 +2316,7 @@ pub async fn get_ca_roots_persistent(
             .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
-            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .wait_for_change(ConsulTable::ConnectCA, target_index, timeout)
             .await;
     }
 
@@ -1969,7 +2390,9 @@ pub async fn get_leaf_cert_persistent(
     path: web::Path<String>,
     query: web::Query<LeafCertQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
+    let service = path.into_inner();
+    // Leaf certificates contain private key material, so require service:write.
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, &service, true);
     if !authz.allowed {
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
@@ -1981,11 +2404,10 @@ pub async fn get_leaf_cert_persistent(
             .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
-            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .wait_for_change(ConsulTable::ConnectCA, target_index, timeout)
             .await;
     }
 
-    let service = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(ca_service.get_leaf_cert(&service))
 }
@@ -2979,5 +3401,270 @@ mod tests {
             },
         ];
         assert!(validate_intention_permissions(&permissions).is_ok());
+    }
+
+    // ========================================================================
+    // Connect CA lifecycle tests
+    // ========================================================================
+
+    /// Open a temp RocksDB with the two CFs used by the Connect CA service.
+    fn temp_ca_db() -> (Arc<DB>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut db_opts = rocksdb::Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
+        let cf_opts = rocksdb::Options::default();
+        let cfs = vec![
+            rocksdb::ColumnFamilyDescriptor::new(CF_CONSUL_CA_ROOTS, cf_opts.clone()),
+            rocksdb::ColumnFamilyDescriptor::new(CF_CONSUL_INTENTIONS, cf_opts),
+        ];
+        let db = DB::open_cf_descriptors(&db_opts, dir.path(), cfs).expect("open temp RocksDB");
+        (Arc::new(db), dir)
+    }
+
+    #[test]
+    fn test_ca_root_and_key_persist_across_with_rocks_instances() {
+        let (db, _dir) = temp_ca_db();
+        let first = ConsulConnectCAService::with_rocks(db.clone());
+        let roots_first: Vec<CARoot> = first.roots.iter().map(|r| r.value().clone()).collect();
+        assert_eq!(roots_first.len(), 1);
+        let key_first = first.read_ca_key_pem();
+
+        let cf = db.cf_handle(CF_CONSUL_CA_ROOTS).expect("CA roots CF");
+        let persisted = db
+            .get_cf(cf, ROCKS_KEY_CA_KEY.as_bytes())
+            .expect("read CA key")
+            .expect("CA key persisted");
+        assert_eq!(persisted.as_slice(), key_first.as_bytes());
+
+        // A second service must load the same root and the same key instead
+        // of generating a new one (the bug this guards against).
+        let second = ConsulConnectCAService::with_rocks(db.clone());
+        let roots_second: Vec<CARoot> = second.roots.iter().map(|r| r.value().clone()).collect();
+        assert_eq!(roots_second.len(), 1);
+        assert_eq!(roots_second[0].id, roots_first[0].id);
+        assert_eq!(roots_second[0].root_cert, roots_first[0].root_cert);
+        assert_eq!(second.read_ca_key_pem(), key_first);
+        assert!(second.ca_revision() >= 1);
+    }
+
+    #[test]
+    fn test_with_rocks_regenerates_root_when_key_missing() {
+        let (db, _dir) = temp_ca_db();
+        let first = ConsulConnectCAService::with_rocks(db.clone());
+        let old_root_id = first
+            .active_root_id
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let old_key = first.read_ca_key_pem();
+
+        let cf = db.cf_handle(CF_CONSUL_CA_ROOTS).expect("CA roots CF");
+        db.delete_cf(cf, ROCKS_KEY_CA_KEY.as_bytes())
+            .expect("delete CA key");
+
+        let second = ConsulConnectCAService::with_rocks(db.clone());
+        assert_ne!(
+            second
+                .active_root_id
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            old_root_id
+        );
+        assert_ne!(second.read_ca_key_pem(), old_key);
+        assert!(
+            db.get_cf(cf, ROCKS_KEY_CA_KEY.as_bytes())
+                .expect("read CA key")
+                .is_some(),
+            "regenerated key must be persisted"
+        );
+        assert_eq!(second.ca_revision(), 2, "generation bumps CA revision");
+    }
+
+    #[test]
+    fn test_with_rocks_regenerates_root_when_key_id_mismatches() {
+        let (db, _dir) = temp_ca_db();
+        let first = ConsulConnectCAService::with_rocks(db.clone());
+        let old_root_id = first
+            .active_root_id
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        // Replace the stored key with a different valid key while leaving the
+        // recorded key id untouched; the loader must detect the mismatch.
+        let (_other_cert, other_key) = ConsulConnectCAService::generate_ca_root_cert();
+        let cf = db.cf_handle(CF_CONSUL_CA_ROOTS).expect("CA roots CF");
+        db.put_cf(cf, ROCKS_KEY_CA_KEY.as_bytes(), other_key.as_bytes())
+            .expect("put mismatched key");
+
+        let second = ConsulConnectCAService::with_rocks(db.clone());
+        assert_ne!(
+            second
+                .active_root_id
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            old_root_id
+        );
+        assert_ne!(second.read_ca_key_pem(), other_key);
+    }
+
+    #[test]
+    fn test_leaf_cert_contains_spiffe_uri_san() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let service = ConsulConnectCAService::new();
+        let leaf = service.get_leaf_cert("web");
+        let payload: String = leaf
+            .cert_pem
+            .lines()
+            .filter(|line| !line.starts_with("-----"))
+            .collect();
+        let der = STANDARD.decode(payload).expect("leaf PEM must be base64");
+
+        let uri = b"spiffe://consul/ns/default/dc/dc1/svc/web";
+        assert!(
+            der.windows(uri.len())
+                .any(|window| window == uri.as_slice()),
+            "leaf DER must carry the SPIFFE ID as a URI SAN"
+        );
+    }
+
+    #[test]
+    fn test_leaf_cache_soft_expiry_and_key_mismatch() {
+        let service = ConsulConnectCAService::new();
+        let first = service.get_leaf_cert("web");
+        let revision = service.ca_revision();
+
+        let cached = service.get_leaf_cert("web");
+        assert_eq!(cached.cert_pem, first.cert_pem, "cache hit must reuse leaf");
+        assert_eq!(
+            service.ca_revision(),
+            revision,
+            "cache hit must not bump revision"
+        );
+
+        // Force the soft-expiry deadline into the past.
+        service
+            .leaf_cache
+            .get_mut("web")
+            .expect("cached leaf")
+            .soft_expiry = Utc::now() - chrono::Duration::seconds(1);
+        let rotated = service.get_leaf_cert("web");
+        assert_ne!(
+            rotated.cert_pem, first.cert_pem,
+            "expired leaf must be regenerated"
+        );
+        assert_eq!(service.ca_revision(), revision + 1);
+
+        // A changed CA key invalidates the cached leaf immediately.
+        service
+            .leaf_cache
+            .get_mut("web")
+            .expect("cached leaf")
+            .ca_key_id = "stale-key".into();
+        let after_mismatch = service.get_leaf_cert("web");
+        assert_ne!(
+            after_mismatch.cert_pem, rotated.cert_pem,
+            "leaf signed by a stale CA key must be regenerated"
+        );
+        assert_eq!(service.ca_revision(), revision + 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_connect_material_sync_root_chain() {
+        let service = ConsulConnectCAService::new();
+        let material = service
+            .get_connect_material_sync("api")
+            .expect("CA material must exist");
+
+        assert_eq!(
+            material.service_uri,
+            "spiffe://consul/ns/default/dc/dc1/svc/api"
+        );
+        assert!(!material.leaf_cert_pem.is_empty());
+        assert!(!material.private_key_pem.is_empty());
+        assert!(!material.valid_before.is_empty());
+        assert!(material.root_pem.ends_with('\n'));
+
+        let roots = service.get_roots().await;
+        for root in &roots.roots {
+            assert!(
+                material.root_pem.contains(root.root_cert.trim_end()),
+                "root chain must contain every CA root"
+            );
+        }
+
+        // No backing DB: refresh must be a harmless no-op.
+        let revision = service.ca_revision();
+        service.refresh_from_rocks();
+        assert!(service.ca_revision() >= revision);
+    }
+
+    #[test]
+    fn test_refresh_from_rocks_replaces_ca_material() {
+        let (db, _dir) = temp_ca_db();
+        let service = ConsulConnectCAService::with_rocks(db.clone());
+        let old_key = service.read_ca_key_pem();
+
+        // Simulate a leader rotating the CA key and root directly in RocksDB.
+        let (new_cert_pem, new_key_pem) = ConsulConnectCAService::generate_ca_root_cert();
+        let new_root_id = uuid::Uuid::new_v4().to_string();
+        let new_root = CARoot {
+            id: new_root_id.clone(),
+            name: "Consul CA Root Cert".to_string(),
+            root_cert: new_cert_pem,
+            active: true,
+            create_index: 10,
+            modify_index: 10,
+        };
+        let mut new_config = service
+            .ca_config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        new_config.state.insert(
+            CA_KEY_ID_STATE_KEY.to_string(),
+            ConsulConnectCAService::ca_key_id(&new_key_pem),
+        );
+        let cf = db.cf_handle(CF_CONSUL_CA_ROOTS).expect("CA roots CF");
+        db.put_cf(
+            cf,
+            new_root_id.as_bytes(),
+            serde_json::to_vec(&new_root).expect("serialize root"),
+        )
+        .expect("put root");
+        db.put_cf(cf, ROCKS_KEY_ACTIVE_ROOT.as_bytes(), new_root_id.as_bytes())
+            .expect("put active root");
+        db.put_cf(cf, ROCKS_KEY_CA_KEY.as_bytes(), new_key_pem.as_bytes())
+            .expect("put key");
+        db.put_cf(
+            cf,
+            ROCKS_KEY_CA_CONFIG.as_bytes(),
+            serde_json::to_vec(&new_config).expect("serialize config"),
+        )
+        .expect("put config");
+
+        let cached_leaf = service.get_leaf_cert("web");
+        let revision = service.ca_revision();
+        service.refresh_from_rocks();
+
+        // Refresh invalidates every cached leaf, even when the key is unchanged.
+        assert!(service.leaf_cache.is_empty());
+        // A rotated CA key invalidates leaves signed by the previous key.
+        assert_ne!(service.get_leaf_cert("web").cert_pem, cached_leaf.cert_pem);
+        assert_eq!(service.read_ca_key_pem(), new_key_pem);
+        assert_ne!(service.read_ca_key_pem(), old_key);
+        assert_eq!(
+            service
+                .active_root_id
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            new_root_id
+        );
+        assert!(service.ca_revision() > revision);
     }
 }

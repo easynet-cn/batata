@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/tcp_proxy.proto",
                 "proto/rbac.proto",
                 "proto/rbac_filter.proto",
+                "proto/tls.proto",
             ],
             &["proto/"],
         )?;

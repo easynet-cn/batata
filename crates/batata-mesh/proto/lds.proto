@@ -52,6 +52,9 @@ message FilterChain {
   FilterChainMatch filter_chain_match = 1;
   repeated Filter filters = 3;
   string name = 7;
+  // Upstream field number 6: core.TransportSocket. Declared locally below to
+  // avoid a cross-package proto reference.
+  TransportSocket transport_socket = 6;
 }
 
 message FilterChainMatch {
@@ -73,4 +76,12 @@ message Filter {
   oneof config_type {
     google.protobuf.Any typed_config = 4;
   }
+}
+
+// Subset of envoy.config.core.v3.TransportSocket. Kept local so that lds.proto
+// does not have to import a cross-package message; only field numbers matter
+// for wire compatibility with a real Envoy.
+message TransportSocket {
+  string name = 1;
+  google.protobuf.Any typed_config = 3;
 }

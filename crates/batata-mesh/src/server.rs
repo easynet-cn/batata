@@ -149,6 +149,11 @@ impl XdsServer {
         if let Some(sender) = self.active_streams.get(node_id) {
             // Get snapshot for this node
             if let Some(snapshot) = self.snapshot_cache.get_snapshot(node_id) {
+                // Send SDS updates first so the certificates referenced by
+                // CDS/LDS are already present when those resources arrive.
+                if let Err(e) = self.send_secret_response(node_id, &snapshot, &sender) {
+                    warn!(node_id = %node_id, error = %e, "Failed to send SDS update");
+                }
                 // Send CDS updates
                 if let Err(e) = self.send_cluster_response(node_id, &snapshot, &sender) {
                     warn!(node_id = %node_id, error = %e, "Failed to send CDS update");
@@ -167,6 +172,47 @@ impl XdsServer {
                 }
             }
         }
+    }
+
+    /// Send secret (SDS) response.
+    ///
+    /// Pushed proactively on snapshot updates so that Envoy already has the
+    /// leaf certificate and validation context referenced by CDS/LDS.
+    fn send_secret_response(
+        &self,
+        node_id: &str,
+        snapshot: &ResourceSnapshot,
+        sender: &StreamSender,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let resources: Vec<ResourceData> = snapshot
+            .secrets
+            .iter()
+            .filter_map(|(name, secret)| {
+                encode_resource(ResourceType::Secret, NativeResource::Secret(secret)).map(|data| {
+                    ResourceData {
+                        name: name.clone(),
+                        resource_type: ResourceType::Secret,
+                        data,
+                    }
+                })
+            })
+            .collect();
+
+        if resources.is_empty() {
+            return Ok(());
+        }
+
+        let response = DiscoveryResponse {
+            version_info: snapshot.version.clone(),
+            resources,
+            type_url: ResourceType::Secret.type_url().to_string(),
+            nonce: uuid::Uuid::new_v4().to_string(),
+            control_plane_id: self.config.server_id.clone(),
+        };
+
+        sender.try_send(Ok(response))?;
+        debug!(node_id = %node_id, "Sent SDS response");
+        Ok(())
     }
 
     /// Send cluster (CDS) response
@@ -393,6 +439,7 @@ impl XdsServer {
             ResourceType::Endpoint => self.get_endpoint_resources(node_id, request, snapshot),
             ResourceType::Listener => self.get_listener_resources(node_id, request, snapshot),
             ResourceType::Route => self.get_route_resources(node_id, request, snapshot),
+            ResourceType::Secret => self.get_secret_resources(node_id, request, snapshot),
             _ => {
                 warn!(resource_type = %resource_type, "Unsupported resource type");
                 return None;
@@ -518,6 +565,36 @@ impl XdsServer {
             .collect()
     }
 
+    /// Get secret resources for an SDS response.
+    ///
+    /// Only names the client requested are answered; unrequested or missing
+    /// names are skipped rather than guessed.
+    fn get_secret_resources(
+        &self,
+        _node_id: &str,
+        request: &DiscoveryRequest,
+        snapshot: &ResourceSnapshot,
+    ) -> Vec<ResourceData> {
+        let names: Vec<&str> = if request.resource_names.is_empty() {
+            snapshot.secrets.keys().map(String::as_str).collect()
+        } else {
+            request.resource_names.iter().map(String::as_str).collect()
+        };
+
+        names
+            .iter()
+            .filter_map(|name| {
+                let secret = snapshot.secrets.get(*name)?;
+                let data = encode_resource(ResourceType::Secret, NativeResource::Secret(secret))?;
+                Some(ResourceData {
+                    name: name.to_string(),
+                    resource_type: ResourceType::Secret,
+                    data,
+                })
+            })
+            .collect()
+    }
+
     /// Register a new stream for a node
     pub fn register_stream(
         &self,
@@ -574,7 +651,7 @@ pub struct ServerStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xds::types::{Cluster, ClusterLoadAssignment, LbPolicy};
+    use crate::xds::types::{Cluster, ClusterLoadAssignment, LbPolicy, SdsSecret};
 
     fn create_test_snapshot() -> ResourceSnapshot {
         let clusters = vec![Cluster {
@@ -640,5 +717,54 @@ mod tests {
 
         server.unregister_stream("node-1");
         assert_eq!(server.stats().active_streams, 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_sds_request_answers_requested_names_and_skips_missing() {
+        let server = XdsServer::new(XdsServerConfig::default());
+        let snapshot = ResourceSnapshot::with_all_resources(vec![], vec![], vec![], vec![])
+            .with_secrets(vec![
+                SdsSecret::tls_certificate("server-cert", "CERT", "KEY"),
+                SdsSecret::validation_context("root-ca", "CA"),
+            ]);
+        server.update_snapshot(snapshot);
+
+        let request = DiscoveryRequest {
+            version_info: String::new(),
+            node: Some(Node {
+                id: "sds-node".to_string(),
+                ..Default::default()
+            }),
+            resource_names: vec!["server-cert".to_string(), "does-not-exist".to_string()],
+            type_url: ResourceType::Secret.type_url().to_string(),
+            response_nonce: String::new(),
+            error_detail: None,
+        };
+
+        let response = server
+            .handle_request(request)
+            .await
+            .expect("SDS request must get a response");
+        assert_eq!(response.type_url, ResourceType::Secret.type_url());
+        assert_eq!(response.resources.len(), 1);
+        assert_eq!(response.resources[0].name, "server-cert");
+        assert_eq!(response.resources[0].resource_type, ResourceType::Secret);
+        let secret = crate::xds::encode::decode_secret(&response.resources[0].data).unwrap();
+        assert_eq!(secret.name, "server-cert");
+
+        // An empty subscription is a wildcard and returns every secret.
+        let wildcard = DiscoveryRequest {
+            version_info: String::new(),
+            node: Some(Node {
+                id: "sds-node".to_string(),
+                ..Default::default()
+            }),
+            resource_names: vec![],
+            type_url: ResourceType::Secret.type_url().to_string(),
+            response_nonce: String::new(),
+            error_detail: None,
+        };
+        let response = server.handle_request(wildcard).await.unwrap();
+        assert_eq!(response.resources.len(), 2);
     }
 }
