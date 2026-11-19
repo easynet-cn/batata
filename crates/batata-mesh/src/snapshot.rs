@@ -215,12 +215,27 @@ impl Default for ResourceSnapshot {
 /// efficient incremental updates (only send changed resources).
 #[derive(Debug, Clone, Default)]
 pub struct DeltaClientState {
-    /// Last acknowledged version per resource name: resource_name -> version
+    /// Last version known to the client per resource name: resource_name -> version.
+    ///
+    /// Versions are advanced when the server sends a resource and rolled back
+    /// when the matching nonce is NACKed.
     pub acked_versions: HashMap<String, String>,
-    /// Resources currently subscribed to (empty = wildcard/all)
+    /// Resources explicitly subscribed to on this stream.
     pub subscribed_resources: HashSet<String>,
-    /// Whether this client uses wildcard subscription
+    /// Whether this client currently has a wildcard (`*`) subscription.
     pub wildcard: bool,
+    /// Explicitly subscribed names that must be sent on the next response even
+    /// when the client already advertises the current version.
+    pub force_send: HashSet<String>,
+    /// An explicit wildcard subscription must resend every current resource.
+    pub force_all: bool,
+    /// Whether a real client request has initialized this type's state. Server
+    /// pushes must not create or answer a subscription the client never made.
+    pub initialized: bool,
+    /// Nonce of the most recent response sent to this client for this type.
+    pub last_sent_nonce: String,
+    /// Versions before the most recent response, used to roll back on NACK.
+    pub previous_versions: Option<HashMap<String, String>>,
 }
 
 impl DeltaClientState {
@@ -235,22 +250,106 @@ impl DeltaClientState {
             .insert(name.to_string(), version.to_string());
     }
 
-    /// Subscribe to specific resources
+    /// Add resources to the tracked set.
+    ///
+    /// Delta xDS treats an empty subscribe list as "no change"; legacy
+    /// wildcard is handled explicitly by [`Self::mark_legacy_wildcard`].
     pub fn subscribe(&mut self, names: &[String]) {
-        if names.is_empty() {
-            self.wildcard = true;
-        } else {
-            for name in names {
-                self.subscribed_resources.insert(name.clone());
+        for name in names {
+            if name == "*" {
+                self.wildcard = true;
+                self.force_all = true;
+                continue;
+            }
+            self.subscribed_resources.insert(name.clone());
+            // Upstream requires a resend even if the advertised version is
+            // current, because the client may have dropped its local copy.
+            self.force_send.insert(name.clone());
+        }
+    }
+
+    /// Remove resources from the tracked set.
+    ///
+    /// Unsubscribing from `*` only drops the wildcard; specific subscriptions
+    /// remain. When a specific name is dropped while the wildcard is still
+    /// active, it is forced on the next response so the client can tell
+    /// whether the resource is still covered by the wildcard.
+    pub fn unsubscribe(&mut self, names: &[String]) {
+        for name in names {
+            if name == "*" {
+                self.wildcard = false;
+                self.force_all = false;
+                continue;
+            }
+            self.subscribed_resources.remove(name);
+            self.force_send.remove(name);
+            if self.wildcard {
+                // The client may still cache the resource via the wildcard;
+                // keep its version and force one clarifying resend.
+                self.force_send.insert(name.clone());
+            } else {
+                self.acked_versions.remove(name);
             }
         }
     }
 
-    /// Unsubscribe from specific resources
-    pub fn unsubscribe(&mut self, names: &[String]) {
+    /// Apply the upstream legacy wildcard rule for the first request of a type:
+    /// an empty subscribe list and an empty unsubscribe list means `*`.
+    pub fn mark_legacy_wildcard(&mut self) {
+        self.wildcard = true;
+        self.force_all = true;
+    }
+
+    /// Seed versions reported by the client on stream (re)connect.
+    pub fn seed_versions(&mut self, versions: &HashMap<String, String>) {
+        for (name, version) in versions {
+            self.acked_versions
+                .entry(name.clone())
+                .or_insert_with(|| version.clone());
+        }
+    }
+
+    /// Record a response as sent and snapshot the versions it supersedes.
+    pub fn prepare_send(&mut self, nonce: &str, sent_versions: &HashMap<String, String>) {
+        self.previous_versions = Some(self.acked_versions.clone());
+        for (name, version) in sent_versions {
+            self.acked_versions.insert(name.clone(), version.clone());
+        }
+        self.last_sent_nonce = nonce.to_string();
+    }
+
+    /// Accept an ACK for the most recent nonce.
+    pub fn record_ack(&mut self, nonce: &str) -> bool {
+        if self.last_sent_nonce.is_empty() || self.last_sent_nonce != nonce {
+            return false;
+        }
+        self.previous_versions = None;
+        true
+    }
+
+    /// Roll back to pre-response versions when the matching response was NACKed.
+    pub fn record_nack(&mut self, nonce: &str) -> bool {
+        if self.last_sent_nonce.is_empty() || self.last_sent_nonce != nonce {
+            return false;
+        }
+        if let Some(previous) = self.previous_versions.take() {
+            self.acked_versions = previous;
+        }
+        true
+    }
+
+    /// Clear one-shot resend markers after a response has been built.
+    pub fn clear_forced(&mut self) {
+        self.force_send.clear();
+        self.force_all = false;
+    }
+
+    /// Forget resources reported as removed.
+    pub fn forget(&mut self, names: &[String]) {
         for name in names {
-            self.subscribed_resources.remove(name);
             self.acked_versions.remove(name);
+            self.subscribed_resources.remove(name);
+            self.force_send.remove(name);
         }
     }
 
@@ -261,6 +360,9 @@ impl DeltaClientState {
     pub fn needs_update(&self, name: &str, current_version: &str) -> bool {
         if !self.wildcard && !self.subscribed_resources.contains(name) {
             return false;
+        }
+        if self.force_all || self.force_send.contains(name) {
+            return true;
         }
         match self.acked_versions.get(name) {
             Some(acked) => acked != current_version,
@@ -290,8 +392,11 @@ pub struct SnapshotCache {
     snapshots: DashMap<String, Arc<ResourceSnapshot>>,
     /// Default snapshot for nodes without specific configuration
     default_snapshot: parking_lot::RwLock<Option<Arc<ResourceSnapshot>>>,
-    /// Delta client states: node_id -> DeltaClientState
-    delta_states: DashMap<String, DeltaClientState>,
+    /// Delta client states: (node_id, resource_type) -> DeltaClientState.
+    ///
+    /// Delta versions and subscriptions are walled off per `type_url`, just as
+    /// upstream ADS requires.
+    delta_states: DashMap<(String, ResourceType), DeltaClientState>,
 }
 
 impl SnapshotCache {
@@ -369,22 +474,67 @@ impl SnapshotCache {
         }
     }
 
-    /// Get or create delta state for a node
-    pub fn get_or_create_delta_state(&self, node_id: &str) -> DeltaClientState {
+    /// Whether this type already has a delta state on the stream.
+    pub fn has_delta_state(&self, node_id: &str, resource_type: ResourceType) -> bool {
         self.delta_states
-            .entry(node_id.to_string())
+            .contains_key(&(node_id.to_string(), resource_type))
+    }
+
+    /// Whether a real client request has initialized this type's state.
+    pub fn is_delta_state_initialized(&self, node_id: &str, resource_type: ResourceType) -> bool {
+        self.delta_states
+            .get(&(node_id.to_string(), resource_type))
+            .map(|state| state.initialized)
+            .unwrap_or(false)
+    }
+
+    /// Get or create delta state for a node and resource type.
+    pub fn get_or_create_delta_state(
+        &self,
+        node_id: &str,
+        resource_type: ResourceType,
+    ) -> DeltaClientState {
+        self.delta_states
+            .entry((node_id.to_string(), resource_type))
             .or_default()
             .clone()
     }
 
-    /// Update delta state for a node
-    pub fn update_delta_state(&self, node_id: &str, state: DeltaClientState) {
-        self.delta_states.insert(node_id.to_string(), state);
+    /// Update delta state for a node and resource type.
+    pub fn update_delta_state(
+        &self,
+        node_id: &str,
+        resource_type: ResourceType,
+        state: DeltaClientState,
+    ) {
+        self.delta_states
+            .insert((node_id.to_string(), resource_type), state);
     }
 
-    /// Remove delta state for a node
-    pub fn remove_delta_state(&self, node_id: &str) {
-        self.delta_states.remove(node_id);
+    /// Remove delta state for a node and resource type.
+    pub fn remove_delta_state(&self, node_id: &str, resource_type: ResourceType) {
+        self.delta_states
+            .remove(&(node_id.to_string(), resource_type));
+    }
+
+    /// Mutate a node/type delta state atomically.
+    pub fn with_delta_state<R>(
+        &self,
+        node_id: &str,
+        resource_type: ResourceType,
+        f: impl FnOnce(&mut DeltaClientState) -> R,
+    ) -> R {
+        let mut state = self
+            .delta_states
+            .entry((node_id.to_string(), resource_type))
+            .or_default();
+        f(&mut state)
+    }
+
+    /// Remove all delta states belonging to a node when its stream closes.
+    pub fn remove_delta_states_for_node(&self, node_id: &str) {
+        self.delta_states
+            .retain(|(stored_node, _), _| stored_node != node_id);
     }
 }
 
@@ -658,9 +808,19 @@ mod tests {
     #[test]
     fn test_delta_client_state_subscribe_wildcard() {
         let mut state = DeltaClientState::new();
-        state.subscribe(&[]);
+        state.subscribe(&["*".to_string()]);
 
         assert!(state.wildcard);
+        assert!(state.force_all);
+    }
+
+    #[test]
+    fn test_delta_client_state_empty_subscribe_is_no_change() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&[]);
+
+        assert!(!state.wildcard);
+        assert!(state.subscribed_resources.is_empty());
     }
 
     #[test]
@@ -683,6 +843,7 @@ mod tests {
     fn test_delta_client_state_needs_update_specific_subscription() {
         let mut state = DeltaClientState::new();
         state.subscribe(&["cluster-1".to_string(), "cluster-2".to_string()]);
+        state.clear_forced();
 
         // Never acked - needs update
         assert!(state.needs_update("cluster-1", "v1"));
@@ -701,7 +862,8 @@ mod tests {
     #[test]
     fn test_delta_client_state_needs_update_wildcard() {
         let mut state = DeltaClientState::new();
-        state.subscribe(&[]); // wildcard
+        state.mark_legacy_wildcard();
+        state.clear_forced();
 
         // Wildcard should accept any resource
         assert!(state.needs_update("cluster-1", "v1"));
@@ -737,7 +899,7 @@ mod tests {
     #[test]
     fn test_delta_client_state_detect_removals_wildcard() {
         let mut state = DeltaClientState::new();
-        state.subscribe(&[]); // wildcard
+        state.mark_legacy_wildcard();
         state.ack_resource("cluster-1", "v1");
         state.ack_resource("cluster-2", "v2");
 
@@ -766,11 +928,40 @@ mod tests {
     }
 
     #[test]
-    fn test_snapshot_cache_delta_state() {
+    fn test_snapshot_cache_delta_state_is_isolated_per_type() {
         let cache = SnapshotCache::new();
 
+        let mut cluster_state = DeltaClientState::new();
+        cluster_state.ack_resource("cluster-1", "v1");
+        cache.update_delta_state("node-1", ResourceType::Cluster, cluster_state);
+
+        let mut route_state = DeltaClientState::new();
+        route_state.ack_resource("route-1", "v2");
+        cache.update_delta_state("node-1", ResourceType::Route, route_state);
+
+        let cluster = cache.get_or_create_delta_state("node-1", ResourceType::Cluster);
+        assert_eq!(
+            cluster.acked_versions.get("cluster-1").map(String::as_str),
+            Some("v1")
+        );
+        assert!(!cluster.acked_versions.contains_key("route-1"));
+
+        let route = cache.get_or_create_delta_state("node-1", ResourceType::Route);
+        assert_eq!(
+            route.acked_versions.get("route-1").map(String::as_str),
+            Some("v2")
+        );
+        assert!(!route.acked_versions.contains_key("cluster-1"));
+    }
+
+    #[test]
+    fn test_snapshot_cache_delta_state() {
+        let cache = SnapshotCache::new();
+        let resource_type = ResourceType::Cluster;
+
         // Get or create returns default
-        let state = cache.get_or_create_delta_state("node-1");
+        assert!(!cache.has_delta_state("node-1", resource_type));
+        let state = cache.get_or_create_delta_state("node-1", resource_type);
         assert!(state.acked_versions.is_empty());
         assert!(!state.wildcard);
 
@@ -778,19 +969,29 @@ mod tests {
         let mut updated = DeltaClientState::new();
         updated.subscribe(&["cluster-1".to_string()]);
         updated.ack_resource("cluster-1", "v1");
-        cache.update_delta_state("node-1", updated);
+        cache.update_delta_state("node-1", resource_type, updated);
 
         // Retrieve updated state
-        let state = cache.get_or_create_delta_state("node-1");
+        let state = cache.get_or_create_delta_state("node-1", resource_type);
         assert!(state.subscribed_resources.contains("cluster-1"));
         assert_eq!(
             state.acked_versions.get("cluster-1"),
             Some(&"v1".to_string())
         );
 
+        // States are walled off per type.
+        assert!(!cache.has_delta_state("node-1", ResourceType::Route));
+
         // Remove state
-        cache.remove_delta_state("node-1");
-        let state = cache.get_or_create_delta_state("node-1");
+        cache.remove_delta_state("node-1", resource_type);
+        let state = cache.get_or_create_delta_state("node-1", resource_type);
         assert!(state.acked_versions.is_empty());
+
+        // All states for a closed stream can be dropped at once.
+        cache.update_delta_state("node-1", ResourceType::Cluster, DeltaClientState::new());
+        cache.update_delta_state("node-1", ResourceType::Route, DeltaClientState::new());
+        cache.remove_delta_states_for_node("node-1");
+        assert!(!cache.has_delta_state("node-1", ResourceType::Cluster));
+        assert!(!cache.has_delta_state("node-1", ResourceType::Route));
     }
 }

@@ -15,6 +15,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info, warn};
 
 use crate::server::{
+    DeltaDiscoveryRequest as InternalDeltaRequest, DeltaDiscoveryResponse as InternalDeltaResponse,
     DiscoveryRequest as InternalRequest, DiscoveryResponse as InternalResponse, XdsServer,
 };
 use crate::xds::ResourceType;
@@ -109,27 +110,27 @@ pub fn to_wire_response(resp: InternalResponse) -> DiscoveryResponse {
     }
 }
 
-fn to_internal_delta_request(req: &DeltaRequest) -> InternalRequest {
-    InternalRequest {
-        version_info: String::new(),
+fn to_internal_delta_request(req: &DeltaRequest) -> InternalDeltaRequest {
+    InternalDeltaRequest {
         node: req.node.as_ref().map(to_internal_node),
-        resource_names: req.resource_names_subscribe.clone(),
         type_url: req.type_url.clone(),
+        resource_names_subscribe: req.resource_names_subscribe.clone(),
+        resource_names_unsubscribe: req.resource_names_unsubscribe.clone(),
+        initial_resource_versions: req.initial_resource_versions.clone(),
         response_nonce: req.response_nonce.clone(),
         error_detail: req.error_detail.as_ref().map(|s| s.message.clone()),
     }
 }
 
-fn to_wire_delta_response(resp: InternalResponse, removed: Vec<String>) -> DeltaResponse {
-    let version = resp.version_info.clone();
+fn to_wire_delta_response(resp: InternalDeltaResponse) -> DeltaResponse {
     DeltaResponse {
-        system_version_info: version.clone(),
+        system_version_info: resp.system_version_info,
         resources: resp
             .resources
             .into_iter()
             .map(|r| Resource {
                 name: r.name,
-                version: version.clone(),
+                version: r.version,
                 resource: Some(::prost_types::Any {
                     type_url: r.resource_type.type_url().to_string(),
                     value: r.data,
@@ -138,7 +139,7 @@ fn to_wire_delta_response(resp: InternalResponse, removed: Vec<String>) -> Delta
             })
             .collect(),
         type_url: resp.type_url,
-        removed_resources: removed,
+        removed_resources: resp.removed_resources,
         nonce: resp.nonce,
         // No control_plane on DeltaDiscoveryResponse: upstream field 7 is
         // udpa_removed_resources, so a ControlPlane here would be misread by
@@ -235,16 +236,43 @@ impl AggregatedDiscoveryService for BatataAdsService {
         let (tx, rx) = mpsc::channel::<Result<DeltaResponse, Status>>(64);
 
         tokio::spawn(async move {
+            let mut node_id: Option<String> = None;
+            let mut push_task: Option<tokio::task::JoinHandle<()>> = None;
+
             loop {
                 match tokio_stream::StreamExt::next(&mut inbound).await {
                     Some(Ok(req)) => {
-                        let removed = req.resource_names_unsubscribe.clone();
+                        if node_id.is_none() {
+                            let id = req
+                                .node
+                                .as_ref()
+                                .map(|n| n.id.clone())
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            info!(node_id = %id, "Delta ADS stream established");
+
+                            let mut push_rx = xds_server.register_delta_stream(&id);
+                            let push_tx = tx.clone();
+                            push_task = Some(tokio::spawn(async move {
+                                while let Some(item) = push_rx.recv().await {
+                                    let out = item.map(to_wire_delta_response);
+                                    if push_tx.send(out).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }));
+                            node_id = Some(id);
+                        }
+
                         let internal = to_internal_delta_request(&req);
-                        if let Some(resp) = xds_server.handle_request(internal).await
-                            && tx
-                                .send(Ok(to_wire_delta_response(resp, removed)))
-                                .await
-                                .is_err()
+                        debug!(
+                            type_url = %req.type_url,
+                            subscribe = req.resource_names_subscribe.len(),
+                            unsubscribe = req.resource_names_unsubscribe.len(),
+                            "Delta ADS request"
+                        );
+                        if let Some(resp) = xds_server.handle_delta_request(internal).await
+                            && tx.send(Ok(to_wire_delta_response(resp))).await.is_err()
                         {
                             break;
                         }
@@ -255,6 +283,14 @@ impl AggregatedDiscoveryService for BatataAdsService {
                     }
                     None => break,
                 }
+            }
+
+            if let Some(id) = node_id {
+                xds_server.unregister_delta_stream(&id);
+                info!(node_id = %id, "Delta ADS stream closed");
+            }
+            if let Some(task) = push_task {
+                task.abort();
             }
         });
 
@@ -331,15 +367,16 @@ mod tests {
         // message as ResourceName entries and can NACK the whole response.
         use ::prost::Message;
 
-        let resp = InternalResponse {
-            version_info: "9".to_string(),
+        let resp = InternalDeltaResponse {
+            system_version_info: "9".to_string(),
             resources: vec![],
+            removed_resources: vec![],
             type_url: ResourceType::Cluster.type_url().to_string(),
             nonce: "n-9".to_string(),
             control_plane_id: "SENTINEL_CP_ID_MUST_NOT_APPEAR".to_string(),
         };
 
-        let wire = to_wire_delta_response(resp, vec![]);
+        let wire = to_wire_delta_response(resp);
         assert_eq!(wire.system_version_info, "9");
 
         let encoded = wire.encode_to_vec();
@@ -355,5 +392,72 @@ mod tests {
             !encoded.contains(&0x3a),
             "unexpected field-7 key on DeltaDiscoveryResponse"
         );
+    }
+
+    #[test]
+    fn test_to_internal_delta_request_preserves_all_delta_fields() {
+        let req = DeltaRequest {
+            node: Some(crate::xds::generated::discovery::Node {
+                id: "sidecar-1".to_string(),
+                ..Default::default()
+            }),
+            type_url: ResourceType::Cluster.type_url().to_string(),
+            resource_names_subscribe: vec!["alpha".to_string()],
+            resource_names_unsubscribe: vec!["beta".to_string()],
+            initial_resource_versions: std::collections::HashMap::from([(
+                "alpha".to_string(),
+                "sha256:old".to_string(),
+            )]),
+            response_nonce: "n-1".to_string(),
+            error_detail: Some(crate::xds::generated::discovery::Status {
+                message: "rejected".to_string(),
+                ..Default::default()
+            }),
+        };
+
+        let internal = to_internal_delta_request(&req);
+        assert_eq!(internal.node.as_ref().unwrap().id, "sidecar-1");
+        assert_eq!(internal.type_url, ResourceType::Cluster.type_url());
+        assert_eq!(internal.resource_names_subscribe, vec!["alpha"]);
+        assert_eq!(internal.resource_names_unsubscribe, vec!["beta"]);
+        assert_eq!(
+            internal.initial_resource_versions.get("alpha"),
+            Some(&"sha256:old".to_string())
+        );
+        assert_eq!(internal.response_nonce, "n-1");
+        assert_eq!(internal.error_detail.as_deref(), Some("rejected"));
+    }
+
+    #[test]
+    fn test_to_wire_delta_response_uses_per_resource_versions() {
+        let resp = InternalDeltaResponse {
+            system_version_info: "42".to_string(),
+            resources: vec![crate::server::DeltaResourceData {
+                name: "alpha".to_string(),
+                version: "sha256:alpha".to_string(),
+                resource_type: ResourceType::Cluster,
+                data: vec![0x0a, 0x05],
+            }],
+            removed_resources: vec!["beta".to_string()],
+            type_url: ResourceType::Cluster.type_url().to_string(),
+            nonce: "n-42".to_string(),
+            control_plane_id: "SENTINEL_CP_ID_MUST_NOT_APPEAR".to_string(),
+        };
+
+        let wire = to_wire_delta_response(resp);
+        assert_eq!(wire.system_version_info, "42");
+        assert_eq!(wire.resources.len(), 1);
+        assert_eq!(wire.resources[0].name, "alpha");
+        assert_eq!(wire.resources[0].version, "sha256:alpha");
+        assert_eq!(
+            wire.resources[0]
+                .resource
+                .as_ref()
+                .expect("resource payload must be present")
+                .value,
+            vec![0x0a, 0x05]
+        );
+        assert_eq!(wire.removed_resources, vec!["beta"]);
+        assert_eq!(wire.nonce, "n-42");
     }
 }

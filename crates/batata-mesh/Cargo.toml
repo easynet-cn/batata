@@ -47,3 +47,6 @@ chrono = { workspace = true }
 
 # UUID
 uuid = { workspace = true }
+
+# Stable per-resource content versions for Delta xDS
+sha2 = { workspace = true }

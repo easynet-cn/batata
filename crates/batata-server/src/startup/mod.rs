@@ -19,6 +19,7 @@ mod raft_members;
 mod shutdown;
 mod telemetry;
 mod xds;
+mod xds_nacos_source;
 
 /// Re-exported item.
 pub use dns::{DnsConfig, DnsServer};

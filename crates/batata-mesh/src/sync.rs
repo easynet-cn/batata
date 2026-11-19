@@ -138,7 +138,7 @@ pub enum ServiceChangeEvent {
 }
 
 /// Nacos service data for synchronization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NacosServiceData {
     /// Namespace ID
     pub namespace_id: String,
@@ -155,7 +155,7 @@ pub struct NacosServiceData {
 }
 
 /// Nacos instance data for synchronization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NacosInstanceData {
     /// Instance ID
     pub instance_id: String,
@@ -385,6 +385,9 @@ async fn sync_to_xds(
     let services_guard = services.read().await;
 
     if services_guard.is_empty() {
+        // Publish an empty snapshot so removed services do not linger in xDS.
+        xds_server.update_snapshot(ResourceSnapshot::new());
+        debug!("No services; publishing empty xDS snapshot");
         return Ok(());
     }
 
@@ -616,6 +619,23 @@ mod tests {
         // Verify snapshot was updated
         let stats = xds_server.stats();
         assert!(stats.has_default_snapshot);
+    }
+
+    #[tokio::test]
+    async fn test_sync_now_with_no_services_publishes_empty_snapshot() {
+        let xds_server = Arc::new(XdsServer::new(XdsServerConfig::default()));
+        let bridge = NacosSyncBridge::new(xds_server.clone(), SyncBridgeConfig::default());
+
+        bridge.sync_now().await.unwrap();
+
+        let snapshot = xds_server
+            .snapshot_cache()
+            .get_snapshot("unused")
+            .expect("empty snapshot must still be published");
+        assert!(snapshot.clusters.is_empty());
+        assert!(snapshot.endpoints.is_empty());
+        assert!(snapshot.listeners.is_empty());
+        assert!(snapshot.routes.is_empty());
     }
 
     #[test]

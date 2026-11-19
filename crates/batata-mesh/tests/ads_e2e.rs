@@ -17,7 +17,7 @@ use batata_mesh::xds::encode::{
     decode_route, decode_tcp_proxy,
 };
 use batata_mesh::xds::generated::discovery::aggregated_discovery_service_client::AggregatedDiscoveryServiceClient;
-use batata_mesh::xds::generated::discovery::{DiscoveryRequest, Node};
+use batata_mesh::xds::generated::discovery::{DeltaDiscoveryRequest, DiscoveryRequest, Node};
 use batata_mesh::xds::generated::{
     cluster as cds, http_connection_manager as hcm, listener as lds, route as rds,
 };
@@ -409,6 +409,83 @@ async fn test_ads_snapshot_push_includes_lds_and_rds() {
     assert!(seen.contains(ResourceType::Endpoint.type_url()));
     assert!(seen.contains(ResourceType::Listener.type_url()));
     assert!(seen.contains(ResourceType::Route.type_url()));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn test_delta_ads_sends_incremental_resources_and_pushes_only_changes() {
+    let (addr, server, shutdown) = start_server().await;
+    let mut client = AggregatedDiscoveryServiceClient::connect(format!("http://{addr}"))
+        .await
+        .unwrap();
+
+    let (req_tx, req_rx) = tokio::sync::mpsc::channel::<DeltaDiscoveryRequest>(4);
+    let mut stream = client
+        .delta_aggregated_resources(tokio_stream::wrappers::ReceiverStream::new(req_rx))
+        .await
+        .unwrap()
+        .into_inner();
+
+    req_tx
+        .send(DeltaDiscoveryRequest {
+            node: Some(Node {
+                id: "sidecar-e2e".to_string(),
+                cluster: "payments".to_string(),
+                user_agent_name: "envoy".to_string(),
+                ..Default::default()
+            }),
+            type_url: ResourceType::Cluster.type_url().to_string(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let first = tokio::time::timeout(Duration::from_secs(5), stream.message())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.type_url, ResourceType::Cluster.type_url());
+    assert_eq!(first.resources.len(), 1);
+    assert_eq!(first.resources[0].name, "payments");
+    assert!(first.resources[0].version.starts_with("sha256:"));
+    let first_version = first.resources[0].version.clone();
+    let payload = first.resources[0]
+        .resource
+        .as_ref()
+        .expect("delta resource payload must be present");
+    assert_eq!(payload.type_url, ResourceType::Cluster.type_url());
+    assert_eq!(decode_cluster(&payload.value).unwrap().name, "payments");
+
+    // ACK the first response. An unchanged resource must not be re-sent.
+    req_tx
+        .send(DeltaDiscoveryRequest {
+            type_url: ResourceType::Cluster.type_url().to_string(),
+            response_nonce: first.nonce,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let mut changed_snapshot = sample_snapshot();
+    changed_snapshot
+        .clusters
+        .get_mut("payments")
+        .expect("sample cluster must exist")
+        .connect_timeout_ms = 9_000;
+    server.update_snapshot(changed_snapshot);
+
+    let pushed = tokio::time::timeout(Duration::from_secs(5), stream.message())
+        .await
+        .expect("delta push must arrive")
+        .unwrap()
+        .expect("delta push response must be present");
+    assert_eq!(pushed.type_url, ResourceType::Cluster.type_url());
+    assert_eq!(pushed.resources.len(), 1);
+    assert_eq!(pushed.resources[0].name, "payments");
+    assert_ne!(pushed.resources[0].version, first_version);
+    assert!(pushed.removed_resources.is_empty());
 
     let _ = shutdown.send(());
 }
