@@ -3101,9 +3101,9 @@ On the Consul side, `connect_ca.rs` now persists the CA private key under `__ca_
 
 **Boundary and next.** Remaining #508 items are true incremental Delta on the live ADS path, Path A Nacos naming→bridge wiring, broader Phase 1–5 roadmap work and the P0/P1 Consul kernel-correctness backlog. This slice is committed as `63beb6a6`; no further commit is implied.
 
-### 37.20 True incremental Delta xDS on the live ADS path (2026-11-19, uncommitted)
+### 37.20 True incremental Delta xDS on the live ADS path (2026-11-19)
 
-Continuation of #508 after the SDS checkpoint. Backend-only: `batata-ui` untouched; no tag/version bump, commit/push, `--full`/matrix/SDK/perf run. The clean full remains deferred until the frontend task fully completes.
+Continuation of #508 after the SDS checkpoint. Backend-only: `batata-ui` untouched; no tag/version bump, `--full`/matrix/SDK/perf run. Committed as `c1a4514b` and dual-pushed to gitee/origin; the clean full remains deferred until the frontend task fully completes.
 
 **Audit result.** The registered live service is `ads.rs::BatataAdsService` (installed from `grpc.rs` for both Port A 15010 and Port B 8502); `grpc.rs::AggregatedDiscoveryServiceImpl` remains unregistered dead code. Live `delta_aggregated_resources` was a wrapper around the SotW `XdsServer::handle_request`: it forced `version_info=""`, ignored `initial_resource_versions` and `resource_names_unsubscribe`, re-encoded the full snapshot with one global version per resource, echoed unsubscribes as removals, and never registered a push stream. The existing `DeltaClientState`/`delta_states` cache was dead outside unit tests. Delta-only clients were also absent from `connected_nodes()`, so per-proxy snapshots were never built for them.
 
@@ -3117,11 +3117,11 @@ Continuation of #508 after the SDS checkpoint. Backend-only: `batata-ui` untouch
 
 **Real Envoy acceptance (host harness, PASS).** The final `batata-server` was started with `BATATA_PLUGIN_CONSUL_ENABLED=true` and a fresh isolated data directory; real `envoyproxy/envoy:v1.38-latest` used a host harness bootstrap with `ads_config.api_type: DELTA_GRPC`. `/config_dump` showed `dynamic_active_clusters = [(consul, sha256:d28a95a...)]` and `dynamic_listeners = [(default_listener:consul, sha256:997c99cc...)]`; Envoy reached `all dependencies initialized. starting workers` with no NACK, rejection, or initial-fetch timeout. Container, server process and all probe ports (8500/8502/19903/19904/11002/11003) were cleaned up.
 
-**Boundary and next.** Remaining #508 items are Path A Nacos naming→bridge wiring, broader Phase 1–5 roadmap work and the P0/P1 Consul kernel-correctness backlog. This slice is **not committed**; commit only on explicit user request.
+**Boundary and next.** Remaining #508 items are Path A Nacos naming→bridge wiring, broader Phase 1–5 roadmap work and the P0/P1 Consul kernel-correctness backlog. This slice is committed as `c1a4514b`; no further commit is implied.
 
-### 37.21 Path A Nacos naming source wiring (2026-11-19, uncommitted)
+### 37.21 Path A Nacos naming source wiring (2026-11-19)
 
-Continuation of #508 after the Delta slice. Backend-only: `batata-ui` untouched; no tag/version bump, `--full`/matrix/SDK/perf run. The clean full remains deferred until the frontend task fully completes.
+Continuation of #508 after the Delta slice. Backend-only: `batata-ui` untouched; no tag/version bump, `--full`/matrix/SDK/perf run. Committed as `c1a4514b` and dual-pushed to gitee/origin; the clean full remains deferred until the frontend task fully completes.
 
 **Audit result.** `startup/xds.rs::start_xds_service` accepted a `NamingServiceProvider` as `_naming_service` and never used it. `NacosSyncBridge` owned the service cache and debounced snapshot builds, but its event channel had no production producer: `event_sender`, `update_service` and `remove_service` were only called from tests. The cache stayed empty, `sync_to_xds` returned at `sync.rs:387-389`, and the 15010 ADS server published no snapshot. Path B's independent `ConsulSyncBridge` was unaffected.
 
@@ -3131,4 +3131,4 @@ Continuation of #508 after the Delta slice. Backend-only: `batata-ui` untouched;
 
 **Gates.** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent) and `git diff --check` all rc=0. `cargo test --workspace --exclude batata-integration-tests` = **4218 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+6 over the 4212 Delta baseline). No compat F-ID / T-ID status or total changed.
 
-**Boundary and next.** Path A has no real Envoy acceptance run yet; upstream `nacos.istio.mcp.server.enabled` / port 18848 remains a separate Phase 1 product decision. Remaining #508 items are the broader Phase 1–5 roadmap and the P0/P1 Consul kernel-correctness backlog. This slice is **not committed**; commit only on explicit user request.
+**Boundary and next.** Path A has no real Envoy acceptance run yet; upstream `nacos.istio.mcp.server.enabled` / port 18848 remains a separate Phase 1 product decision. Remaining #508 items are the broader Phase 1–5 roadmap and the P0/P1 Consul kernel-correctness backlog. This slice is committed as `c1a4514b`; no further commit is implied.
