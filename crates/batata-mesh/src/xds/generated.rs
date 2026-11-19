@@ -47,3 +47,11 @@ pub mod http_connection_manager {
 pub mod tcp_proxy {
     tonic::include_proto!("envoy.extensions.filters.network.tcp_proxy.v3");
 }
+
+/// RBAC core config, matchers and filter typed_config wrappers
+/// (`envoy.config.rbac.v3`). The network/HTTP filter configs share this
+/// package so prost keeps them in one module; the encoder supplies the
+/// correct upstream type_url for each filter.
+pub mod rbac {
+    tonic::include_proto!("envoy.config.rbac.v3");
+}

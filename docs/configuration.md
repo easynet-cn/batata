@@ -234,7 +234,12 @@ batata.mesh.xds.default.listener.port: 15001
 - **RDS** (Route Discovery Service) - Route configuration
 - **ADS** (Aggregated Discovery Service) - All resources via single stream
 
-**Compatible with:** Envoy Proxy, Istio, and any xDS-compatible service mesh.
+**Scope:** the active path is Consul Connect → Envoy ADS on port 8502
+(CDS/EDS/LDS/RDS/ADS; L4/L7 intentions compiled to network/HTTP RBAC filters).
+The Nacos `nacos.istio.mcp.server.enabled` / 18848 path is **not ported**;
+`batata.mesh.xds.*` on 15010 has no production naming-data bridge. Istio is not
+itself an xDS client, so this is Envoy v3 xDS compatibility, not Istio
+control-plane compatibility.
 
 ## Metrics
 

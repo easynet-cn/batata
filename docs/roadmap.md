@@ -5,7 +5,7 @@
 - [x] Config encryption at rest (AES-128-CBC)
 - [x] OpenTelemetry integration (OTLP export)
 - [x] Multi-datacenter support (locality-aware sync)
-- [x] Service Mesh xDS protocol (EDS, CDS, LDS, RDS, ADS)
+- [x] Consul Connect xDS protocol (EDS, CDS, LDS, RDS, ADS; verified with real Envoy) — Nacos Istio/MCP path not ported
 - [x] AI Integration (MCP Server Registry, A2A Agent Registry)
 - [x] Kubernetes sync (bidirectional service sync)
 - [x] LDAP authentication

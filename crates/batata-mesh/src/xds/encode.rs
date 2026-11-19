@@ -291,9 +291,15 @@ fn encode_network_filter(filter: &NetworkFilter) -> Option<lds::Filter> {
             route_config_name,
             codec_type,
             stat_prefix,
+            rbac_config,
         } => (
             type_urls::HCM_TYPE,
-            encode_http_connection_manager(route_config_name, *codec_type, stat_prefix),
+            encode_http_connection_manager(
+                route_config_name,
+                *codec_type,
+                stat_prefix,
+                rbac_config.as_deref(),
+            ),
         ),
         NetworkFilterType::TcpProxy {
             stat_prefix,
@@ -302,6 +308,7 @@ fn encode_network_filter(filter: &NetworkFilter) -> Option<lds::Filter> {
             type_urls::TCP_PROXY_TYPE,
             encode_tcp_proxy(stat_prefix, cluster),
         ),
+        NetworkFilterType::Rbac { config } => (type_urls::NETWORK_RBAC_TYPE, config.clone()),
         // A generic JSON blob is not a valid Envoy protobuf payload.
         NetworkFilterType::Generic { .. } => return None,
     };
@@ -320,6 +327,7 @@ pub fn encode_http_connection_manager(
     route_config_name: &str,
     codec_type: HttpCodecType,
     stat_prefix: &str,
+    rbac_config: Option<&[u8]>,
 ) -> Vec<u8> {
     let codec = match codec_type {
         HttpCodecType::Auto => hcm::CodecType::Auto,
@@ -328,9 +336,25 @@ pub fn encode_http_connection_manager(
         HttpCodecType::Http3 => hcm::CodecType::Http3,
     };
 
+    let mut http_filters: Vec<hcm::HttpFilter> = Vec::new();
+
+    // L7 RBAC (when present) must run before the router so an unauthorized
+    // request is rejected before any upstream routing/forwarding happens.
+    if let Some(config) = rbac_config {
+        http_filters.push(hcm::HttpFilter {
+            name: "envoy.filters.http.rbac".to_string(),
+            config_type: Some(hcm::http_filter::ConfigType::TypedConfig(
+                ::prost_types::Any {
+                    type_url: type_urls::HTTP_RBAC_TYPE.to_string(),
+                    value: config.to_vec(),
+                },
+            )),
+        });
+    }
+
     // Envoy requires the terminal router filter. Its config message has no
     // required fields, so an empty typed_config decodes to the default Router.
-    let router = hcm::HttpFilter {
+    http_filters.push(hcm::HttpFilter {
         name: ROUTER_FILTER_NAME.to_string(),
         config_type: Some(hcm::http_filter::ConfigType::TypedConfig(
             ::prost_types::Any {
@@ -338,12 +362,12 @@ pub fn encode_http_connection_manager(
                 value: Vec::new(),
             },
         )),
-    };
+    });
 
     hcm::HttpConnectionManager {
         codec_type: codec as i32,
         stat_prefix: stat_prefix.to_string(),
-        http_filters: vec![router],
+        http_filters,
         route_specifier: Some(hcm::http_connection_manager::RouteSpecifier::Rds(
             hcm::Rds {
                 config_source: Some(hcm::ConfigSource {
@@ -658,6 +682,49 @@ mod tests {
             rds.config_source.unwrap().resource_api_version,
             hcm::ApiVersion::V3 as i32
         );
+    }
+
+    #[test]
+    fn test_hcm_injects_rbac_filter_before_router() {
+        use crate::xds::rbac::IntentionAction;
+        use crate::xds::rbac::{
+            HttpPermissionMatch, IntentionsForService, RbacIntention, RbacPermission,
+            encode_rbac_filters,
+        };
+
+        let input = IntentionsForService {
+            destination: "api".to_string(),
+            trust_domain: "consul".to_string(),
+            datacenter: "dc1".to_string(),
+            intentions: vec![RbacIntention {
+                source: "web".to_string(),
+                precedence: 4,
+                action: IntentionAction::Allow,
+                permissions: vec![RbacPermission {
+                    action: IntentionAction::Allow,
+                    http: Some(HttpPermissionMatch {
+                        path_prefix: Some("/admin".to_string()),
+                        ..Default::default()
+                    }),
+                }],
+            }],
+        };
+        let encoded = encode_rbac_filters(&input).expect("L7 intention must encode");
+        let hcm_config = encode_http_connection_manager(
+            "api:routes",
+            HttpCodecType::Auto,
+            "ingress_http",
+            encoded.http_config.as_deref(),
+        );
+        let hcm = decode_http_connection_manager(&hcm_config).expect("HCM must decode");
+        assert_eq!(hcm.http_filters.len(), 2);
+        assert_eq!(hcm.http_filters[0].name, "envoy.filters.http.rbac");
+        assert_eq!(hcm.http_filters[1].name, ROUTER_FILTER_NAME);
+        let hcm::http_filter::ConfigType::TypedConfig(any) = hcm.http_filters[0]
+            .config_type
+            .as_ref()
+            .expect("rbac typed_config");
+        assert_eq!(any.type_url, type_urls::HTTP_RBAC_TYPE);
     }
 
     #[test]

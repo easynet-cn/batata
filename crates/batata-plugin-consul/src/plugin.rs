@@ -1017,7 +1017,12 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // RDS resources instead of staying HTTP-only.
         let bridge = Arc::new(
             ConsulSyncBridge::new(inner.naming_store.clone(), xds_server.clone())
-                .with_connect_service(Arc::new(inner.connect.clone())),
+                .with_connect_service(Arc::new(inner.connect.clone()))
+                .with_connect_ca(
+                    inner.connect_ca.clone(),
+                    "consul",
+                    &self.dc_config.datacenter,
+                ),
         );
         // Retain both shutdown senders for the plugin lifetime. Dropping them
         // here resolves the receivers immediately: the 5-second sync loop

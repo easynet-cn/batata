@@ -2845,7 +2845,7 @@ After §35, the user chose **"手写最小 proto（推荐）"**: continue the ch
 
 ### 36.1 Wire numbers verified before writing any proto
 
-As in §34.4, `Any.value` is decoded by the receiver's own descriptor, so **field numbers**, not local Rust names, decide whether Envoy can read the payload. `curl` to `raw.githubusercontent.com` failed with `LibreSSL SSL_connect: SSL_ERROR_SYSCALL` and WebFetch of the large upstream protos truncated the field lists, so the numbers were taken from a locally available vendored Envoy v3 proto tree (`/Users/terry/work/github/easynet-cn/nacos/istio/target/protoc-dependencies/0051214e9070954ca8484eed76648ce3`, 528 `.proto` files), cross-checked against `envoyproxy/envoy@main`:
+As in §34.4, `Any.value` is decoded by the receiver's own descriptor, so **field numbers**, not local Rust names, decide whether Envoy can read the payload. `curl` to `raw.githubusercontent.com` failed with `LibreSSL SSL_connect: SSL_ERROR_SYSCALL` and WebFetch of the large upstream protos truncated the field lists, so the numbers were taken from a locally available vendored Envoy/Istio API proto tree under the **Nacos build directory** (`/Users/terry/work/github/easynet-cn/nacos/istio/target/protoc-dependencies/0051214e9070954ca8484eed76648ce3`, 528 `.proto` files), not from Nacos implementation sources; it was cross-checked against `envoyproxy/envoy@main`. No real Envoy binary had been run at that point; §37.13 and §37.15 later exercised the served subset with Envoy v1.38.
 
 | Message | Emitted field numbers | Verdict |
 | --- | --- | --- |
@@ -2862,7 +2862,7 @@ As in §34.4, `Any.value` is decoded by the receiver's own descriptor, so **fiel
 | `Rds` / `HttpFilter` | `config_source=1`, `route_config_name=2`; `name=1`, `typed_config=4` | match |
 | `CodecType` / `TcpProxy` | `AUTO=0`, `HTTP1=1`, `HTTP2=2`, `HTTP3=3`; `stat_prefix=1`, `cluster=2` | match |
 
-`Route.name = 14` and `WeightedCluster.total_weight = 3` are the two easiest to get wrong; both are copied verbatim from upstream. Caveat is the same as §34.4: comparison is against upstream `main` / that vendored snapshot, not a pinned Envoy release; no real Envoy binary has been run; and a local subset can only emit the fields it defines.
+`Route.name = 14` and `WeightedCluster.total_weight = 3` are the two easiest to get wrong; both are copied verbatim from upstream. Caveat is the same as §34.4: comparison is against upstream `main` / that vendored snapshot, not a pinned Envoy release; no real Envoy binary had been run at that point (§37.13 and §37.15 later verified the served subset with Envoy v1.38); and a local subset can only emit the fields it defines.
 
 ### 36.2 What was implemented
 
@@ -2875,7 +2875,7 @@ As in §34.4, `Any.value` is decoded by the receiver's own descriptor, so **fiel
 
 ### 36.3 Skip rather than guess
 
-A wrong-typed or JSON `Any.value` makes Envoy NACK the whole discovery response, so unsupported constructs are **omitted**, never approximated: `NetworkFilterType::Generic`, `PathMatch::Regex` / `PathTemplate`, `RouteAction::Redirect` / `DirectResponse`, `HeaderMatchType::Regex` / `Range`, multiple `methods` (which would need an OR matcher), and regex discovery-chain routes. In particular a regex path is not substituted with `prefix("/")`, which would silently match every request. SDS / Runtime protos remain absent. There are still no `envoy.config.rbac.v3` protos, so intentions remain HTTP-only.
+A wrong-typed or JSON `Any.value` makes Envoy NACK the whole discovery response, so unsupported constructs are **omitted**, never approximated: `NetworkFilterType::Generic`, `PathMatch::Regex` / `PathTemplate`, `RouteAction::Redirect` / `DirectResponse`, `HeaderMatchType::Regex` / `Range`, multiple `methods` (which would need an OR matcher), and regex discovery-chain routes. In particular a regex path is not substituted with `prefix("/")`, which would silently match every request. SDS / Runtime protos remain absent. At this point there were still no `envoy.config.rbac.v3` protos, so intentions remained HTTP-only until §37.15.
 
 ### 36.4 Validation
 
@@ -2950,9 +2950,9 @@ Also **correcting the previous turn's claim** that Nacos only does MCP/ServiceEn
 
 The two `Arc<XdsServer>` instances each own their `SnapshotCache` / `active_streams` / `SubscriptionTracker`; ports 15010 vs 8502 do not collide and no snapshot or resource name is shared. The only shared state is library code (`XdsServer`, `encode`, generated protos) and the process-level `VERSION_COUNTER`. Latent (not triggered) risks: `SnapshotCache::set_default_snapshot` is a single-slot full replace with no merge, so handing one instance to two bridges would be last-writer-wins; and the two port keys can be configured to the same value with no validation.
 
-### 37.6 Documentation overclaims (registered, not fixed in Phase 0)
+### 37.6 Documentation overclaims (registered in Phase 0, corrected in §37.15)
 
-`architecture.md:29,72` · `configuration.md:229-237` · `roadmap.md:8` (`[x]`) · `compat/nacos/feature-comparison.md:83,100` · `compat/nacos/config-mapping.md:89` · `compat/README.md:666,675,720`. Internal contradiction: `compat/README.md:679` and `compat/consul/features.md:6` say 8502 connect/xDS is "out of core scope". §36 also needs the proto-tree wording correction from §37.1 and a note that its wire-fidelity table covers only the emitted field subset.
+`architecture.md:29,72` · `configuration.md:229-237` · `roadmap.md:8` (`[x]`) · `compat/nacos/feature-comparison.md:83,100` · `compat/nacos/config-mapping.md:89` · `compat/README.md:666,675,720` · `compat/README.md:679` · `compat/consul/features.md:6`. Phase 0 left them registered; §37.15 rewrites them so 8502 is described as an implemented Consul Connect extension, the Nacos Istio/MCP path is explicitly not ported, and Istio is no longer called an xDS client. §36's proto-tree wording and wire-fidelity caveat are also corrected there: the tree was vendored Envoy/Istio API protos under a Nacos build directory, and its field-number table covers only the emitted field subset.
 
 ### 37.7 Phase 0 implementation (this round)
 
@@ -2981,7 +2981,7 @@ Phased plan: **0** (this section) repair P0 + audit + checkpoint; **1** wire Nac
 
 ### 37.10 Boundaries of this round
 
-No commit or push was performed for P2, P2-C or Phase 0; HEAD is still `3874d341`. No `--full`, matrix, SDK or perf run — the user explicitly deferred the clean full until the frontend task fully completes. `batata-ui` was not modified. The §37.6 documentation overclaims are **registered but not fixed**; Phase 0 deliberately targeted runtime correctness first. The `origin` proxy 502 recorded earlier in this round has since been resolved — see §37.11.
+No commit or push was performed for P2, P2-C or Phase 0; HEAD is still `3874d341`. No `--full`, matrix, SDK or perf run — the user explicitly deferred the clean full until the frontend task fully completes. `batata-ui` was not modified. The §37.6 documentation overclaims were **registered but not fixed in Phase 0** (runtime correctness first); §37.15 later corrected them. The `origin` proxy 502 recorded earlier in this round has since been resolved — see §37.11.
 
 ### 37.11 Remote state correction (verified 2026-11-18)
 
@@ -3033,3 +3033,26 @@ Envoy reached `all dependencies initialized. starting workers` with **no NACK/re
 The full P2 / P2-C / Phase 0 mesh checkpoint was committed on user instruction ("可以A") as `cce6c0d6` (`feat(mesh): real Envoy ADS with protobuf CDS/EDS/LDS/RDS and runtime repair`), 20 files, +3276/-249. This includes the real tonic ADS server, hand-rolled minimal LDS/RDS/HCM/TCP-proxy protos with upstream-verified field numbers, discovery-chain→RDS bridge, the P0 shutdown-sender fix, default LDS, and all ADS/e2e/runtime tests.
 
 **Push state**: after the mesh commit `cce6c0d6`, a docs-only follow-up commit records this state; the final local HEAD was pushed to **both** `origin/main` and `gitee/main` (verified with `ls-remote` on both remotes). The proxy at `127.0.0.1:50818` briefly returned 502 for the first attempts (direct GitHub was also unreachable) — an environment network outage, not a git/config error — then recovered, so the final HTTP/1.1 push to origin succeeded. Working tree is clean (`git status` count 0). No `--full`, no version bump, `batata-ui` untouched.
+
+### 37.15 B round: Delta wire fix and full L4/L7 intentions → Envoy RBAC (2026-11-19)
+
+Continuation of #508 after the user chose "B" and then "L4+L7 完整转换". Backend-only; `batata-ui` untouched; no commit, push, tag or version bump; no `--full`, matrix, SDK or perf run — the frontend task still owns the ports and the clean full remains explicitly deferred.
+
+**Audit correction that changed the edit surface.** Three read-only audits (intentions→RBAC, SDS/CA, Delta xDS) were cross-checked against source. The only registered ADS service is `ads.rs::BatataAdsService`; `grpc.rs::AggregatedDiscoveryServiceImpl` and the P2-C delta arms there are dead code, so true Delta work must edit `ads.rs` / `server.rs` / `snapshot.rs` / `connect.rs:1006`, not `grpc.rs`. The Connect CA data layer is already complete (`connect_ca.rs`: intentions, actions, HTTP permissions, `check_intention`, `evaluate_intention_permissions`, SPIFFE identities and CA HTTP handlers). What was missing was the xDS translation, not the HTTP/intention store.
+
+**Delta wire bug fixed (latent, not a current Envoy failure).** Upstream `DeltaDiscoveryResponse` has **no** `control_plane` field: field 7 is `udpa_removed_resources`. The local `proto/xds.proto` declared `ControlPlane control_plane = 7` and `ads.rs::to_wire_delta_response()` populated it; a real Envoy would decode those bytes as `ResourceName` entries and could NACK the response. The field and emission were removed, the SotW `DiscoveryResponse.control_plane = 6` was left intact, and `ads.rs::test_delta_response_does_not_emit_control_plane_on_field_7` asserts both that a sentinel identifier never reaches the wire and that no field-7 tag appears. A mutant reintroducing the field was killed.
+
+**RBAC implementation.** `crates/batata-mesh/proto/rbac.proto` and `rbac_filter.proto` are new minimal wire-compatible Envoy v3 subsets (field numbers verified against upstream; packages unified under `envoy.config.rbac.v3` so prost can share the module). `xds/rbac.rs` ports upstream Consul `agent/xds/rbac.go` precedence reduction: sort by descending precedence, drop lower-precedence intentions sharing a source, and add `NotSources` / `NotPerms` so policies are order-independent. Service names are regex-escaped (`web|admin` cannot broaden a match); the datacenter segment is wildcarded because Envoy RBAC does not verify DC. The mixed-default semantics are explicit:
+
+* L4: network RBAC `DENY` blacklist (`consul-intentions-layer4`) because batata's overall default is allow.
+* L7: HTTP RBAC `ALLOW` whitelist (`consul-intentions-layer7-N`) plus `consul-intentions-default-allow` for sources without L7 intentions; method matches use exact `:method` header matchers ORed together.
+
+`xds/types.rs` / `encode.rs` add `NetworkFilterType::Rbac` and `http_connection_manager_with_rbac()`, prepend the network filter ahead of `tcp_proxy` / HCM and insert the HTTP RBAC filter before the terminal router. `xds_sync.rs` adds `with_connect_ca()` and converts CA intentions into the mesh input; `plugin.rs` wires the CA with trust domain `consul` and the configured datacenter. `connect_ca.rs::intentions_revision()` is now part of the sync key, because intention-only changes do not bump the naming-store revision and previously left stale RBAC filters in the snapshot.
+
+**Real Envoy acceptance (host harness, cleaned up).** With Envoy v1.38 attached to ADS on `host.containers.internal:8502`, an L4 `web → api deny` intention produced a network RBAC filter with `action: DENY`, policy `consul-intentions-layer4` and the SPIFFE principal regex for `web`. An L7 intention with permissions produced `http_filters: ['envoy.filters.http.rbac', 'envoy.filters.http.router']`, an `ALLOW` policy set with `consul-intentions-default-allow` and a precedence-derived `deny /admin` rule. Both scenarios had no Envoy NACK and reached worker startup. The probe container and batata background process were removed; no ports remained open.
+
+**Documentation corrections from §37.6.** `architecture.md`, `configuration.md`, `roadmap.md`, `compat/nacos/feature-comparison.md`, `compat/nacos/config-mapping.md`, `compat/README.md` and `compat/consul/features.md` now describe 8502 as an implemented Consul Connect extension, state that the Nacos Istio/MCP / 18848 path is not ported, and stop calling Istio an xDS client. §36's proto-tree wording and its wire-fidelity caveat are corrected above: the tree was vendored Envoy/Istio API protos under a Nacos build directory, and the field-number table covers only the emitted field subset.
+
+**Gates.** `cargo fmt --all`, `cargo fmt --all -- --check`, `git diff --check` rc=0; `cargo clippy --workspace --all-targets -- -D warnings` rc=0 (989 build units, no warnings); `python3 scripts/compat_check.py` rc=0 (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent); `cargo test --workspace --exclude batata-integration-tests` = **4167 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+12 over the 4155 Phase 0 baseline). `cargo test` still prints `warning: unused dependency serde_json` for `batata-mesh`; that declaration is already present at HEAD `4afcb37e`, all current uses are in `#[cfg(test)]` modules, and no dependency was changed in this round. No compat F-ID / T-ID status or total changed.
+
+**Remaining #508 work.** `service-intentions` config entry → legacy intention store conversion and structural validation; SDS / Connect CA lifecycle wiring (including CA private-key persistence, leaf URI SAN, caching/rotation and TLS `TransportSocket`); true incremental Delta / `DELTA_GRPC` on the live ADS path; Path A Nacos naming→bridge wiring; and the P0/P1 kernel-correctness items from the mechanism audit.

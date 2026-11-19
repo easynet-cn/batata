@@ -140,9 +140,10 @@ fn to_wire_delta_response(resp: InternalResponse, removed: Vec<String>) -> Delta
         type_url: resp.type_url,
         removed_resources: removed,
         nonce: resp.nonce,
-        control_plane: Some(ControlPlane {
-            identifier: resp.control_plane_id,
-        }),
+        // No control_plane on DeltaDiscoveryResponse: upstream field 7 is
+        // udpa_removed_resources, so a ControlPlane here would be misread by
+        // a real Envoy and can NACK the response. control_plane_id is only
+        // emitted on the SotW DiscoveryResponse (field 6).
     }
 }
 
@@ -321,5 +322,38 @@ mod tests {
         assert_eq!(wire.resources.len(), 1);
         assert_eq!(wire.resources[0].type_url, ResourceType::Cluster.type_url());
         assert_eq!(wire.resources[0].value, vec![0x0a, 0x08]);
+    }
+
+    #[test]
+    fn test_delta_response_does_not_emit_control_plane_on_field_7() {
+        // Upstream DeltaDiscoveryResponse field 7 is `udpa_removed_resources`,
+        // not control_plane. A real Envoy would decode a field-7 ControlPlane
+        // message as ResourceName entries and can NACK the whole response.
+        use ::prost::Message;
+
+        let resp = InternalResponse {
+            version_info: "9".to_string(),
+            resources: vec![],
+            type_url: ResourceType::Cluster.type_url().to_string(),
+            nonce: "n-9".to_string(),
+            control_plane_id: "SENTINEL_CP_ID_MUST_NOT_APPEAR".to_string(),
+        };
+
+        let wire = to_wire_delta_response(resp, vec![]);
+        assert_eq!(wire.system_version_info, "9");
+
+        let encoded = wire.encode_to_vec();
+        // The sentinel (from control_plane_id) must not leak onto the wire.
+        let sentinel = b"SENTINEL_CP_ID_MUST_NOT_APPEAR";
+        assert!(
+            encoded.windows(sentinel.len()).all(|w| w != sentinel),
+            "DeltaDiscoveryResponse must not encode a ControlPlane on field 7"
+        );
+        // Field 7 wire tag for a length-delimited field is 0x3a. With an empty
+        // removed_resources list and no control plane, no field-7 key exists.
+        assert!(
+            !encoded.contains(&0x3a),
+            "unexpected field-7 key on DeltaDiscoveryResponse"
+        );
     }
 }

@@ -18,6 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/rds.proto",
                 "proto/hcm.proto",
                 "proto/tcp_proxy.proto",
+                "proto/rbac.proto",
+                "proto/rbac_filter.proto",
             ],
             &["proto/"],
         )?;

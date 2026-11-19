@@ -5,6 +5,7 @@
 
 pub mod encode;
 pub mod generated;
+pub mod rbac;
 pub mod types;
 
 /// xDS type URLs for resource identification
@@ -31,6 +32,12 @@ pub mod type_urls {
     /// Terminal HTTP router filter (`HttpConnectionManager.HttpFilter.typed_config`).
     pub const ROUTER_FILTER_TYPE: &str =
         "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router";
+    /// Network RBAC filter (`Listener.Filter.typed_config`) for L4 intentions.
+    pub const NETWORK_RBAC_TYPE: &str =
+        "type.googleapis.com/envoy.extensions.filters.network.rbac.v3.RBAC";
+    /// HTTP RBAC filter (`HttpConnectionManager.HttpFilter.typed_config`) for L7.
+    pub const HTTP_RBAC_TYPE: &str =
+        "type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC";
 }
 
 /// Resource type enumeration

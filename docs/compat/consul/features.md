@@ -3,7 +3,7 @@
 Upstream baseline: **Hashicorp Consul 2.1.0-dev** (local `~/work/github/easynet-cn/consul`, `api/` package).
 
 > Purpose & scope: track batata's Consul **compatibility** implementation status.
-> Consul's external contract is **HTTP `/v1/**` + blocking queries (long-poll)**. gRPC/8502 (xDS, connect) and gossip are **not** required for ordinary SDK / `prometheus_consul_sd` / `consul-template` clients and are out of core scope.
+> Consul's external contract is **HTTP `/v1/**` + blocking queries (long-poll)**. gRPC/8502 (Connect xDS) is implemented as an extension (CDS/EDS/LDS/RDS/ADS + intentions→RBAC; SDS/Delta/mTLS not yet) and is **not** required for ordinary SDK / `prometheus_consul_sd` / `consul-template` clients; gossip remains out of core scope.
 >
 > Granularity: each row is one external HTTP contract (method + path + key query semantics). Verified against `api/*.go` request constructors.
 >

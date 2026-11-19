@@ -663,7 +663,7 @@ A module = a composable feature domain from the upstream project (not a server p
 | `CLIENT` | Client HTTP API | `v3/client/**` SDK v2 HTTP fallback |
 | `CMDB` | CMDB | datacenter/region metadata |
 | `ADDR` | Address | address server |
-| `ISTIO` | Istio | mesh sync |
+| `ISTIO` | Nacos Istio/MCP | not ported (mesh DTOs only) |
 | `K8S` | k8s-sync | Kubernetes sync |
 | `PROM` | Prometheus | metrics export |
 | `COP` | Copilot | Copilot (3.x) |
@@ -672,11 +672,11 @@ A module = a composable feature domain from the upstream project (not a server p
 | `MAINT` | Maintainer | maintainer client SDK |
 | `PLUG` | Plugin SPI | auth/ai/config/control/datasource/encryption/trace/visibility/environment |
 | `ADM` | Admin HTTP API | `v3/admin/**` — sub-modules: `ADM-CS` (config), `ADM-NS` (naming), `ADM-CORE` (core), `ADM-AUTH` (auth), `ADM-AI` (AI), `ADM-LEGACY` (legacy/misc) |
-| `OTH` | Other/exclusive | istio/cmdb/address/prometheus/k8s-sync/audit |
+| `OTH` | Other/exclusive | istio (DTO only)/cmdb/address/prometheus/k8s-sync/audit |
 
 > **Nacos HTTP path families**: most `console-ui-next` calls use `v3/console/**` (config `v3/console/cs/**`, naming `v3/console/ns/**`, core/namespace/plugin `v3/console/{core,server,plugin}/**`, auth `v3/auth/**`), plus a dedicated AI console surface `v3/console/ai/**` and copilot `v3/console/copilot/**`. Admin API (`v3/admin/**`) is used by the maintainer SDK and open platform. Client API (`v3/client/**`) is the SDK v2 HTTP fallback. All three surfaces are tracked in features.md.
 
-> **Consul surface**: external contract is HTTP `/v1/**` + **blocking queries** (`?index=&wait=` long-poll, `?stale/consistent/cached`) and headers `X-Consul-Index` / `X-Consul-ContentHash`. Agent-local registration (`/v1/agent/service/register`) syncs to catalog (`/v1/catalog/*`) and is aggregated into `/v1/health/*`. gRPC (8502, connect/xDS) + gossip are out of core scope. ACL via `X-Consul-Token`.
+> **Consul surface**: external contract is HTTP `/v1/**` + **blocking queries** (`?index=&wait=` long-poll, `?stale/consistent/cached`) and headers `X-Consul-Index` / `X-Consul-ContentHash`. Agent-local registration (`/v1/agent/service/register`) syncs to catalog (`/v1/catalog/*`) and is aggregated into `/v1/health/*`. gRPC (8502, Connect xDS) is implemented as an extension (CDS/EDS/LDS/RDS/ADS + L4/L7 intentions→RBAC; SDS/Delta/mTLS not yet); gossip remains out of core scope. ACL via `X-Consul-Token`.
 
 ### Consul (consul)
 
@@ -717,4 +717,4 @@ A module = a composable feature domain from the upstream project (not a server p
 
 ### System-level (SYS)
 
-SHARED domains implemented independently of a single protocol: `CONSOLE` · `AUTH`(server) · `CLUSTER` · `MESH`(xDS) · `AI`(server) · `ENCRYPT` · `AUDIT`
+SHARED domains implemented independently of a single protocol: `CONSOLE` · `AUTH`(server) · `CLUSTER` · `MESH`(xDS/ADS via the Consul Connect path; Nacos MCP not ported) · `AI`(server) · `ENCRYPT` · `AUDIT`

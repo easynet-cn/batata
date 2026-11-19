@@ -80,7 +80,7 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | **Built-in Circuit Breaker** | Resilience pattern for cluster health checks |
 | **OpenTelemetry Tracing** | OTLP export for distributed tracing (Jaeger, Zipkin, etc.) |
 | **Multi-datacenter Support** | Locality-aware replication with local-first sync |
-| **Service Mesh (xDS)** | EDS, CDS, LDS, RDS, ADS protocol support |
+| **Service Mesh (xDS)** | Consul Connect path: EDS, CDS, LDS, RDS, ADS (real Envoy verified); Nacos Istio/MCP path not ported |
 | **AI Integration** | MCP Server Registry and A2A Agent Registry — mirrors the upstream Nacos AI module rather than being Batata-only (see `docs/compat/nacos/ai/`) |
 | **Distributed Lock** | Raft-based distributed locking mechanism |
 | **Kubernetes Sync** | Bidirectional service sync with Kubernetes |
@@ -97,6 +97,6 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | Authentication | **100%** | JWT, LDAP, OAuth2/OIDC |
 | API Compatibility | **100%+** | Full Nacos V2/V3 + Consul APIs |
 | Apollo Compatibility | **~81%** | Apollo Config/Admin/OpenAPI fully ported (see `docs/compat/apollo/`); legacy WebUI (SSO/signin) and apollo config-value encryption (`EncryptionDecorator`) not ported |
-| Cloud Native | **85%** | K8s, Prometheus, xDS (basic) |
+| Cloud Native | **85%** | K8s, Prometheus, xDS via Consul Connect (CDS/EDS/LDS/RDS/ADS + intentions→RBAC; no SDS/Delta/mTLS) |
 | AI Registry | **~91%** | 226 of 249 upstream AI endpoints matched (23 missing, 10 Batata-only extras). MCP admin/console, Skill, AgentSpec, A2A and resource import are at parity; open: `McpClientController` (6), Agent console lifecycle (8), Agent admin `/version` + `/runtime-endpoints`, Prompt admin `/version`, Pipeline `/{pipelineId}` + bare `GET`, vector channel (see `docs/compat/nacos/ai/`) |
 | **Overall** | **~98%** | Production ready — excluding the AI module, which is tracked separately above |

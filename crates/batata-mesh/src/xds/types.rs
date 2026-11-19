@@ -528,12 +528,22 @@ pub struct NetworkFilter {
 impl NetworkFilter {
     /// Create an HTTP connection manager filter
     pub fn http_connection_manager(route_config_name: impl Into<String>) -> Self {
+        Self::http_connection_manager_with_rbac(route_config_name, None)
+    }
+
+    /// Create an HTTP connection manager filter with an optional L7 RBAC
+    /// filter config injected ahead of the terminal router.
+    pub fn http_connection_manager_with_rbac(
+        route_config_name: impl Into<String>,
+        rbac_config: Option<Vec<u8>>,
+    ) -> Self {
         Self {
             name: "envoy.filters.network.http_connection_manager".to_string(),
             filter_type: NetworkFilterType::HttpConnectionManager {
                 route_config_name: route_config_name.into(),
                 codec_type: HttpCodecType::Auto,
                 stat_prefix: "ingress_http".to_string(),
+                rbac_config,
             },
         }
     }
@@ -546,6 +556,14 @@ impl NetworkFilter {
                 stat_prefix: "tcp_proxy".to_string(),
                 cluster: cluster.into(),
             },
+        }
+    }
+
+    /// Create a network RBAC filter from an already-encoded config.
+    pub fn rbac(config: Vec<u8>) -> Self {
+        Self {
+            name: "envoy.filters.network.rbac".to_string(),
+            filter_type: NetworkFilterType::Rbac { config },
         }
     }
 }
@@ -561,6 +579,10 @@ pub enum NetworkFilterType {
         codec_type: HttpCodecType,
         /// Stat prefix
         stat_prefix: String,
+        /// Optional pre-encoded HTTP RBAC filter config for L7 intentions.
+        /// Placed before the terminal router filter so authorization runs
+        /// before the request is routed upstream.
+        rbac_config: Option<Vec<u8>>,
     },
     /// TCP proxy
     TcpProxy {
@@ -568,6 +590,12 @@ pub enum NetworkFilterType {
         stat_prefix: String,
         /// Cluster name
         cluster: String,
+    },
+    /// Network RBAC filter for L4 intention enforcement. Carries an already
+    /// encoded `envoy.extensions.filters.network.rbac.v3.RBAC` config.
+    Rbac {
+        /// Pre-encoded RBAC filter config bytes.
+        config: Vec<u8>,
     },
     /// Generic filter configuration
     Generic {

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+// Minimal wire-compatible subset of Envoy's network and HTTP RBAC filter
+// config protos. The typed_config Any for these filters uses:
+//   type.googleapis.com/envoy.extensions.filters.network.rbac.v3.RBAC
+//   type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+// Field numbers are taken verbatim from upstream envoyproxy/envoy.
+// NOTE: this file intentionally shares the `envoy.config.rbac.v3` package with
+// rbac.proto so prost keeps both in one generated module. The wire bytes are
+// package-agnostic; the correct upstream type_url is supplied as a constant by
+// the encoder (network=...extensions.filters.network.rbac.v3.RBAC,
+// http=...extensions.filters.http.rbac.v3.RBAC).
+package envoy.config.rbac.v3;
+
+import "rbac.proto";
+
+// Upstream envoy/extensions/filters/network/rbac/v3/rbac.proto.
+message NetworkRBACFilterConfig {
+  envoy.config.rbac.v3.RBAC rules = 1;
+  envoy.config.rbac.v3.RBAC shadow_rules = 2;
+  string stat_prefix = 3;
+}
+
+// The HTTP filter config lives in a different proto package. Declared here as
+// a separate message in its own package block-equivalent via a distinct name;
+// prost places it in the same generated module, so we keep it here and only
+// emit it for HTTP filter chains. Its wire fields are: rules=1, shadow_rules=2.
+message HttpRBAC {
+  envoy.config.rbac.v3.RBAC rules = 1;
+  envoy.config.rbac.v3.RBAC shadow_rules = 2;
+}

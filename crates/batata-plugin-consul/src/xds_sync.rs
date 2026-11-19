@@ -16,6 +16,9 @@ use tracing::{debug, info, warn};
 
 use batata_mesh::server::{XdsServer, XdsServerConfig};
 use batata_mesh::snapshot::ResourceSnapshot;
+use batata_mesh::xds::rbac::{
+    HttpPermissionMatch, IntentionsForService, RbacIntention, RbacPermission, encode_rbac_filters,
+};
 use batata_mesh::xds::types::{
     Cluster, ClusterLoadAssignment, Endpoint, FilterChain, HeaderMatchType, HeaderMatcher,
     HealthStatus, LbPolicy, Listener, ListenerAddress, Locality, NetworkFilter, PathMatch, Route,
@@ -24,6 +27,9 @@ use batata_mesh::xds::types::{
 
 use crate::connect::{
     CompiledDiscoveryChain, ConsulConnectService, DiscoveryGraphNodeType, DiscoveryRouteMatch,
+};
+use crate::connect_ca::{
+    ConsulConnectCAService, IntentionAction as CaIntentionAction, IntentionPermission,
 };
 use crate::model::AgentServiceRegistration;
 use crate::namespace::DEFAULT_NAMESPACE;
@@ -37,6 +43,58 @@ use crate::naming_store::ConsulNamingStore;
 /// answerable. Per-node connect-proxy snapshots use their own bind ports.
 const DEFAULT_LISTENER_BASE_PORT: u16 = 15001;
 
+/// Convert batata's Connect intentions into the dependency-free RBAC input
+/// consumed by `batata-mesh`. Only the fields batata actually stores are
+/// mapped; unsupported upstream fields do not exist here.
+fn intentions_to_rbac_input(
+    destination: &str,
+    intentions: Vec<crate::connect_ca::Intention>,
+    trust_domain: &str,
+    datacenter: &str,
+) -> IntentionsForService {
+    let converted = intentions
+        .into_iter()
+        .map(|i| {
+            let action = match i.action {
+                CaIntentionAction::Allow => batata_mesh::xds::rbac::IntentionAction::Allow,
+                CaIntentionAction::Deny => batata_mesh::xds::rbac::IntentionAction::Deny,
+            };
+            let permissions = i
+                .permissions
+                .into_iter()
+                .map(|p: IntentionPermission| {
+                    let p_action = match p.action {
+                        CaIntentionAction::Allow => batata_mesh::xds::rbac::IntentionAction::Allow,
+                        CaIntentionAction::Deny => batata_mesh::xds::rbac::IntentionAction::Deny,
+                    };
+                    let http = p.http.map(|h| HttpPermissionMatch {
+                        path_exact: h.path_exact,
+                        path_prefix: h.path_prefix,
+                        path_regex: h.path_regex,
+                        methods: h.methods,
+                    });
+                    RbacPermission {
+                        action: p_action,
+                        http,
+                    }
+                })
+                .collect();
+            RbacIntention {
+                source: i.source_name,
+                precedence: i.precedence,
+                action,
+                permissions,
+            }
+        })
+        .collect();
+    IntentionsForService {
+        destination: destination.to_string(),
+        trust_domain: trust_domain.to_string(),
+        datacenter: datacenter.to_string(),
+        intentions: converted,
+    }
+}
+
 /// Sync bridge that publishes Consul services to the xDS server.
 pub struct ConsulSyncBridge {
     naming_store: Arc<ConsulNamingStore>,
@@ -46,8 +104,19 @@ pub struct ConsulSyncBridge {
     /// instead of a plain TCP proxy. Kept optional so tests and deployments
     /// without a Connect service keep the previous CDS/EDS-only behaviour.
     connect_service: Option<Arc<ConsulConnectService>>,
+    /// Connect CA service holding intentions. When present, L4/L7 intentions
+    /// are compiled into Envoy RBAC filters on each destination listener.
+    connect_ca: Option<ConsulConnectCAService>,
+    /// SPIFFE trust domain used when building RBAC principals. Batata's CA
+    /// currently hard-codes `consul` (connect.rs), so this defaults to that.
+    spiffe_trust_domain: String,
+    /// Local datacenter, used in SPIFFE identities.
+    datacenter: String,
     /// Last observed naming store revision; used to skip no-op updates.
     last_revision: std::sync::atomic::AtomicU64,
+    /// Last observed Connect intention revision. Intention changes do not
+    /// bump the naming-store revision, so RBAC filters need their own key.
+    last_intention_revision: std::sync::atomic::AtomicU64,
 }
 
 impl ConsulSyncBridge {
@@ -57,7 +126,11 @@ impl ConsulSyncBridge {
             naming_store,
             xds_server,
             connect_service: None,
+            connect_ca: None,
+            spiffe_trust_domain: "consul".to_string(),
+            datacenter: "dc1".to_string(),
             last_revision: std::sync::atomic::AtomicU64::new(0),
+            last_intention_revision: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -65,6 +138,24 @@ impl ConsulSyncBridge {
     /// the data plane. Without this, only CDS/EDS are published.
     pub fn with_connect_service(mut self, connect: Arc<ConsulConnectService>) -> Self {
         self.connect_service = Some(connect);
+        self
+    }
+
+    /// Attach the Connect CA service so intentions are enforced in the data
+    /// plane as Envoy RBAC filters. Without this, intentions stay HTTP-only.
+    pub fn with_connect_ca(
+        mut self,
+        ca: ConsulConnectCAService,
+        trust_domain: &str,
+        datacenter: &str,
+    ) -> Self {
+        self.connect_ca = Some(ca);
+        if !trust_domain.is_empty() {
+            self.spiffe_trust_domain = trust_domain.to_string();
+        }
+        if !datacenter.is_empty() {
+            self.datacenter = datacenter.to_string();
+        }
         self
     }
 
@@ -119,7 +210,15 @@ impl ConsulSyncBridge {
         let last = self
             .last_revision
             .load(std::sync::atomic::Ordering::Relaxed);
-        let changed = current != last;
+        let current_intention = self
+            .connect_ca
+            .as_ref()
+            .map(|ca| ca.intentions_revision())
+            .unwrap_or(0);
+        let last_intention = self
+            .last_intention_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let changed = current != last || current_intention != last_intention;
 
         // Always refresh per-node snapshots for connected proxies, even when the
         // store revision is unchanged: a proxy may connect after the last sync.
@@ -133,6 +232,8 @@ impl ConsulSyncBridge {
         self.xds_server.update_snapshot(snapshot);
         self.last_revision
             .store(current, std::sync::atomic::Ordering::Relaxed);
+        self.last_intention_revision
+            .store(current_intention, std::sync::atomic::Ordering::Relaxed);
         debug!(
             revision = current,
             "Published xDS snapshot from Consul naming store"
@@ -368,13 +469,44 @@ impl ConsulSyncBridge {
             .map(|(index, service_name)| {
                 let bind_port = DEFAULT_LISTENER_BASE_PORT + index as u16;
                 let route_name = route_config_name(service_name);
-                let filter = if route_names.contains(route_name.as_str()) {
-                    NetworkFilter::http_connection_manager(&route_name)
+                let is_http = route_names.contains(route_name.as_str());
+
+                // Compile Connect intentions for this destination into L4/L7
+                // RBAC filter configs. Network RBAC is prepended ahead of the
+                // proxy filter; HTTP RBAC is injected into HCM before the
+                // router when this service has an L7 route table.
+                let mut network_rbac: Option<Vec<u8>> = None;
+                let mut http_rbac: Option<Vec<u8>> = None;
+                if let Some(ca) = &self.connect_ca {
+                    let intentions = ca.match_intentions("destination", service_name);
+                    if !intentions.is_empty() {
+                        let input = intentions_to_rbac_input(
+                            service_name,
+                            intentions,
+                            &self.spiffe_trust_domain,
+                            &self.datacenter,
+                        );
+                        if let Some(encoded) = encode_rbac_filters(&input) {
+                            if encoded.has_network_policies {
+                                network_rbac = Some(encoded.network_config.clone());
+                            }
+                            if is_http && encoded.has_http_policies {
+                                http_rbac = encoded.http_config.clone();
+                            }
+                        }
+                    }
+                }
+
+                let filter = if is_http {
+                    NetworkFilter::http_connection_manager_with_rbac(&route_name, http_rbac)
                 } else {
                     NetworkFilter::tcp_proxy(service_name.as_str())
                 };
-                let chain =
-                    FilterChain::new(format!("default:{}", service_name)).with_filter(filter);
+                let mut chain = FilterChain::new(format!("default:{}", service_name));
+                if let Some(config) = network_rbac {
+                    chain = chain.with_filter(NetworkFilter::rbac(config));
+                }
+                let chain = chain.with_filter(filter);
                 Listener::new(
                     format!("default_listener:{}", service_name),
                     ListenerAddress::tcp("127.0.0.1", bind_port),
@@ -827,6 +959,66 @@ mod tests {
         ports.sort();
         ports.dedup();
         assert_eq!(ports.len(), 2);
+    }
+
+    /// A DENY intention targeting a service must prepend a network RBAC
+    /// filter to that service's listener, ahead of the proxy filter.
+    #[tokio::test]
+    async fn test_l4_deny_intention_prepends_rbac_filter() {
+        use crate::connect_ca::IntentionRequest;
+
+        let naming_store = Arc::new(ConsulNamingStore::new());
+        let xds_server = create_xds_server();
+        let reg = AgentServiceRegistration {
+            name: "api".to_string(),
+            id: Some("api-1".to_string()),
+            address: Some("127.0.0.1".to_string()),
+            port: Some(9090),
+            ..Default::default()
+        };
+        let key = ConsulNamingStore::build_key(DEFAULT_NAMESPACE, "api", "api-1");
+        naming_store
+            .register(&key, serde_json::to_vec(&reg).unwrap().into())
+            .unwrap();
+
+        let ca = ConsulConnectCAService::new();
+        ca.upsert_intention_exact(IntentionRequest {
+            description: String::new(),
+            source_ns: "default".to_string(),
+            source_name: "web".to_string(),
+            destination_ns: "default".to_string(),
+            destination_name: "api".to_string(),
+            action: CaIntentionAction::Deny,
+            permissions: vec![],
+            meta: HashMap::new(),
+        })
+        .await;
+
+        let bridge =
+            ConsulSyncBridge::new(naming_store, xds_server).with_connect_ca(ca, "consul", "dc1");
+        let snapshot = bridge.build_snapshot();
+        let listener = snapshot.listeners.get("default_listener:api").unwrap();
+        let filters = &listener.filter_chains[0].filters;
+        assert_eq!(filters.len(), 2, "RBAC + tcp_proxy expected");
+        assert!(
+            matches!(filters[0].filter_type, NetworkFilterType::Rbac { .. }),
+            "first filter must be RBAC: {:?}",
+            filters[0].filter_type
+        );
+        assert!(matches!(
+            filters[1].filter_type,
+            NetworkFilterType::TcpProxy { .. }
+        ));
+        // The encoded config must contain a real DENY-action RBAC policy.
+        let NetworkFilterType::Rbac { config } = &filters[0].filter_type else {
+            unreachable!()
+        };
+        let decoded = batata_mesh::xds::rbac::decode_network_filter_config(config.as_slice())
+            .expect("RBAC filter config must decode as Envoy protobuf");
+        assert_eq!(
+            decoded.rules.unwrap().action,
+            batata_mesh::xds::generated::rbac::rbac::Action::Deny as i32
+        );
     }
 
     #[test]

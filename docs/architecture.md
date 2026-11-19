@@ -26,7 +26,7 @@ batata/
 │   ├── batata-maintainer-client/ # Maintainer client utilities
 │   ├── batata-consul-client/     # Consul HTTP client SDK (published to crates.io)
 │   ├── batata-ai/                # AI integration (MCP/A2A)
-│   ├── batata-mesh/              # Service mesh (xDS, Istio MCP)
+│   ├── batata-mesh/              # Envoy xDS/ADS primitives (Consul Connect bridge; Nacos MCP DTOs only)
 │   ├── batata-copilot/           # AI copilot / operations assistant
 │   ├── batata-visibility/        # Metrics & observability
 │   ├── batata-integration-tests/ # Cross-crate integration tests
@@ -69,7 +69,7 @@ batata-server (main binary)
 ├── batata-core (cluster, connections, datacenter)
 ├── batata-server-common (shared server infrastructure)
 ├── batata-consistency (Raft consensus, RocksDB state machine)
-├── batata-mesh (xDS, Istio MCP)
+├── batata-mesh (xDS/ADS primitives + mesh conversion)
 ├── batata-ai (MCP/A2A registry)
 ├── batata-plugin-consul (Consul API)
 ├── batata-plugin-cloud (Prometheus, K8s)

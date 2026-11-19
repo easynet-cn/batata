@@ -86,7 +86,7 @@ Nacos files into `conf/`.
 |---|---|
 | `nacos.security.ignore.urls` | Batata derives public paths in code |
 | `nacos.naming.empty-service.*` | Batata handles empty-service cleanup internally |
-| `nacos.istio.mcp.server.enabled` | Batata covers mesh via `batata.mesh.xds.*` |
+| `nacos.istio.mcp.server.enabled` | **Not ported** — no Nacos Istio MCP/18848 server. `batata.mesh.xds.*` powers a separate Consul Connect→Envoy path on 8502, not a drop-in replacement. |
 | `nacos.k8s.sync.*` | Batata K8s sync is part of `batata-plugin-cloud` |
 | Oracle / Derby datasources | **Not supported** — Batata supports only SeaORM-backed databases (MySQL, PostgreSQL) plus embedded RocksDB |
 

@@ -1208,6 +1208,13 @@ impl ConsulConnectCAService {
             reason: result.reason,
         }
     }
+
+    /// Monotonic revision incremented on every intention create/update/delete.
+    /// The xDS sync bridge uses this to rebuild RBAC filters when intentions
+    /// change (naming-store revision alone would miss intention-only changes).
+    pub fn intentions_revision(&self) -> u64 {
+        self.index.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 impl Default for ConsulConnectCAService {

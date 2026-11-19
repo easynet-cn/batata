@@ -99,8 +99,11 @@ message DeltaDiscoveryResponse {
   // Nonce for this response.
   string nonce = 5;
 
-  // The control plane instance.
-  ControlPlane control_plane = 7;
+  // NOTE: upstream envoy DeltaDiscoveryResponse has NO control_plane field.
+  // Field 7 is `udpa_removed_resources` upstream; emitting a ControlPlane
+  // message here would be decoded by a real Envoy as ResourceName entries and
+  // can NACK the whole response. The SotW DiscoveryResponse above does have
+  // control_plane=6 — do not copy that field into the Delta response.
 }
 
 // Resource wrapper for delta xDS

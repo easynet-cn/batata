@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+// Minimal wire-compatible subset of Envoy's RBAC v3 API. Field numbers are
+// taken verbatim from upstream envoyproxy/envoy:
+//   envoy/config/rbac/v3/rbac.proto
+//   envoy/type/matcher/v3/{string,path,regex}.proto
+//   envoy/config/route/v3/route_components.proto (HeaderMatcher)
+// Protobuf wire decoding is driven by field numbers and oneof tags, not by
+// the Rust message names generated here. Do not renumber or "simplify".
+package envoy.config.rbac.v3;
+
+// ---------------------------------------------------------------------------
+// Matchers (upstream envoy.type.matcher.v3) — declared in this file to keep
+// the generated module self-contained; their wire tags match upstream.
+// ---------------------------------------------------------------------------
+
+// RegexMatcher (upstream envoy/type/matcher/v3/regex.proto).
+message RegexMatcher {
+  message GoogleRE2 {}
+  oneof engine_type {
+    GoogleRE2 google_re2 = 1;
+  }
+  string regex = 2;
+}
+
+// StringMatcher (upstream envoy/type/matcher/v3/string.proto).
+// Upstream reserves field 4 (old `regex`); safe_regex is field 5.
+message StringMatcher {
+  oneof match_pattern {
+    string exact = 1;
+    string prefix = 2;
+    string suffix = 3;
+    RegexMatcher safe_regex = 5;
+    string contains = 7;
+  }
+  bool ignore_case = 6;
+}
+
+// PathMatcher (upstream envoy/type/matcher/v3/path.proto).
+message PathMatcher {
+  oneof rule {
+    StringMatcher path = 1;
+  }
+}
+
+// HeaderMatcher (upstream envoy/config/route/v3/route_components.proto).
+// Only the specifiers batata emits are declared; unused upstream fields are
+// intentionally omitted (unknown fields are ignored by Envoy).
+message HeaderMatcher {
+  string name = 1;
+  oneof header_match_specifier {
+    string exact_match = 4;
+    RegexMatcher safe_regex_match = 11;
+    string prefix_match = 9;
+    string suffix_match = 10;
+    string contains_match = 12;
+    bool present_match = 7;
+  }
+  bool invert_match = 8;
+}
+
+// ---------------------------------------------------------------------------
+// RBAC core (upstream envoy/config/rbac/v3/rbac.proto).
+// ---------------------------------------------------------------------------
+
+message RBAC {
+  enum Action {
+    ALLOW = 0;
+    DENY = 1;
+    LOG = 2;
+  }
+  Action action = 1;
+  map<string, Policy> policies = 2;
+}
+
+message Policy {
+  repeated Permission permissions = 1;
+  repeated Principal principals = 2;
+}
+
+message Permission {
+  message Set {
+    repeated Permission rules = 1;
+  }
+  oneof rule {
+    Set and_rules = 1;
+    Set or_rules = 2;
+    bool any = 3;
+    HeaderMatcher header = 4;
+    PathMatcher url_path = 10;
+    uint32 destination_port = 6;
+    Permission not_rule = 8;
+  }
+}
+
+message Principal {
+  message Set {
+    repeated Principal ids = 1;
+  }
+  message Authenticated {
+    // Upstream reserves field 1; principal_name is field 2.
+    StringMatcher principal_name = 2;
+  }
+  oneof identifier {
+    Set and_ids = 1;
+    Set or_ids = 2;
+    bool any = 3;
+    Authenticated authenticated = 4;
+    HeaderMatcher header = 6;
+    PathMatcher url_path = 9;
+    Principal not_id = 8;
+  }
+}
