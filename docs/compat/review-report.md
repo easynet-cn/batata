@@ -3065,7 +3065,7 @@ Both remotes were verified via `git ls-remote` after HTTP/1.1 pushes to gitee an
 
 ### 37.17 `service-intentions` config entry conversion and legacy intention sync (2026-11-19)
 
-Continuation of #508 after the RBAC checkpoint. Backend-only: `batata-ui` untouched, HEAD remains `d7d73b54`, no commit, no tag/version bump, no `--full`/matrix/SDK/perf run. The clean full remains deferred until the frontend task fully completes.
+Continuation of #508 after the RBAC checkpoint. Backend-only: `batata-ui` untouched, no tag/version bump, no `--full`/matrix/SDK/perf run. The clean full remains deferred until the frontend task fully completes. On user confirmation ("提交，继续"), this work was committed as `e5b37026` and dual-pushed to gitee/origin; see §37.18.
 
 **Problem addressed.** `service-intentions` was listed in `SUPPORTED_KINDS` and accepted by the generic config-entry store, but it had no structural validation and no bridge into the legacy intention store that feeds Connect CA / intentions→RBAC. An API write could therefore accept shapes that upstream Consul rejects, and an accepted config entry did not change the intentions used by xDS.
 
@@ -3077,4 +3077,8 @@ Continuation of #508 after the RBAC checkpoint. Backend-only: `batata-ui` untouc
 
 **Gates.** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent) and `git diff --check` all rc=0. `cargo test --workspace --exclude batata-integration-tests` = **4176 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+9 over the 4167 RBAC baseline). No compat F-ID / T-ID status or total changed.
 
-**Current shape.** Four modified files (`api/v1/config_entry.rs`, `config_entry.rs`, `connect_ca.rs`, `route/tests.rs`), `+670/-5`; the change is an uncommitted local checkpoint. Remaining #508 items are SDS / Connect CA lifecycle wiring, true incremental Delta on the live ADS path, Path A Nacos naming→bridge wiring, and the P0/P1 kernel-correctness backlog.
+**Current shape.** Four code/test files (`api/v1/config_entry.rs`, `config_entry.rs`, `connect_ca.rs`, `route/tests.rs`), `+670/-5`, plus this report section, committed in `e5b37026`. Remaining #508 items are SDS / Connect CA lifecycle wiring, true incremental Delta on the live ADS path, Path A Nacos naming→bridge wiring, and the P0/P1 kernel-correctness backlog.
+
+### 37.18 `service-intentions` checkpoint committed and dual-pushed (2026-11-19)
+
+On user confirmation ("提交，继续"), the `service-intentions` work was committed as `e5b37026` (`feat(consul): validate and sync service-intentions config entries`), 5 files, +687/-6 including the §37.17 report entry. Pushes to both `gitee/main` and `origin/main` succeeded with HTTP/1.1 (`d7d73b54..e5b37026`). A docs-only follow-up records this state; no tag, version bump, `--full`, matrix, SDK or perf run, and `batata-ui` untouched.
