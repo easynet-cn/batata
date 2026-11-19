@@ -11,11 +11,15 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use dashmap::DashMap;
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
+use crate::connect_ca::{
+    ConsulConnectCAService, IntentionAction, IntentionHTTPPermission, IntentionPermission,
+    IntentionRequest, validate_intention_permissions,
+};
 use crate::constants::CF_CONSUL_CONFIG_ENTRIES;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
@@ -391,9 +395,10 @@ pub fn validate_config_entry(req: &ConfigEntryRequest) -> Result<(), String> {
         "service-router" => validate_service_router(req),
         "service-splitter" => validate_service_splitter(req),
         "service-resolver" => validate_service_resolver(req),
+        "service-intentions" => service_intentions_to_intentions(req).map(|_| ()),
         // Kinds without specific structural validation: ingress-gateway,
-        // terminating-gateway, service-intentions, mesh, exported-services,
-        // api-gateway, http-route, tcp-route, jwt-provider.
+        // terminating-gateway, mesh, exported-services, api-gateway,
+        // http-route, tcp-route, jwt-provider.
         _ => Ok(()),
     }
 }
@@ -517,6 +522,369 @@ fn validate_service_resolver(req: &ConfigEntryRequest) -> Result<(), String> {
 }
 
 // ============================================================================
+// service-intentions → legacy intention store conversion
+// ============================================================================
+
+/// Top-level `extra` keys that may accompany a `service-intentions` entry.
+/// Read-only index/hash fields are accepted and ignored; JWT is explicitly
+/// rejected below because batata has no JWT intention requirement model.
+const SERVICE_INTENTIONS_TOP_LEVEL_KEYS: &[&str] = &[
+    "Sources",
+    "JWT",
+    "Hash",
+    "RaftIndex",
+    "CreateIndex",
+    "ModifyIndex",
+];
+
+const SERVICE_INTENTIONS_SOURCE_KEYS: &[&str] = &[
+    "Name",
+    "Peer",
+    "Partition",
+    "Namespace",
+    "SamenessGroup",
+    "Action",
+    "Permissions",
+    "Precedence",
+    "Type",
+    "Description",
+    "LegacyID",
+    "LegacyMeta",
+    "LegacyCreateTime",
+    "LegacyUpdateTime",
+];
+
+const SERVICE_INTENTIONS_PERMISSION_KEYS: &[&str] = &["Action", "HTTP"];
+const SERVICE_INTENTIONS_HTTP_KEYS: &[&str] = &["PathExact", "PathPrefix", "PathRegex", "Methods"];
+
+const VALID_HTTP_METHODS: &[&str] = &[
+    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
+];
+
+fn reject_unknown_keys(
+    value: &serde_json::Value,
+    allowed: &[&str],
+    context: &str,
+) -> Result<(), String> {
+    let serde_json::Value::Object(map) = value else {
+        return Err(format!("{context} must be an object"));
+    };
+    for key in map.keys() {
+        if !allowed.iter().any(|allowed| *allowed == key) {
+            return Err(format!("{context} has unsupported field '{key}'"));
+        }
+    }
+    Ok(())
+}
+
+fn required_string(value: &serde_json::Value, key: &str, context: &str) -> Result<String, String> {
+    match value.get(key) {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Ok(s.to_string()),
+        Some(serde_json::Value::Null) | None => Err(format!("{context}.{key} is required")),
+        Some(_) => Err(format!("{context}.{key} must be a non-empty string")),
+    }
+}
+
+fn optional_string(
+    value: &serde_json::Value,
+    key: &str,
+    context: &str,
+) -> Result<Option<String>, String> {
+    match value.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) if s.is_empty() => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(s.to_string())),
+        Some(_) => Err(format!("{context}.{key} must be a string")),
+    }
+}
+
+fn reject_present(value: &serde_json::Value, key: &str, context: &str) -> Result<(), String> {
+    match value.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(()),
+        Some(_) => Err(format!("{context}.{key} must be omitted")),
+    }
+}
+
+fn reject_nonempty(value: &serde_json::Value, key: &str, context: &str) -> Result<(), String> {
+    let Some(field) = value.get(key) else {
+        return Ok(());
+    };
+    let empty = match field {
+        serde_json::Value::Null => true,
+        serde_json::Value::String(s) => s.is_empty(),
+        serde_json::Value::Array(a) => a.is_empty(),
+        serde_json::Value::Object(o) => o.is_empty(),
+        _ => false,
+    };
+    if empty {
+        Ok(())
+    } else {
+        Err(format!("{context}.{key} is not supported by batata"))
+    }
+}
+
+fn validate_service_name(name: &str, context: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err(format!("{context} is required"));
+    }
+    if name.contains('*') && name != "*" {
+        return Err(format!(
+            "{context} may only be a full '*' wildcard, got '{name}'"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_namespace(namespace: &str, context: &str) -> Result<(), String> {
+    if namespace.contains('*') {
+        return Err(format!("{context} wildcards are not supported by batata"));
+    }
+    Ok(())
+}
+
+fn parse_action(value: &str, context: &str) -> Result<IntentionAction, String> {
+    match value {
+        "allow" => Ok(IntentionAction::Allow),
+        "deny" => Ok(IntentionAction::Deny),
+        other => Err(format!(
+            "{context} must be 'allow' or 'deny', got '{other}'"
+        )),
+    }
+}
+
+fn parse_permission(
+    value: &serde_json::Value,
+    source_index: usize,
+    permission_index: usize,
+) -> Result<IntentionPermission, String> {
+    let context = format!("Sources[{source_index}].Permissions[{permission_index}]");
+    reject_unknown_keys(value, SERVICE_INTENTIONS_PERMISSION_KEYS, &context)?;
+    let action = parse_action(
+        &required_string(value, "Action", &context)?,
+        &format!("{context}.Action"),
+    )?;
+
+    let Some(http) = value.get("HTTP").filter(|v| !v.is_null()) else {
+        return Err(format!("{context}.HTTP is required"));
+    };
+    let http_context = format!("{context}.HTTP");
+    reject_unknown_keys(http, SERVICE_INTENTIONS_HTTP_KEYS, &http_context)?;
+
+    let path_exact = optional_string(http, "PathExact", &http_context)?;
+    let path_prefix = optional_string(http, "PathPrefix", &http_context)?;
+    let path_regex = optional_string(http, "PathRegex", &http_context)?;
+
+    let mut path_parts = 0;
+    if path_exact.is_some() {
+        path_parts += 1;
+    }
+    if path_prefix.is_some() {
+        path_parts += 1;
+    }
+    if path_regex.is_some() {
+        path_parts += 1;
+    }
+    if path_parts > 1 {
+        return Err(format!(
+            "{http_context} may set at most one of PathExact, PathPrefix, PathRegex"
+        ));
+    }
+    if path_exact.as_deref().is_some_and(|p| !p.starts_with('/'))
+        || path_prefix.as_deref().is_some_and(|p| !p.starts_with('/'))
+    {
+        return Err(format!("{http_context} path matches must start with '/'"));
+    }
+
+    let methods = match http.get("Methods") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(methods)) => {
+            let mut seen = HashSet::new();
+            let mut parsed = Vec::with_capacity(methods.len());
+            for method in methods {
+                let Some(method) = method.as_str() else {
+                    return Err(format!("{http_context}.Methods must contain strings"));
+                };
+                if !VALID_HTTP_METHODS
+                    .iter()
+                    .any(|valid| valid.eq_ignore_ascii_case(method))
+                {
+                    return Err(format!(
+                        "{http_context}.Methods has invalid method '{method}'"
+                    ));
+                }
+                let upper = method.to_ascii_uppercase();
+                if !seen.insert(upper.clone()) {
+                    return Err(format!(
+                        "{http_context}.Methods contains '{method}' more than once"
+                    ));
+                }
+                parsed.push(upper);
+            }
+            parsed
+        }
+        Some(_) => return Err(format!("{http_context}.Methods must be an array")),
+    };
+
+    if path_parts == 0 && methods.is_empty() {
+        return Err(format!(
+            "{http_context} must set a path match or at least one method"
+        ));
+    }
+
+    Ok(IntentionPermission {
+        action,
+        http: Some(IntentionHTTPPermission {
+            path_exact,
+            path_prefix,
+            path_regex,
+            methods,
+        }),
+    })
+}
+
+/// Validate and convert a `service-intentions` config entry into the legacy
+/// intention rows consumed by the CA/xDS bridge.
+///
+/// Unsupported upstream features (JWT requirements, peers, sameness groups,
+/// partitions, legacy bridge fields and HTTP header permissions) are rejected
+/// rather than silently ignored, so an accepted entry has an exact local
+/// representation.
+pub(crate) fn service_intentions_to_intentions(
+    req: &ConfigEntryRequest,
+) -> Result<Vec<IntentionRequest>, String> {
+    let extra = serde_json::Value::Object(
+        req.extra
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    );
+    reject_unknown_keys(
+        &extra,
+        SERVICE_INTENTIONS_TOP_LEVEL_KEYS,
+        "service-intentions",
+    )?;
+    reject_present(&extra, "JWT", "service-intentions")?;
+
+    let destination_name = req.name.trim();
+    validate_service_name(destination_name, "service-intentions Name")?;
+    let destination_ns = req.namespace.as_deref().unwrap_or("default");
+    if destination_ns.is_empty() {
+        return Err("service-intentions Namespace must not be empty".into());
+    }
+    validate_namespace(destination_ns, "service-intentions Namespace")?;
+    let wildcard_destination = destination_name == "*";
+
+    let Some(sources) = req.extra.get("Sources").and_then(|v| v.as_array()) else {
+        return Err("service-intentions requires a non-empty Sources array".into());
+    };
+    if sources.is_empty() {
+        return Err("service-intentions requires at least one source".into());
+    }
+
+    let meta = req.meta.clone().unwrap_or_default();
+    let mut converted = Vec::with_capacity(sources.len());
+    for (index, source) in sources.iter().enumerate() {
+        let context = format!("Sources[{index}]");
+        reject_unknown_keys(source, SERVICE_INTENTIONS_SOURCE_KEYS, &context)?;
+        reject_present(source, "LegacyID", &context)?;
+        reject_present(source, "LegacyMeta", &context)?;
+        reject_present(source, "LegacyCreateTime", &context)?;
+        reject_present(source, "LegacyUpdateTime", &context)?;
+        reject_nonempty(source, "Peer", &context)?;
+        reject_nonempty(source, "Partition", &context)?;
+        reject_nonempty(source, "SamenessGroup", &context)?;
+
+        if let Some(source_type) = optional_string(source, "Type", &context)?
+            && source_type != "consul"
+        {
+            return Err(format!(
+                "{context}.Type must be 'consul' or omitted, got '{source_type}'"
+            ));
+        }
+
+        let source_name = required_string(source, "Name", &context)?;
+        validate_service_name(&source_name, &format!("{context}.Name"))?;
+        let source_ns = optional_string(source, "Namespace", &context)?
+            .unwrap_or_else(|| destination_ns.to_string());
+        validate_namespace(&source_ns, &format!("{context}.Namespace"))?;
+        let description = optional_string(source, "Description", &context)?.unwrap_or_default();
+
+        let action_value = optional_string(source, "Action", &context)?;
+        let permissions_value = source.get("Permissions").filter(|v| !v.is_null());
+
+        let (action, permissions) = match (action_value, permissions_value) {
+            (Some(_), Some(_)) => {
+                return Err(format!(
+                    "{context}.Action must be omitted when Permissions are specified"
+                ));
+            }
+            (Some(action), None) => (parse_action(&action, &format!("{context}.Action"))?, vec![]),
+            (None, Some(serde_json::Value::Array(permissions))) => {
+                if wildcard_destination {
+                    return Err(format!(
+                        "{context}.Permissions cannot be used with a wildcard destination"
+                    ));
+                }
+                let parsed = permissions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| parse_permission(p, index, i))
+                    .collect::<Result<Vec<_>, _>>()?;
+                // Upstream stores no top-level action for L7 intentions. The
+                // legacy model requires one; ALLOW is an inert placeholder
+                // because permission evaluation ignores it.
+                (IntentionAction::Allow, parsed)
+            }
+            (None, Some(_)) => {
+                return Err(format!("{context}.Permissions must be an array"));
+            }
+            (None, None) => {
+                return Err(format!("{context} requires either Action or Permissions"));
+            }
+        };
+
+        validate_intention_permissions(&permissions)?;
+        converted.push(IntentionRequest {
+            description,
+            source_ns,
+            source_name,
+            destination_ns: destination_ns.to_string(),
+            destination_name: destination_name.to_string(),
+            action,
+            permissions,
+            meta: meta.clone(),
+        });
+    }
+
+    Ok(converted)
+}
+
+/// Apply a `service-intentions` config entry to the legacy intention store.
+/// Returns the number of legacy intentions written.
+pub(crate) async fn sync_service_intentions(
+    ca_service: &ConsulConnectCAService,
+    req: &ConfigEntryRequest,
+) -> Result<usize, String> {
+    let intentions = service_intentions_to_intentions(req)?;
+    let destination_ns = req.namespace.as_deref().unwrap_or("default");
+    Ok(ca_service
+        .replace_intentions_for_destination(destination_ns, req.name.trim(), intentions)
+        .await)
+}
+
+/// Remove the legacy intentions owned by a deleted `service-intentions`
+/// config entry.
+pub(crate) async fn remove_service_intentions(
+    ca_service: &ConsulConnectCAService,
+    destination_ns: &str,
+    destination_name: &str,
+) -> usize {
+    ca_service
+        .delete_intentions_for_destination(destination_ns, destination_name)
+        .await
+}
+
+// ============================================================================
 // HTTP Handlers (In-Memory)
 // ============================================================================
 
@@ -577,6 +945,7 @@ pub async fn apply_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
+    ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Bytes,
 ) -> HttpResponse {
@@ -617,8 +986,15 @@ pub async fn apply_config_entry(
         })
     });
 
+    let entry_for_sync = entry_req.clone();
     match config_service.apply_entry(entry_req, cas).await {
         Ok(success) => {
+            if success && entry_for_sync.kind == "service-intentions" {
+                if let Err(e) = sync_service_intentions(&ca_service, &entry_for_sync).await {
+                    return HttpResponse::InternalServerError().consul_error(ConsulError::new(e));
+                }
+                index_provider.increment(ConsulTable::ConnectCA);
+            }
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             consul_ok(&meta).json(success)
@@ -632,6 +1008,7 @@ pub async fn delete_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
+    ca_service: web::Data<ConsulConnectCAService>,
     path: web::Path<(String, String)>,
     query: web::Query<ConfigEntryDeleteParams>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -642,8 +1019,18 @@ pub async fn delete_config_entry(
     }
 
     let (kind, name) = path.into_inner();
+    let existing = config_service.get_entry(&kind, &name);
     match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
+            if success && kind == "service-intentions" {
+                let namespace = existing
+                    .and_then(|entry| entry.namespace)
+                    .unwrap_or_else(|| "default".to_string());
+                let removed = remove_service_intentions(&ca_service, &namespace, &name).await;
+                if removed > 0 {
+                    index_provider.increment(ConsulTable::ConnectCA);
+                }
+            }
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             if query.cas.is_some() {
@@ -978,5 +1365,160 @@ mod tests {
         // Kinds without specific validation should pass through.
         let r = req("ingress-gateway", "gateway", HashMap::new());
         assert!(validate_config_entry(&r).is_ok());
+    }
+
+    fn service_intentions(sources: serde_json::Value) -> ConfigEntryRequest {
+        let mut extra = HashMap::new();
+        extra.insert("Sources".to_string(), sources);
+        req("service-intentions", "api", extra)
+    }
+
+    #[test]
+    fn service_intentions_l4_source_converts_fields() {
+        let entry = service_intentions(serde_json::json!([
+            { "Name": "web", "Action": "deny", "Description": "block web" }
+        ]));
+        let converted = service_intentions_to_intentions(&entry).unwrap();
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].source_name, "web");
+        assert_eq!(converted[0].source_ns, "default");
+        assert_eq!(converted[0].destination_name, "api");
+        assert_eq!(converted[0].destination_ns, "default");
+        assert_eq!(converted[0].action, IntentionAction::Deny);
+        assert_eq!(converted[0].description, "block web");
+        assert!(converted[0].permissions.is_empty());
+        assert!(validate_config_entry(&entry).is_ok());
+    }
+
+    #[test]
+    fn service_intentions_l7_permissions_convert_with_placeholder_action() {
+        let entry = service_intentions(serde_json::json!([
+            {
+                "Name": "web",
+                "Permissions": [
+                    { "Action": "deny", "HTTP": { "PathPrefix": "/admin" } },
+                    { "Action": "allow", "HTTP": { "PathPrefix": "/", "Methods": ["GET", "post"] } }
+                ]
+            }
+        ]));
+        let converted = service_intentions_to_intentions(&entry).unwrap();
+        assert_eq!(converted.len(), 1);
+        // Permission evaluation ignores the top-level action; the legacy model
+        // still requires one, so ALLOW is an inert placeholder.
+        assert_eq!(converted[0].action, IntentionAction::Allow);
+        assert_eq!(converted[0].permissions.len(), 2);
+        assert_eq!(
+            converted[0].permissions[0]
+                .http
+                .as_ref()
+                .unwrap()
+                .path_prefix
+                .as_deref(),
+            Some("/admin")
+        );
+        assert_eq!(
+            converted[0].permissions[1].http.as_ref().unwrap().methods,
+            vec!["GET".to_string(), "POST".to_string()]
+        );
+    }
+
+    #[test]
+    fn service_intentions_rejects_action_with_permissions() {
+        let entry = service_intentions(serde_json::json!([
+            {
+                "Name": "web",
+                "Action": "allow",
+                "Permissions": [
+                    { "Action": "deny", "HTTP": { "PathPrefix": "/admin" } }
+                ]
+            }
+        ]));
+        let err = service_intentions_to_intentions(&entry).unwrap_err();
+        assert!(err.contains("must be omitted"), "{err}");
+    }
+
+    #[test]
+    fn service_intentions_rejects_jwt_and_peer() {
+        let mut with_jwt = service_intentions(serde_json::json!([
+            { "Name": "web", "Action": "allow" }
+        ]));
+        with_jwt.extra.insert("JWT".into(), serde_json::json!({}));
+        assert!(service_intentions_to_intentions(&with_jwt).is_err());
+
+        let with_peer = service_intentions(serde_json::json!([
+            { "Name": "web", "Action": "allow", "Peer": "peer-1" }
+        ]));
+        let err = service_intentions_to_intentions(&with_peer).unwrap_err();
+        assert!(err.contains("not supported"), "{err}");
+    }
+
+    #[test]
+    fn service_intentions_rejects_partial_wildcard() {
+        let entry = service_intentions(serde_json::json!([
+            { "Name": "web-*", "Action": "deny" }
+        ]));
+        let err = service_intentions_to_intentions(&entry).unwrap_err();
+        assert!(err.contains("full '*' wildcard"), "{err}");
+    }
+
+    #[test]
+    fn service_intentions_rejects_invalid_permission_shapes() {
+        let missing_http = service_intentions(serde_json::json!([
+            { "Name": "web", "Permissions": [{ "Action": "deny" }] }
+        ]));
+        let err = service_intentions_to_intentions(&missing_http).unwrap_err();
+        assert!(err.contains("HTTP is required"), "{err}");
+
+        let multiple_paths = service_intentions(serde_json::json!([
+            {
+                "Name": "web",
+                "Permissions": [{
+                    "Action": "allow",
+                    "HTTP": { "PathExact": "/health", "PathPrefix": "/" }
+                }]
+            }
+        ]));
+        let err = service_intentions_to_intentions(&multiple_paths).unwrap_err();
+        assert!(err.contains("at most one"), "{err}");
+
+        let duplicate_methods = service_intentions(serde_json::json!([
+            {
+                "Name": "web",
+                "Permissions": [{
+                    "Action": "allow",
+                    "HTTP": { "Methods": ["GET", "get"] }
+                }]
+            }
+        ]));
+        let err = service_intentions_to_intentions(&duplicate_methods).unwrap_err();
+        assert!(err.contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn validate_config_entry_dispatches_service_intentions() {
+        let entry = service_intentions(serde_json::json!([]));
+        assert!(validate_config_entry(&entry).is_err());
+    }
+
+    #[tokio::test]
+    async fn service_intentions_sync_replaces_and_removes_destination_rows() {
+        let ca = ConsulConnectCAService::new();
+        let first = service_intentions(serde_json::json!([
+            { "Name": "web", "Action": "allow" },
+            { "Name": "cron", "Action": "deny" }
+        ]));
+        assert_eq!(sync_service_intentions(&ca, &first).await.unwrap(), 2);
+        assert_eq!(ca.match_intentions("destination", "api").len(), 2);
+
+        let second = service_intentions(serde_json::json!([
+            { "Name": "batch", "Action": "deny" }
+        ]));
+        assert_eq!(sync_service_intentions(&ca, &second).await.unwrap(), 1);
+        let remaining = ca.match_intentions("destination", "api");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].source_name, "batch");
+
+        assert_eq!(remove_service_intentions(&ca, "default", "api").await, 1);
+        assert!(ca.match_intentions("destination", "api").is_empty());
     }
 }

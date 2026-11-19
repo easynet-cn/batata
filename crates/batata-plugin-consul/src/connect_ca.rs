@@ -1192,6 +1192,59 @@ impl ConsulConnectCAService {
         }
     }
 
+    /// Delete every legacy intention targeting one destination.
+    ///
+    /// `service-intentions` config entries are authoritative for their
+    /// destination in upstream Consul, so applying one replaces the legacy
+    /// intention rows for that destination instead of merging with them.
+    pub async fn delete_intentions_for_destination(
+        &self,
+        destination_ns: &str,
+        destination_name: &str,
+    ) -> usize {
+        let ids: Vec<String> = self
+            .intentions
+            .iter()
+            .filter(|r| {
+                let intention = r.value();
+                intention.destination_ns == destination_ns
+                    && intention.destination_name == destination_name
+            })
+            .map(|r| r.key().clone())
+            .collect();
+
+        let mut deleted = 0;
+        for id in ids {
+            if self.delete_intention(&id).await {
+                deleted += 1;
+            }
+        }
+        deleted
+    }
+
+    /// Replace all legacy intentions for one destination with the converted
+    /// `service-intentions` config entry sources.
+    ///
+    /// Returns the number of intentions written. Existing rows for the same
+    /// destination are removed first, including rows created through the
+    /// legacy intention API, because the config entry owns that destination.
+    pub async fn replace_intentions_for_destination(
+        &self,
+        destination_ns: &str,
+        destination_name: &str,
+        requests: Vec<IntentionRequest>,
+    ) -> usize {
+        self.delete_intentions_for_destination(destination_ns, destination_name)
+            .await;
+
+        let mut written = 0;
+        for req in requests {
+            self.upsert_intention_exact(req).await;
+            written += 1;
+        }
+        written
+    }
+
     /// The `authorize` method.
     pub fn authorize(
         &self,
@@ -1358,7 +1411,9 @@ fn evaluate_http_permission(http: &IntentionHTTPPermission, l7: Option<&L7Reques
 ///
 /// Returns an error message describing the first validation failure, or
 /// `Ok(())` if all permissions are valid.
-fn validate_intention_permissions(permissions: &[IntentionPermission]) -> Result<(), String> {
+pub(crate) fn validate_intention_permissions(
+    permissions: &[IntentionPermission],
+) -> Result<(), String> {
     const VALID_METHODS: &[&str] = &[
         "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
     ];

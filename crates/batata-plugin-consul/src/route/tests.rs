@@ -2418,6 +2418,54 @@ async fn test_http_config_entry_apply() {
 }
 
 #[actix_web::test]
+async fn test_http_service_intentions_config_entry_syncs_intentions() {
+    let app = create_test_app().await;
+
+    let entry = serde_json::json!({
+        "Kind": "service-intentions",
+        "Name": "si-http-api",
+        "Sources": [{ "Name": "web", "Action": "deny" }]
+    });
+    let req = test::TestRequest::put()
+        .uri("/v1/config")
+        .set_json(&entry)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let req = test::TestRequest::get()
+        .uri("/v1/connect/intentions/exact?source=web&destination=si-http-api")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["Action"], "deny");
+
+    // Unsupported fields fail closed before the config entry is persisted.
+    let invalid = serde_json::json!({
+        "Kind": "service-intentions",
+        "Name": "si-http-invalid",
+        "JWT": {},
+        "Sources": [{ "Name": "web", "Action": "deny" }]
+    });
+    let req = test::TestRequest::put()
+        .uri("/v1/config")
+        .set_json(&invalid)
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 400);
+
+    let req = test::TestRequest::delete()
+        .uri("/v1/config/service-intentions/si-http-api")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 200);
+
+    let req = test::TestRequest::get()
+        .uri("/v1/connect/intentions/exact?source=web&destination=si-http-api")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 404);
+}
+
+#[actix_web::test]
 async fn test_http_config_entry_apply_cas() {
     let app = create_test_app().await;
 

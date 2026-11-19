@@ -14,8 +14,9 @@ use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, put, web};
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::{
     ConfigEntryDeleteParams, ConfigEntryListParams, ConfigEntryRequest, ConsulConfigEntryService,
-    SUPPORTED_KINDS, validate_config_entry,
+    SUPPORTED_KINDS, remove_service_intentions, sync_service_intentions, validate_config_entry,
 };
+use crate::connect_ca::ConsulConnectCAService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
@@ -30,6 +31,7 @@ async fn apply_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
+    ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Bytes,
 ) -> HttpResponse {
@@ -69,8 +71,15 @@ async fn apply_config_entry(
         })
     });
 
+    let entry_for_sync = entry_req.clone();
     match config_service.apply_entry(entry_req, cas).await {
         Ok(success) => {
+            if success && entry_for_sync.kind == "service-intentions" {
+                if let Err(e) = sync_service_intentions(&ca_service, &entry_for_sync).await {
+                    return HttpResponse::InternalServerError().consul_error(ConsulError::new(e));
+                }
+                index_provider.increment(ConsulTable::ConnectCA);
+            }
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             consul_ok(&meta).json(success)
@@ -109,6 +118,7 @@ async fn delete_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
+    ca_service: web::Data<ConsulConnectCAService>,
     path: web::Path<(String, String)>,
     query: web::Query<ConfigEntryDeleteParams>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -119,8 +129,18 @@ async fn delete_config_entry(
     }
 
     let (kind, name) = path.into_inner();
+    let existing = config_service.get_entry(&kind, &name);
     match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
+            if success && kind == "service-intentions" {
+                let namespace = existing
+                    .and_then(|entry| entry.namespace)
+                    .unwrap_or_else(|| "default".to_string());
+                let removed = remove_service_intentions(&ca_service, &namespace, &name).await;
+                if removed > 0 {
+                    index_provider.increment(ConsulTable::ConnectCA);
+                }
+            }
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             if query.cas.is_some() {
