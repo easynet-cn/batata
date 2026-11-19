@@ -3290,9 +3290,9 @@ Continuation of #508 after the Phase 1 scope decision. Backend-only: `batata-ui`
 
 **Boundary and next.** This checkpoint implements the MCP collection on 18848 and is committed in `a26a1798`. Deferred at that point: the config-source ADS path on the same port, the `core/v1alpha1/MeshConfig` ignored type, VirtualService/DestinationRule config-to-RDS, upstream's two-level `nacos.extension.naming.istio.enabled` module gate (batata has one canonical enable key), auth/TLS/readiness (upstream has none), transfer of `nacos.istio.domain.suffix` to a flat config key, and a real Istio sink acceptance run. The first two plus the acceptance run are closed in §37.33.
 
-### 37.33 Istio config-source ADS, opt-in ServiceEntry port, and real pilot acceptance (2026-11-19, uncommitted)
+### 37.33 Istio config-source ADS, opt-in ServiceEntry port, and real pilot acceptance (2026-11-19, committed in `6eb4e7ab`)
 
-Continuation of #619 after `a26a1798`. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This section is **not committed** yet.
+Continuation of #619 after `a26a1798`. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice was committed as `6eb4e7ab feat(mesh): add Istio config-source ADS and port override` (21 files, +677/-42) and pushed to both `gitee/main` and `origin/main`; local/gitee/origin HEADs are aligned.
 
 **Why the scope expanded.** The first real-sink attempt used `docker.io/istio/pilot:1.13.5`, but that image is amd64-only and crashes on this arm64 host. Istio `1.15.5` was pulled with `--platform linux/arm64` and started with `INJECT_ENABLED=false` and an empty validation-webhook config name. Pilot opened an ADS stream to `18848`, not MCP `ResourceSource`: Istio's `configSources: xds://host.containers.internal:18848` path uses `AggregatedDiscoveryService::StreamAggregatedResources`. Upstream Nacos registers both services on the same plaintext gRPC server (`IstioServer.java:57-80`), so this is upstream-compatible rather than a batata-only workaround.
 
