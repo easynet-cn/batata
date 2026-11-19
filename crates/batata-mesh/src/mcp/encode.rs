@@ -19,6 +19,20 @@ pub const SERVICE_ENTRY_COLLECTION: &str = "istio/networking/v1alpha3/serviceent
 pub const SERVICE_ENTRY_TYPE_URL: &str =
     "type.googleapis.com/istio.networking.v1alpha3.ServiceEntry";
 
+/// `google.protobuf.Any.type_url` wrapping MCP resources in an ADS response.
+///
+/// Upstream Nacos `ApiConstants.MCP_RESOURCE_PROTO` uses exactly this value.
+pub const MCP_RESOURCE_TYPE_URL: &str = "type.googleapis.com/istio.mcp.v1alpha1.Resource";
+
+/// Istio config-source ADS type URL for the `ServiceEntry` collection.
+///
+/// Upstream Nacos `ApiConstants.SERVICE_ENTRY_PROTO_PACKAGE` uses exactly this
+/// GVK string; it is distinct from the MCP collection name.
+pub const SERVICE_ENTRY_GVK_TYPE_URL: &str = "networking.istio.io/v1alpha3/ServiceEntry";
+
+/// Istio config-source ADS type URL that upstream Nacos deliberately ignores.
+pub const MESH_CONFIG_GVK_TYPE_URL: &str = "core/v1alpha1/MeshConfig";
+
 /// Encode one native `ServiceEntry` DTO into the Istio wire message.
 pub fn encode_service_entry(entry: &ServiceEntry) -> istio::ServiceEntry {
     istio::ServiceEntry {
@@ -114,6 +128,35 @@ pub fn encode_resources(entries: &[ServiceEntry], version: u64, nonce: String) -
         removed_resources: Vec::new(),
         nonce,
         incremental: false,
+    }
+}
+
+/// Build the ADS resource list for a full-state `ServiceEntry` response.
+///
+/// Istio's MCP-over-xDS client decodes each `Any` as `istio.mcp.v1alpha1.Resource`,
+/// so the outer type URL is the MCP resource proto rather than the inner
+/// ServiceEntry proto.
+pub fn encode_ads_resources(
+    entries: &[ServiceEntry],
+    version: u64,
+    nonce: String,
+) -> crate::xds::generated::discovery::DiscoveryResponse {
+    let mut sorted: Vec<ServiceEntry> = entries.to_vec();
+    sorted.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name));
+
+    crate::xds::generated::discovery::DiscoveryResponse {
+        version_info: version.to_string(),
+        resources: sorted
+            .iter()
+            .map(|entry| prost_types::Any {
+                type_url: MCP_RESOURCE_TYPE_URL.to_string(),
+                value: encode_resource(entry).encode_to_vec(),
+            })
+            .collect(),
+        canary: false,
+        type_url: SERVICE_ENTRY_GVK_TYPE_URL.to_string(),
+        nonce,
+        control_plane: None,
     }
 }
 
@@ -225,6 +268,39 @@ mod tests {
         );
         let decoded = istio::ServiceEntry::decode(body.value.as_slice()).expect("decode body");
         assert_eq!(decoded.hosts, vec!["web.nacos"]);
+    }
+
+    #[test]
+    fn ads_response_wraps_mcp_resources_with_upstream_type_url() {
+        let mut first = sample_entry();
+        first.metadata.name = "zeta".to_string();
+        let mut second = sample_entry();
+        second.metadata.name = "alpha".to_string();
+
+        let response = encode_ads_resources(&[first, second], 42, "ads-nonce".to_string());
+
+        assert_eq!(response.version_info, "42");
+        assert_eq!(response.nonce, "ads-nonce");
+        assert_eq!(
+            response.type_url,
+            "networking.istio.io/v1alpha3/ServiceEntry"
+        );
+        assert!(!response.canary);
+        assert!(response.control_plane.is_none());
+        assert_eq!(response.resources.len(), 2);
+        assert_eq!(
+            response.resources[0].type_url,
+            "type.googleapis.com/istio.mcp.v1alpha1.Resource"
+        );
+        let resource = mcp::Resource::decode(response.resources[0].value.as_slice())
+            .expect("decode MCP resource");
+        let metadata = resource.metadata.expect("metadata");
+        assert_eq!(metadata.name, "public/alpha");
+        let body = resource.body.expect("body");
+        assert_eq!(
+            body.type_url,
+            "type.googleapis.com/istio.networking.v1alpha3.ServiceEntry"
+        );
     }
 
     #[test]

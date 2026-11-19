@@ -5,8 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use batata_mesh::conversion::{NacosInstance, NacosService};
+use batata_mesh::xds::generated::discovery::DiscoveryRequest;
+use batata_mesh::xds::generated::discovery::aggregated_discovery_service_client::AggregatedDiscoveryServiceClient;
 use batata_mesh::xds::generated::istio;
 use batata_mesh::xds::generated::mcp::RequestResources;
+use batata_mesh::xds::generated::mcp::Resource;
 use batata_mesh::xds::generated::mcp::resource_source_client::ResourceSourceClient;
 use batata_mesh::{BatataMcpService, start_istio_mcp_grpc_server_on_listener};
 use batata_mesh::{McpServer, McpServerConfig, SERVICE_ENTRY_COLLECTION};
@@ -120,6 +123,104 @@ async fn mcp_stream_delivers_full_state_and_live_update() {
     assert_ne!(second.nonce, first_nonce);
     assert!(second.resources.is_empty());
     assert_eq!(second.collection, SERVICE_ENTRY_COLLECTION);
+
+    drop(request_tx);
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn ads_config_source_delivers_service_entry_and_live_update() {
+    let server = Arc::new(McpServer::new(McpServerConfig::default()));
+    server.sync_services(&service_data()).await;
+    let service = BatataMcpService::new(server.clone());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let grpc_service = service.clone();
+    let server_task = tokio::spawn(async move {
+        start_istio_mcp_grpc_server_on_listener(grpc_service, listener, shutdown_rx)
+            .await
+            .expect("serve");
+    });
+
+    let mut client = timeout(Duration::from_secs(3), async {
+        loop {
+            match AggregatedDiscoveryServiceClient::connect(format!("http://{addr}")).await {
+                Ok(client) => return client,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+    })
+    .await
+    .expect("connect");
+
+    let (request_tx, request_rx) = mpsc::channel(4);
+    request_tx
+        .send(DiscoveryRequest {
+            type_url: "networking.istio.io/v1alpha3/ServiceEntry".to_string(),
+            ..Default::default()
+        })
+        .await
+        .expect("send service entry request");
+    request_tx
+        .send(DiscoveryRequest {
+            type_url: "core/v1alpha1/MeshConfig".to_string(),
+            ..Default::default()
+        })
+        .await
+        .expect("send mesh config request");
+
+    let mut stream = client
+        .stream_aggregated_resources(Request::new(ReceiverStream::new(request_rx)))
+        .await
+        .expect("open ADS stream")
+        .into_inner();
+
+    let first = timeout(Duration::from_secs(3), stream.message())
+        .await
+        .expect("first ADS response")
+        .expect("some ADS response")
+        .expect("ok ADS response");
+    assert_eq!(first.version_info, "1");
+    assert_eq!(first.type_url, "networking.istio.io/v1alpha3/ServiceEntry");
+    assert_eq!(first.resources.len(), 1);
+    let outer = &first.resources[0];
+    assert_eq!(
+        outer.type_url,
+        "type.googleapis.com/istio.mcp.v1alpha1.Resource"
+    );
+    let resource = Resource::decode(outer.value.as_slice()).expect("decode MCP resource");
+    let body = resource.body.expect("resource body");
+    assert_eq!(
+        body.type_url,
+        "type.googleapis.com/istio.networking.v1alpha3.ServiceEntry"
+    );
+    let service_entry = istio::ServiceEntry::decode(body.value.as_slice()).expect("decode SE");
+    assert_eq!(service_entry.hosts, vec!["webnacos"]);
+
+    let first_nonce = first.nonce.clone();
+    request_tx
+        .send(DiscoveryRequest {
+            type_url: "networking.istio.io/v1alpha3/ServiceEntry".to_string(),
+            response_nonce: first_nonce.clone(),
+            ..Default::default()
+        })
+        .await
+        .expect("ack");
+
+    server.sync_services(&[]).await;
+    service.publish_snapshot();
+
+    let second = timeout(Duration::from_secs(3), stream.message())
+        .await
+        .expect("second ADS response")
+        .expect("some ADS response")
+        .expect("ok ADS response");
+    assert_ne!(second.nonce, first_nonce);
+    assert_eq!(second.type_url, "networking.istio.io/v1alpha3/ServiceEntry");
+    assert!(second.resources.is_empty());
 
     drop(request_tx);
     let _ = shutdown_tx.send(());

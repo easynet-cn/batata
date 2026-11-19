@@ -1465,8 +1465,20 @@ async fn start_istio_mcp_if_enabled(
     }
 
     let port = configuration.istio_mcp_server_port();
-    info!(port = port, "Starting Istio MCP server");
-    match start_istio_mcp_service(true, port, grpc_servers.naming_provider()).await {
+    let service_entry_port = configuration.istio_mcp_service_entry_port();
+    info!(
+        port = port,
+        service_entry_port = service_entry_port,
+        "Starting Istio MCP server"
+    );
+    match start_istio_mcp_service(
+        true,
+        port,
+        service_entry_port,
+        grpc_servers.naming_provider(),
+    )
+    .await
+    {
         Ok(handle) => Ok(handle),
         Err(error) => Err(Box::new(std::io::Error::other(error.to_string()))),
     }

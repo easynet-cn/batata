@@ -3823,6 +3823,11 @@ pub struct IstioMcpServerConfig {
     #[serde(default = "default_istio_mcp_server_port")]
     /// Istio MCP gRPC port; upstream Nacos defaults to 18848.
     pub port: i64,
+    #[serde(default, rename = "service-entry-port", alias = "service_entry_port")]
+    /// Optional ServiceEntry port override. `0` keeps upstream Nacos fidelity,
+    /// which Istio 1.15 rejects; a non-zero value is emitted for sinks that
+    /// validate configs on ingest.
+    pub service_entry_port: i64,
 }
 
 impl Default for IstioMcpServerConfig {
@@ -3830,6 +3835,7 @@ impl Default for IstioMcpServerConfig {
         Self {
             enabled: false,
             port: default_istio_mcp_server_port(),
+            service_entry_port: 0,
         }
     }
 }

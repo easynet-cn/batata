@@ -84,8 +84,9 @@ Nacos files into `conf/`.
 
 | Nacos | Batata | Notes |
 |---|---|---|
-| `nacos.istio.mcp.server.enabled` | `batata.istio.mcp.server.enabled` | both default `false`; enables the MCP `ResourceSource` gRPC server only, not Nacos xDS ADS on 18848 |
+| `nacos.istio.mcp.server.enabled` | `batata.istio.mcp.server.enabled` | both default `false`; enables MCP `ResourceSource` plus the config-source ADS service on the same port |
 | `nacos.istio.mcp.server.port` | `batata.istio.mcp.server.port` | both default `18848` |
+| no upstream equivalent | `batata.istio.mcp.server.service-entry-port` | opt-in `0..=65535`, default `0` keeps upstream ServiceEntry port `0`; use a non-zero value for sinks such as Istio 1.15 that validate configs on ingest |
 | `nacos.istio.domain.suffix` | configured through `McpServerConfig::domain_suffix` | both default `nacos` (no leading dot); not yet exposed as a flat `batata.*` key |
 
 ### Not ported

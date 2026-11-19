@@ -82,7 +82,7 @@ impl BatataMcpService {
     }
 
     /// Build a snapshot from the current native cache and a fresh nonce.
-    fn current_snapshot(&self) -> McpSnapshot {
+    pub(crate) fn current_snapshot(&self) -> McpSnapshot {
         McpSnapshot {
             version: self.inner.server.version(),
             entries: self.inner.server.get_service_entries(),
@@ -93,7 +93,7 @@ impl BatataMcpService {
     /// Generate a process-local nonce. Upstream uses a dashed UUID; the wire
     /// only requires an opaque unique token, so timestamp + counter is
     /// sufficient and avoids pulling in another dependency.
-    fn next_nonce(&self) -> String {
+    pub(crate) fn next_nonce(&self) -> String {
         let counter = self.inner.nonce_counter.fetch_add(1, Ordering::SeqCst);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -217,10 +217,13 @@ pub async fn start_istio_mcp_grpc_server_on_listener(
     let addr = listener.local_addr()?;
     info!(addr = %addr, "Starting Istio MCP gRPC server");
 
-    let service =
-        crate::xds::generated::mcp::resource_source_server::ResourceSourceServer::new(service);
+    let mcp_service = crate::xds::generated::mcp::resource_source_server::ResourceSourceServer::new(
+        service.clone(),
+    );
+    let ads_service = super::ads::BatataIstioMcpAdsService::new(service).into_server();
     Server::builder()
-        .add_service(service)
+        .add_service(mcp_service)
+        .add_service(ads_service)
         .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
             let _ = shutdown_rx.await;
             info!("Istio MCP gRPC server shutdown signal received");

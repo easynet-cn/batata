@@ -41,7 +41,8 @@ pub use grpc::{
     start_xds_grpc_server_on_listener,
 };
 pub use mcp::{
-    BatataMcpService, McpServer, McpServerConfig, SERVICE_ENTRY_COLLECTION, SERVICE_ENTRY_TYPE_URL,
+    BatataIstioMcpAdsService, BatataMcpService, McpServer, McpServerConfig,
+    SERVICE_ENTRY_COLLECTION, SERVICE_ENTRY_GVK_TYPE_URL, SERVICE_ENTRY_TYPE_URL,
     start_istio_mcp_grpc_server_on_listener,
 };
 pub use server::XdsServer;

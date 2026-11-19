@@ -12,8 +12,8 @@ docs/compat/
 ├── README.md           # This file: conventions + metric definitions
 ├── review-report.md    # Source-code audit report (2026-11-09, client SDK focus)
 ├── nacos/
-│   ├── features.md     # Upstream feature × batata implementation status (201 F-IDs)
-│   └── tests.md        # Upstream test inventory (405 T-IDs mapped to F-IDs)
+│   ├── features.md     # Upstream feature × batata implementation status (203 F-IDs)
+│   └── tests.md        # Upstream test inventory (410 T-IDs mapped to F-IDs)
 ├── consul/
 │   ├── features.md     # 181 F-IDs
 │   └── tests.md        # 251 T-IDs
@@ -33,10 +33,10 @@ Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 201      | 195 | 0  | 0 | 2 | 4  | 97%       | 405        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 203      | 197 | 0  | 0 | 2 | 4  | 97%       | 410        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 181 | 0  | 0 | 0  | 0  | 100%      | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **581** | **545** | **3** | **0** | **29** | **4** | **94%** | **1044** | |
+| **Total** | **583** | **547** | **3** | **0** | **29** | **4** | **94%** | **1049** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E

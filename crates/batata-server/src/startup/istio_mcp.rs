@@ -73,6 +73,7 @@ impl IstioMcpServerHandle {
 pub async fn start_istio_mcp_service(
     enabled: bool,
     port: u16,
+    service_entry_port: u16,
     naming_service: Arc<dyn NamingServiceProvider>,
 ) -> Result<Option<IstioMcpServerHandle>, Box<dyn std::error::Error + Send + Sync>> {
     if !enabled {
@@ -82,7 +83,10 @@ pub async fn start_istio_mcp_service(
 
     info!(port = port, "Starting Istio MCP service");
 
-    let mcp_server = Arc::new(McpServer::new(McpServerConfig::default()));
+    let mcp_server = Arc::new(McpServer::new(McpServerConfig {
+        service_entry_port,
+        ..Default::default()
+    }));
     let service = Arc::new(BatataMcpService::new(mcp_server.clone()));
 
     let poll_interval = Duration::from_millis(5000);
@@ -170,7 +174,7 @@ mod tests {
     #[tokio::test]
     async fn disabled_service_returns_none() {
         let naming = Arc::new(NamingService::new());
-        let handle = start_istio_mcp_service(false, 0, naming)
+        let handle = start_istio_mcp_service(false, 0, 0, naming)
             .await
             .expect("disabled startup");
 
@@ -189,7 +193,7 @@ mod tests {
 
         // Port 0 lets the OS choose a free port; the handle still owns the
         // bound listener and shuts it down with the rest of the service.
-        let handle = start_istio_mcp_service(true, 0, naming)
+        let handle = start_istio_mcp_service(true, 0, 18_080, naming)
             .await
             .expect("startup")
             .expect("enabled");
@@ -209,6 +213,7 @@ mod tests {
         let entries = service.server().get_service_entries();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].spec.hosts, vec!["webnacos"]);
+        assert_eq!(entries[0].spec.ports[0].number, 18_080);
 
         handle.shutdown().await;
     }
@@ -223,7 +228,7 @@ mod tests {
             instance("127.0.0.1", 8080),
         );
 
-        let handle = start_istio_mcp_service(true, 0, naming.clone())
+        let handle = start_istio_mcp_service(true, 0, 0, naming.clone())
             .await
             .expect("startup")
             .expect("enabled");
@@ -260,7 +265,7 @@ mod tests {
             .expect("probe listener");
         let port = listener.local_addr().expect("addr").port();
 
-        let error = match start_istio_mcp_service(true, port, naming).await {
+        let error = match start_istio_mcp_service(true, port, 0, naming).await {
             Ok(_) => panic!("bind conflict must fail startup"),
             Err(error) => error,
         };

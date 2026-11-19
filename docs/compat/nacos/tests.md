@@ -601,6 +601,11 @@ gap register in `docs/compat/review-report.md`.
 | T-NAC-ISTIO-001-02 | F-NAC-ISTIO-001 | istio_mcp_e2e | delivers live full-state replacement with a fresh nonce | GRPC_API | ✅ |
 | T-NAC-ISTIO-002-01 | F-NAC-ISTIO-002 | ServiceEntryGeneratorConcurrencyTest | generates one ServiceEntry per Nacos service with upstream wire fields | INTERNAL | ✅ |
 | T-NAC-ISTIO-003-01 | F-NAC-ISTIO-003 | IstioEnabledFilterTest | gates the MCP server and binds the configured default port | INTERNAL | ✅ |
+| T-NAC-ISTIO-005-01 | F-NAC-ISTIO-005 | mcp::ads::tests | serves ServiceEntry GVK with MCP Resource wrapper and ignores MeshConfig | GRPC_API | ✅ |
+| T-NAC-ISTIO-005-02 | F-NAC-ISTIO-005 | istio_mcp_e2e | delivers config-source ADS full state and live replacement over real gRPC | GRPC_API | ✅ |
+| T-NAC-ISTIO-005-03 | F-NAC-ISTIO-005 | istio-pilot 1.15.5 | real pilot receives ServiceEntry cnt=1 then cnt=2 from port 18848 | GRPC_API | ✅ |
+| T-NAC-ISTIO-006-01 | F-NAC-ISTIO-006 | mcp::server::tests | keeps upstream port 0 default and applies opt-in port override | INTERNAL | ✅ |
+| T-NAC-ISTIO-006-02 | F-NAC-ISTIO-006 | config::tests | validates typed service-entry port default, alias and range | INTERNAL | ✅ |
 
 ---
 
@@ -617,8 +622,8 @@ enforces these totals.
 | 4. Java SDK (gRPC) | 57 | 0 | 46 | 11 |
 | 5. Lock Service (gRPC) | 61 | 0 | 61 | 0 |
 | 6. Maintainer SDK (HTTP) | 38 | 0 | 38 | 0 |
-| 7. Istio MCP (gRPC) | 4 | 4 | 0 | 0 |
-| **Total** | **405** | **4** | **380** | **21** |
+| 7. Istio MCP (gRPC) | 9 | 9 | 0 | 0 |
+| **Total** | **410** | **9** | **380** | **21** |
 
 > The 21 `⏭️` rows are **not** skipped because a feature is missing. They reference
 > `F-NAC-ADM-AUTH-001`, `F-NAC-ADM-AI-008`, `F-NAC-CLIENT-010`,

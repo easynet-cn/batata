@@ -86,6 +86,10 @@ fn validate_typed_config(typed: &typed_config::BatataTypedConfig) -> anyhow::Res
         ),
         ("batata.ai.mcp.registry.port", typed.ai.mcp.registry.port),
         ("batata.istio.mcp.server.port", typed.istio.mcp.server.port),
+        (
+            "batata.istio.mcp.server.service_entry_port",
+            typed.istio.mcp.server.service_entry_port,
+        ),
     ] {
         if !(0..=max_port).contains(&value) {
             anyhow::bail!("{key} must be in 0..=65535, got {value}");
@@ -153,10 +157,16 @@ fn try_parse_env_value(s: &str) -> config::Value {
 /// treated as a path separator. `BATATA_PERSISTENCE_EMBEDDED_CAS_SHARDS` would
 /// otherwise become `batata.persistence.embedded.cas.shards` and be silently
 /// ignored. Register explicit aliases for such keys here.
-const ENV_KEY_ALIASES: &[(&str, &str)] = &[(
-    "BATATA_PERSISTENCE_EMBEDDED_CAS_SHARDS",
-    "batata.persistence.embedded.cas_shards",
-)];
+const ENV_KEY_ALIASES: &[(&str, &str)] = &[
+    (
+        "BATATA_PERSISTENCE_EMBEDDED_CAS_SHARDS",
+        "batata.persistence.embedded.cas_shards",
+    ),
+    (
+        "BATATA_ISTIO_MCP_SERVER_SERVICE_ENTRY_PORT",
+        "batata.istio.mcp.server.service_entry_port",
+    ),
+];
 
 /// Map one environment variable name to its config key.
 ///
@@ -1430,6 +1440,14 @@ impl Configuration {
         port_to_u16(
             self.typed.istio.mcp.server.port,
             "batata.istio.mcp.server.port",
+        )
+    }
+
+    /// Get the optional ServiceEntry port override (default: 0 = upstream fidelity).
+    pub fn istio_mcp_service_entry_port(&self) -> u16 {
+        port_to_u16(
+            self.typed.istio.mcp.server.service_entry_port,
+            "batata.istio.mcp.server.service_entry_port",
         )
     }
 
@@ -3166,6 +3184,7 @@ mod tests {
         let cfg = build_config(vec![]);
         assert!(!cfg.istio_mcp_server_enabled());
         assert_eq!(cfg.istio_mcp_server_port(), 18848);
+        assert_eq!(cfg.istio_mcp_service_entry_port(), 0);
     }
 
     #[test]
@@ -3181,9 +3200,35 @@ mod tests {
         let cfg = build_config(vec![
             ("batata.istio.mcp.server.enabled", true.into()),
             ("batata.istio.mcp.server.port", 18849_i64.into()),
+            (
+                "batata.istio.mcp.server.service_entry_port",
+                18080_i64.into(),
+            ),
         ]);
         assert!(cfg.istio_mcp_server_enabled());
         assert_eq!(cfg.istio_mcp_server_port(), 18849);
+        assert_eq!(cfg.istio_mcp_service_entry_port(), 18080);
+    }
+
+    #[test]
+    fn test_typed_istio_mcp_service_entry_port_accepts_hyphen_alias() {
+        let cfg = build_config(vec![(
+            "batata.istio.mcp.server.service-entry-port",
+            18081_i64.into(),
+        )]);
+        assert_eq!(cfg.istio_mcp_service_entry_port(), 18081);
+    }
+
+    #[test]
+    fn test_istio_mcp_service_entry_port_validation() {
+        let mut typed = typed_config::BatataTypedConfig::default();
+        typed.istio.mcp.server.service_entry_port = 65_536;
+        let error = validate_typed_config(&typed).expect_err("invalid service entry port");
+        assert!(
+            error
+                .to_string()
+                .contains("batata.istio.mcp.server.service_entry_port")
+        );
     }
 
     // ========================================================================
@@ -3905,6 +3950,14 @@ batata.server.main.port: 8888
         assert_eq!(
             env_config_key("BATATA", "BATATA_PERSISTENCE_EMBEDDED_CAS_SHARDS"),
             Some("batata.persistence.embedded.cas_shards".to_string())
+        );
+    }
+
+    #[test]
+    fn test_env_config_key_istio_service_entry_port_alias() {
+        assert_eq!(
+            env_config_key("BATATA", "BATATA_ISTIO_MCP_SERVER_SERVICE_ENTRY_PORT"),
+            Some("batata.istio.mcp.server.service_entry_port".to_string())
         );
     }
 

@@ -397,10 +397,10 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 ## B.11. Istio MCP server (`F-NAC-ISTIO-`)
 
 > Registered 2026-11-19 from the Nacos 3.3.0 `nacos-istio` source audit
-> (`db1946649`, 3.3.0 revision line). Scope is the MCP `ResourceSource` gRPC
-> service on upstream port 18848 only. The same upstream port also hosts Nacos
-> xDS ADS; that path and the VirtualService/DestinationRule config-to-RDS path
-> remain deliberately deferred.
+> (`db1946649`, 3.3.0 revision line). Scope is upstream port 18848: Istio MCP
+> `ResourceSource` plus the config-source ADS stream that a real Istio sink
+> opens on the same port. Full Nacos xDS data-plane ADS and the
+> VirtualService/DestinationRule config-to-RDS path remain deliberately deferred.
 
 | ID | Istio MCP capability | batata impl | Status | Tests | Notes |
 |----|----------------------|-------------|--------|-------|-------|
@@ -408,6 +408,8 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | F-NAC-ISTIO-002 | Nacos naming → Istio `ServiceEntry` generation | `batata-mesh` | 🟢 | | Upstream `NacosServiceInfoResourceWatcher` + `ServiceEntryMcpGenerator` keep healthy/enabled endpoints, apply panic mode when none qualify, use `name.group.namespace` as the key/host prefix, concatenate `nacos.istio.domain.suffix` verbatim (default `nacos`), emit ServiceEntry port 0 with endpoint port maps, and set `registryType=nacos` / `virtual=1`. Batata reuses `McpServer::sync_services`, adds `domain_suffix` (default `nacos`), panic mode, port 0, and wire encoding into `google.protobuf.Any` with `type.googleapis.com/istio.networking.v1alpha3.ServiceEntry`. Byte-level regression anchors the upstream field numbers. |
 | F-NAC-ISTIO-003 | Enable/port config keys and upstream mapping | `batata-server-common` | 🟢 | | Upstream `IstioConfig.java:31-34` binds `nacos.istio.mcp.server.enabled=false` and `nacos.istio.mcp.server.port=18848`; `IstioEnabledFilter.java:40,57` adds a module gate. Batata keeps the canonical keys `batata.istio.mcp.server.enabled/port` (default false / 18848) in the existing typed-config path; the `nacos.*` form is documented as the upstream mapping only. Env `BATATA_ISTIO_MCP_SERVER_*` and dotted CLI overrides work through the existing config pipeline; invalid ports fail typed-config validation. |
 | F-NAC-ISTIO-004 | Independent naming source, live push and graceful shutdown | `batata-server` | 🟢 | | Batata reuses `xds_nacos_source::spawn_nacos_source` with its own event channel and service cache so a slow MCP sink cannot block the Path A xDS bridge. Each successful sync publishes one full snapshot to all connected streams. `IstioMcpServerHandle` stops the producer first, awaits the bridge, then signals the gRPC server; startup binds before spawning so conflicts are returned synchronously. Tests cover live naming updates, snapshot publication and port-conflict failure. |
+| F-NAC-ISTIO-005 | Istio config-source ADS on port 18848 (`StreamAggregatedResources`) | `crates/batata-mesh/src/mcp/ads.rs` | 🟢 | | Upstream `IstioServer.java:57-80` also registers `NacosXdsService`; Istio's `configSources: xds://host:18848` path opens normal Envoy ADS and requests Pilot GVKs. Batata serves that stream alongside `ResourceSource`: `networking.istio.io/v1alpha3/ServiceEntry` gets full-state outer `Any` values of `type.googleapis.com/istio.mcp.v1alpha1.Resource`, `core/v1alpha1/MeshConfig` is ignored like upstream, other GVKs get empty full-state responses, and delta stays unimplemented. ACK/NACK and nonce checks are handled per GVK; snapshot pushes replace full state. |
+| F-NAC-ISTIO-006 | Opt-in ServiceEntry port override for strict sinks | `crates/batata-server-common/src/model/config.rs`, `crates/batata-mesh/src/mcp/server.rs` | 🟢 | | Upstream fidelity keeps ServiceEntry port 0 and carries real ports in endpoint port maps, but Istio 1.15 rejects port 0 on ingest. Batata adds `batata.istio.mcp.server.service-entry-port` (default 0, hyphen/underscore/env aliases, validated 0..=65535) so operators can opt into a non-zero ServiceEntry port without changing upstream-default wire output. |
 
 ---
 
@@ -436,8 +438,8 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | B.8 Maintainer SDK | 9 | 0 | 0 | 1 | 0 | 10 | 90% |
 | B.9 Client SDK gaps | 7 | 0 | 0 | 1 | 0 | 8 | 88% |
 | B.10 Server AI ADMIN | 2 | 0 | 0 | 0 | 1 | 3 | 67% |
-| B.11 Istio MCP | 4 | 0 | 0 | 0 | 0 | 4 | 100% |
-| **Total** | 195 | 0 | 0 | 2 | 4 | 201 | 97% |
+| B.11 Istio MCP | 6 | 0 | 0 | 0 | 0 | 6 | 100% |
+| **Total** | 197 | 0 | 0 | 2 | 4 | 203 | 97% |
 
 > Recomputed from the F-ID rows on 2026-11-10 (`scripts/compat_check.py` enforces
 > this table). Initial verification was 2025-08-08; the maintainer SDK rows were

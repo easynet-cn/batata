@@ -26,6 +26,9 @@ pub struct McpServerConfig {
     /// Host suffix appended to the Nacos service key. Upstream default is
     /// `nacos` without a leading dot (see `IstioConfig.domainSuffix`).
     pub domain_suffix: String,
+    /// Optional ServiceEntry port override. `0` keeps upstream Nacos fidelity;
+    /// a non-zero value allows sinks that validate configs on ingest.
+    pub service_entry_port: u16,
     /// Whether to generate VirtualServices
     pub generate_virtual_services: bool,
     /// Whether to generate DestinationRules
@@ -39,6 +42,7 @@ impl Default for McpServerConfig {
             default_namespace: "default".to_string(),
             export_to: vec!["*".to_string()],
             domain_suffix: "nacos".to_string(),
+            service_entry_port: 0,
             generate_virtual_services: true,
             generate_destination_rules: true,
         }
@@ -249,8 +253,9 @@ impl McpServer {
         let host = self.service_host(service);
 
         // Upstream Nacos sets ServiceEntry port 0 and carries the real port in
-        // each WorkloadEntry port map.
-        let port = 0;
+        // each WorkloadEntry port map. An opt-in override helps sinks, such as
+        // Istio 1.15, that validate the ServiceEntry port on ingest.
+        let port = u32::from(self.config.service_entry_port);
 
         // Determine protocol from metadata
         let protocol = service
@@ -713,6 +718,19 @@ mod tests {
         assert_eq!(se.spec.ports[0].number, 0);
         assert_eq!(se.spec.endpoints.len(), 2);
         assert!(se.spec.endpoints[0].address.is_some());
+    }
+
+    #[test]
+    fn test_nacos_to_service_entry_port_override() {
+        let config = McpServerConfig {
+            service_entry_port: 18_080,
+            ..Default::default()
+        };
+        let server = McpServer::new(config);
+        let se = server.nacos_to_service_entry(&create_test_service());
+
+        assert_eq!(se.spec.ports[0].number, 18_080);
+        assert_eq!(se.spec.endpoints[0].ports.get("http"), Some(&8080));
     }
 
     #[test]

@@ -238,8 +238,10 @@ batata.mesh.xds.default.listener.port: 15001
 (CDS/EDS/LDS/RDS/ADS; L4/L7 intentions compiled to network/HTTP RBAC filters).
 `batata.mesh.xds.*` on 15010 is Path A and is fed from the Nacos naming provider.
 `batata.istio.mcp.server.enabled/port` (default `false` / `18848`) starts the
-Nacos-compatible Istio MCP `ServiceEntry` stream, mapped from
-`nacos.istio.mcp.server.*`; Nacos xDS ADS on the same upstream port is deferred.
+Nacos-compatible Istio MCP `ResourceSource` and config-source ADS streams,
+mapped from `nacos.istio.mcp.server.*`. `batata.istio.mcp.server.service-entry-port`
+defaults to `0` to preserve upstream Nacos wire semantics; set it to a non-zero
+port for sinks such as Istio 1.15 that validate ServiceEntry configs on ingest.
 Istio is not itself an xDS client, so the xDS paths are Envoy v3 compatibility,
 not Istio control-plane compatibility.
 
