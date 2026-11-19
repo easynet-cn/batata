@@ -609,6 +609,8 @@ gap register in `docs/compat/review-report.md`.
 | T-NAC-ISTIO-007-01 | F-NAC-ISTIO-007 | mcp::ads::tests | serves protobuf CDS/EDS/LDS/RDS and keeps SDS on the empty generator | INTERNAL | ✅ |
 | T-NAC-ISTIO-007-02 | F-NAC-ISTIO-007 | istio_mcp_e2e | delivers all four Envoy xDS resources with the xDS version over real gRPC | GRPC_API | ✅ |
 | T-NAC-ISTIO-007-03 | F-NAC-ISTIO-007 | startup::istio_mcp::tests | publishes naming-derived clusters, endpoints, listeners and routes with MCP snapshots | INTERNAL | ✅ |
+| T-NAC-ISTIO-007-04 | F-NAC-ISTIO-007 | mcp::ads::tests | filters Envoy resources by `resource_names` and keeps wildcard subscriptions | INTERNAL | ✅ |
+| T-NAC-ISTIO-007-05 | F-NAC-ISTIO-007 | istio_mcp_e2e | answers an ACK carrying a changed EDS resource subscription | GRPC_API | ✅ |
 
 ---
 
@@ -625,8 +627,8 @@ enforces these totals.
 | 4. Java SDK (gRPC) | 57 | 0 | 46 | 11 |
 | 5. Lock Service (gRPC) | 61 | 0 | 61 | 0 |
 | 6. Maintainer SDK (HTTP) | 38 | 0 | 38 | 0 |
-| 7. Istio MCP (gRPC) | 12 | 12 | 0 | 0 |
-| **Total** | **413** | **12** | **383** | **21** |
+| 7. Istio MCP (gRPC) | 14 | 14 | 0 | 0 |
+| **Total** | **415** | **14** | **380** | **21** |
 
 > The 21 `⏭️` rows are **not** skipped because a feature is missing. They reference
 > `F-NAC-ADM-AUTH-001`, `F-NAC-ADM-AI-008`, `F-NAC-CLIENT-010`,

@@ -8,7 +8,7 @@
 //! CDS/EDS/LDS/RDS resources for the standard xDS type URLs, empty full-state
 //! responses for the other collections, and no response for MeshConfig.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use prost_types::Any;
@@ -48,7 +48,12 @@ impl BatataIstioMcpAdsService {
         AggregatedDiscoveryServiceServer::new(self)
     }
 
-    fn build_response(&self, type_url: &str, snapshot: &McpSnapshot) -> DiscoveryResponse {
+    fn build_response(
+        &self,
+        type_url: &str,
+        resource_names: &[String],
+        snapshot: &McpSnapshot,
+    ) -> DiscoveryResponse {
         if type_url == SERVICE_ENTRY_GVK_TYPE_URL {
             return encode_ads_resources(
                 &snapshot.entries,
@@ -60,7 +65,11 @@ impl BatataIstioMcpAdsService {
         if let Some(resource_type) = envoy_resource_type(type_url) {
             return DiscoveryResponse {
                 version_info: snapshot.xds.version.clone(),
-                resources: encode_envoy_resources(resource_type, snapshot.xds.as_ref()),
+                resources: encode_envoy_resources(
+                    resource_type,
+                    snapshot.xds.as_ref(),
+                    resource_names,
+                ),
                 canary: false,
                 type_url: type_url.to_string(),
                 nonce: self.mcp.next_nonce(),
@@ -94,10 +103,15 @@ fn envoy_resource_type(type_url: &str) -> Option<ResourceType> {
     .then_some(resource_type)
 }
 
-fn encode_envoy_resources(resource_type: ResourceType, snapshot: &ResourceSnapshot) -> Vec<Any> {
+fn encode_envoy_resources(
+    resource_type: ResourceType,
+    snapshot: &ResourceSnapshot,
+    resource_names: &[String],
+) -> Vec<Any> {
     match resource_type {
         ResourceType::Cluster => sorted_keys(&snapshot.clusters)
             .into_iter()
+            .filter(|name| is_requested(resource_names, name))
             .filter_map(|name| {
                 snapshot.clusters.get(&name).map(|cluster| Any {
                     type_url: type_urls::CLUSTER_TYPE.to_string(),
@@ -107,6 +121,7 @@ fn encode_envoy_resources(resource_type: ResourceType, snapshot: &ResourceSnapsh
             .collect(),
         ResourceType::Endpoint => sorted_keys(&snapshot.endpoints)
             .into_iter()
+            .filter(|name| is_requested(resource_names, name))
             .filter_map(|name| {
                 snapshot.endpoints.get(&name).map(|cla| Any {
                     type_url: type_urls::ENDPOINT_TYPE.to_string(),
@@ -116,6 +131,7 @@ fn encode_envoy_resources(resource_type: ResourceType, snapshot: &ResourceSnapsh
             .collect(),
         ResourceType::Listener => sorted_keys(&snapshot.listeners)
             .into_iter()
+            .filter(|name| is_requested(resource_names, name))
             .filter_map(|name| {
                 let listener = snapshot.listeners.get(&name)?;
                 let value = encode_listener(listener)?;
@@ -127,6 +143,7 @@ fn encode_envoy_resources(resource_type: ResourceType, snapshot: &ResourceSnapsh
             .collect(),
         ResourceType::Route => sorted_keys(&snapshot.routes)
             .into_iter()
+            .filter(|name| is_requested(resource_names, name))
             .filter_map(|name| {
                 snapshot.routes.get(&name).map(|route| Any {
                     type_url: type_urls::ROUTE_TYPE.to_string(),
@@ -136,6 +153,20 @@ fn encode_envoy_resources(resource_type: ResourceType, snapshot: &ResourceSnapsh
             .collect(),
         ResourceType::Secret | ResourceType::Runtime => Vec::new(),
     }
+}
+
+/// An empty `resource_names` set is Envoy's wildcard subscription. A non-empty
+/// set is a full replacement of that type's subscription, so only those names
+/// belong in the SotW response.
+fn is_requested(resource_names: &[String], name: &str) -> bool {
+    resource_names.is_empty() || resource_names.iter().any(|requested| requested == name)
+}
+
+fn sorted_resource_names(request: &DiscoveryRequest) -> Vec<String> {
+    let mut names = request.resource_names.clone();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn sorted_keys<T>(map: &std::collections::HashMap<String, T>) -> Vec<String> {
@@ -164,7 +195,7 @@ impl AggregatedDiscoveryService for BatataIstioMcpAdsService {
         let mut updates = self.mcp.subscribe();
         let (tx, rx) = mpsc::channel(16);
         let service = self.clone();
-        let mut watched: HashSet<String> = HashSet::new();
+        let mut watched: HashMap<String, Vec<String>> = HashMap::new();
         let mut last_nonce: HashMap<String, String> = HashMap::new();
 
         tokio::spawn(async move {
@@ -180,6 +211,7 @@ impl AggregatedDiscoveryService for BatataIstioMcpAdsService {
                             }
                         };
 
+                        let resource_names = sorted_resource_names(&request);
                         let type_url = request.type_url;
                         if is_ignored_type(&type_url) {
                             debug!(type_url = %type_url, "ignoring MCP ADS config type");
@@ -199,8 +231,14 @@ impl AggregatedDiscoveryService for BatataIstioMcpAdsService {
                             continue;
                         }
 
+                        // An ACK only settles the version we already answered. A
+                        // changed `resource_names` set is a new subscription even
+                        // when it carries the ACK nonce (Envoy does this when CDS
+                        // adds a cluster and EDS subscribes to its endpoint).
+                        let same_subscription = watched.get(&type_url) == Some(&resource_names);
                         if let Some(nonce) = last_nonce.get(&type_url)
                             && !request.response_nonce.is_empty()
+                            && same_subscription
                         {
                             if request.response_nonce == *nonce {
                                 debug!(type_url = %type_url, nonce = %nonce, "Istio MCP ADS ACK");
@@ -215,9 +253,10 @@ impl AggregatedDiscoveryService for BatataIstioMcpAdsService {
                             continue;
                         }
 
-                        watched.insert(type_url.clone());
+                        watched.insert(type_url.clone(), resource_names.clone());
                         let snapshot = service.mcp.current_snapshot();
-                        let response = service.build_response(&type_url, &snapshot);
+                        let response =
+                            service.build_response(&type_url, &resource_names, &snapshot);
                         last_nonce.insert(type_url, response.nonce.clone());
                         if tx.send(Ok(response)).await.is_err() {
                             break;
@@ -236,8 +275,9 @@ impl AggregatedDiscoveryService for BatataIstioMcpAdsService {
                         };
 
                         let mut failed = false;
-                        for type_url in watched.iter() {
-                            let response = service.build_response(type_url, &snapshot);
+                        for (type_url, resource_names) in watched.iter() {
+                            let response =
+                                service.build_response(type_url, resource_names, &snapshot);
                             last_nonce.insert(type_url.clone(), response.nonce.clone());
                             if tx.send(Ok(response)).await.is_err() {
                                 failed = true;
@@ -308,22 +348,26 @@ mod tests {
     }
 
     fn sample_nacos_service() -> NacosService {
+        sample_nacos_service_named("web", 8080)
+    }
+
+    fn sample_nacos_service_named(name: &str, port: u16) -> NacosService {
         NacosService {
             namespace_id: "public".to_string(),
             group_name: "DEFAULT_GROUP".to_string(),
-            service_name: "web".to_string(),
+            service_name: name.to_string(),
             protect_threshold: 0.0,
             metadata: HashMap::new(),
             instances: vec![NacosInstance {
-                instance_id: "web-1".to_string(),
+                instance_id: format!("{name}-1"),
                 ip: "127.0.0.1".to_string(),
-                port: 8080,
+                port,
                 weight: 1.0,
                 healthy: true,
                 enabled: true,
                 ephemeral: true,
                 cluster_name: String::new(),
-                service_name: "web".to_string(),
+                service_name: name.to_string(),
                 metadata: HashMap::new(),
             }],
         }
@@ -350,7 +394,7 @@ mod tests {
         };
 
         let response =
-            service.build_response("networking.istio.io/v1alpha3/ServiceEntry", &snapshot);
+            service.build_response("networking.istio.io/v1alpha3/ServiceEntry", &[], &snapshot);
 
         assert_eq!(response.version_info, "9");
         assert_eq!(
@@ -379,8 +423,11 @@ mod tests {
             xds: Arc::new(ResourceSnapshot::new()),
         };
 
-        let response =
-            service.build_response("networking.istio.io/v1alpha3/VirtualService", &snapshot);
+        let response = service.build_response(
+            "networking.istio.io/v1alpha3/VirtualService",
+            &[],
+            &snapshot,
+        );
 
         assert_eq!(response.version_info, "3");
         assert_eq!(
@@ -404,7 +451,7 @@ mod tests {
         };
 
         let response =
-            service.build_response("networking.istio.io/v1alpha3/ServiceEntry", &snapshot);
+            service.build_response("networking.istio.io/v1alpha3/ServiceEntry", &[], &snapshot);
 
         assert_ne!(response.nonce, "resource-source-nonce");
         assert_eq!(response.nonce.len(), 32);
@@ -423,7 +470,7 @@ mod tests {
         };
 
         let response =
-            service.build_response("networking.istio.io/v1alpha3/ServiceEntry", &snapshot);
+            service.build_response("networking.istio.io/v1alpha3/ServiceEntry", &[], &snapshot);
 
         assert_eq!(response.version_info, "11");
         assert!(response.resources.is_empty());
@@ -447,6 +494,7 @@ mod tests {
 
         let cds = service.build_response(
             "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+            &[],
             &snapshot,
         );
         assert_eq!(cds.version_info, version);
@@ -465,6 +513,7 @@ mod tests {
 
         let eds = service.build_response(
             "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment",
+            &[],
             &snapshot,
         );
         assert_eq!(eds.version_info, version);
@@ -483,6 +532,7 @@ mod tests {
 
         let lds = service.build_response(
             "type.googleapis.com/envoy.config.listener.v3.Listener",
+            &[],
             &snapshot,
         );
         assert_eq!(lds.version_info, version);
@@ -511,6 +561,7 @@ mod tests {
 
         let rds = service.build_response(
             "type.googleapis.com/envoy.config.route.v3.RouteConfiguration",
+            &[],
             &snapshot,
         );
         assert_eq!(rds.version_info, version);
@@ -529,6 +580,41 @@ mod tests {
     }
 
     #[test]
+    fn envoy_xds_resources_honor_subscription_names() {
+        let service = BatataIstioMcpAdsService::new(BatataMcpService::new(Arc::new(
+            crate::mcp::McpServer::new(Default::default()),
+        )));
+        let xds = build_resource_snapshot(
+            &[
+                sample_nacos_service(),
+                sample_nacos_service_named("api", 8081),
+            ],
+            &SyncBridgeConfig::default(),
+        );
+        let snapshot = McpSnapshot {
+            xds: Arc::new(xds),
+            ..Default::default()
+        };
+
+        let typed = service.build_response(
+            "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment",
+            &["api".to_string()],
+            &snapshot,
+        );
+        assert_eq!(typed.resources.len(), 1);
+        let cla = eds_pb::ClusterLoadAssignment::decode(typed.resources[0].value.as_slice())
+            .expect("decode EDS");
+        assert_eq!(cla.cluster_name, "api");
+
+        let wildcard = service.build_response(
+            "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment",
+            &[],
+            &snapshot,
+        );
+        assert_eq!(wildcard.resources.len(), 2);
+    }
+
+    #[test]
     fn secret_type_stays_on_the_empty_generator() {
         let service = BatataIstioMcpAdsService::new(BatataMcpService::new(Arc::new(
             crate::mcp::McpServer::new(Default::default()),
@@ -543,6 +629,7 @@ mod tests {
 
         let response = service.build_response(
             "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret",
+            &[],
             &snapshot,
         );
 

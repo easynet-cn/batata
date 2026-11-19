@@ -346,3 +346,103 @@ async fn ads_config_source_delivers_envoy_xds_resources() {
     let _ = shutdown_tx.send(());
     let _ = server_task.await;
 }
+
+#[tokio::test]
+async fn ads_ack_with_new_resource_names_answers_new_subscription() {
+    let mut services = service_data();
+    let mut api = services[0].clone();
+    api.service_name = "api".to_string();
+    api.instances[0].instance_id = "api-1".to_string();
+    api.instances[0].service_name = "api".to_string();
+    api.instances[0].port = 8081;
+    services.push(api);
+
+    let server = Arc::new(McpServer::new(McpServerConfig::default()));
+    let service = BatataMcpService::new(server.clone());
+    service.publish_snapshot_with_xds(build_resource_snapshot(
+        &services,
+        &SyncBridgeConfig::default(),
+    ));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let grpc_service = service.clone();
+    let server_task = tokio::spawn(async move {
+        start_istio_mcp_grpc_server_on_listener(grpc_service, listener, shutdown_rx)
+            .await
+            .expect("serve");
+    });
+
+    let mut client = timeout(Duration::from_secs(3), async {
+        loop {
+            match AggregatedDiscoveryServiceClient::connect(format!("http://{addr}")).await {
+                Ok(client) => return client,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+    })
+    .await
+    .expect("connect");
+
+    let (request_tx, request_rx) = mpsc::channel(4);
+    let eds_type = "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment";
+    request_tx
+        .send(DiscoveryRequest {
+            type_url: eds_type.to_string(),
+            resource_names: vec!["web".to_string()],
+            ..Default::default()
+        })
+        .await
+        .expect("send initial EDS subscription");
+
+    let mut stream = client
+        .stream_aggregated_resources(Request::new(ReceiverStream::new(request_rx)))
+        .await
+        .expect("open ADS stream")
+        .into_inner();
+
+    let first = timeout(Duration::from_secs(3), stream.message())
+        .await
+        .expect("first EDS response")
+        .expect("some response")
+        .expect("ok response");
+    assert_eq!(first.resources.len(), 1);
+    let cla = eds_pb::ClusterLoadAssignment::decode(first.resources[0].value.as_slice())
+        .expect("decode first EDS");
+    assert_eq!(cla.cluster_name, "web");
+
+    request_tx
+        .send(DiscoveryRequest {
+            type_url: eds_type.to_string(),
+            resource_names: vec!["web".to_string()],
+            response_nonce: first.nonce.clone(),
+            ..Default::default()
+        })
+        .await
+        .expect("ack first EDS");
+    request_tx
+        .send(DiscoveryRequest {
+            type_url: eds_type.to_string(),
+            resource_names: vec!["api".to_string()],
+            response_nonce: first.nonce.clone(),
+            ..Default::default()
+        })
+        .await
+        .expect("resubscribe EDS to api");
+
+    let second = timeout(Duration::from_secs(3), stream.message())
+        .await
+        .expect("second EDS response")
+        .expect("some response")
+        .expect("ok response");
+    assert_ne!(second.nonce, first.nonce);
+    assert_eq!(second.resources.len(), 1);
+    let cla = eds_pb::ClusterLoadAssignment::decode(second.resources[0].value.as_slice())
+        .expect("decode second EDS");
+    assert_eq!(cla.cluster_name, "api");
+
+    drop(request_tx);
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
