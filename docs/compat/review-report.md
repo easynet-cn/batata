@@ -3175,7 +3175,7 @@ Continuation of #508. Backend-only: `batata-ui` untouched; no tag/version bump, 
 
 **Boundary and next.** Session behavior validation at create time is still only implicit (`create_session` normalizes an omitted value to `release`; the FSM rejects an unknown value on destroy), and upstream's `LockDelay` application on release/delete remains a separate kernel item. Remaining kernel items: txn atomicity, catalog writes through Raft, the `?consistent` product decision, and `LockDelay`. This slice was committed in `2c6c9de2` together with §§37.22–37.23; the `origin/main` push was still blocked by a transient 502/empty-reply at the time of writing.
 
-### 37.25 Raft-backed atomic KV `/v1/txn` (2026-11-19, uncommitted)
+### 37.25 Raft-backed atomic KV `/v1/txn` (2026-11-19, committed in `bdf2d5f0`)
 
 Continuation of #508 after `2c6c9de2`. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. Clean `--full` remains deferred until the frontend task fully completes.
 
@@ -3187,11 +3187,11 @@ Continuation of #508 after `2c6c9de2`. Backend-only: `batata-ui` untouched; no t
 
 **Gates.** Final `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent) and `git diff --check` all rc=0. `cargo test --workspace --exclude batata-integration-tests` = **4249 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+10 over the committed 4239 baseline). F-CON-OTH-018's note now records that KV operations are atomic in the Raft FSM while node/service/check operations remain response-only; no F-ID / T-ID status or total changed.
 
-**Boundary and next.** This slice is **not committed**; commit only on explicit user request. Node/service/check transaction verbs remain response-only as before, cross-transaction consistency still relies on the KVS table index, and upstream's full session/catalog transaction dispatch is not cloned. Remaining kernel items: catalog writes through Raft, a product decision for `?consistent`, and `LockDelay`.
+**Boundary and next.** This slice was committed in `bdf2d5f0`. Node/service/check transaction verbs remain response-only as before, cross-transaction consistency still relies on the KVS table index, and upstream's full session/catalog transaction dispatch is not cloned. Remaining kernel items: catalog writes through Raft, a product decision for `?consistent`, and `LockDelay`.
 
-### 37.26 Catalog HTTP writes through the Raft FSM (2026-11-19, uncommitted)
+### 37.26 Catalog HTTP writes through the Raft FSM (2026-11-19, committed in `bdf2d5f0`)
 
-Continuation of #508 after §37.25. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. Both this slice and §37.25 remain uncommitted.
+Continuation of #508 after §37.25. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. Both this slice and §37.25 were committed in `bdf2d5f0`.
 
 **Audit result.** Upstream has one durable catalog write path: HTTP `agent/catalog_endpoint.go:134-193` calls `Catalog.Register`/`Deregister`; the RPC forwards to the leader, holds a per-node write lock, and blocks on Raft commit (`agent/consul/catalog_endpoint.go:109-223,478-533`, `rpc.go:665-674,713-730,948-1024`); every FSM applies one memdb transaction (`fsm/commands_ce.go:158-208`). Batata's FSM already stored catalog/check configs in `CF_CONSUL_CATALOG` / `CF_CONSUL_HEALTH_CHECKS` and the apply hook rebuilt the in-memory views, but `/v1/catalog/register`, `/v1/catalog/deregister` and `/v1/agent/check/register|deregister` never proposed a Raft request in cluster mode: they mutated one node's RAM, produced local-only index bumps, and lost the state on restart. The `ConsulCatalogService::raft_node` field existed but was never wired in `build_inner_cluster`.
 
@@ -3201,11 +3201,11 @@ Continuation of #508 after §37.25. Backend-only: `batata-ui` untouched; no tag/
 
 **Gates.** Final `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent) and `git diff --check` all rc=0. `cargo test --workspace --exclude batata-integration-tests` = **4257 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+8 over the 4249 txn baseline). F-CON-CAT-001/002 notes now record FSM-authoritative writes; no F-ID / T-ID status or total changed.
 
-**Boundary and next.** This slice is **not committed**; commit only on explicit user request. Bare-node registration remains derived from services because batata has no first-class node CF. `/v1/agent/check/register|deregister` config writes outside the catalog handler still update local registry state only; their status updates already use `RaftHealthReplicator`, and a separate slice should put check *config* on the same authoritative path. `agent.rs` still pre-writes its local naming store before proposing and still bumps the local catalog index on the origin node; those are read-your-writes/index-drift items for a later slice. Remaining ranked kernel items: `?consistent` product decision and `LockDelay`.
+**Boundary and next.** This slice was committed in `bdf2d5f0`. Bare-node registration remains derived from services because batata has no first-class node CF. `/v1/agent/check/register|deregister` config writes outside the catalog handler still update local registry state only; their status updates already use `RaftHealthReplicator`, and a separate slice should put check *config* on the same authoritative path. `agent.rs` still pre-writes its local naming store before proposing and still bumps the local catalog index on the origin node; those are read-your-writes/index-drift items for a later slice. Remaining ranked kernel items: `?consistent` product decision and `LockDelay`.
 
-### 37.27 Agent check-config writes through the Raft FSM (2026-11-19, uncommitted)
+### 37.27 Agent check-config writes through the Raft FSM (2026-11-19, committed in `bdf2d5f0`)
 
-Continuation of #508 after §37.26. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.26 remain uncommitted.
+Continuation of #508 after §37.26. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.26 were committed in `bdf2d5f0`.
 
 **Audit result.** Upstream has two distinct check channels: check *config* (register/deregister) reaches the leader through `agent/agent_endpoint.go` → `Catalog.Register`/`Deregister` and is applied in one FSM memdb transaction (`fsm/commands_ce.go`), while check *status* (pass/warn/fail/TTL) flows through `Catalog.UpdateCheck`. In batata the status path was already authoritative via `RaftHealthReplicator` + core `RaftRequest::HealthCheckTtlUpdate`, but check-config writes (`/v1/agent/check/register|deregister`, service maintenance, `replace-existing-checks`, catalog bulk check cleanup) only mutated one node's `InstanceCheckRegistry` and `ConsulCheckIndex` with no Raft proposal — so a follower never received the config and the origin lost it on restart, despite the FSM already having `HealthCheckRegister`/`HealthCheckDeregister` variants and `NamingStoreApplyHook` already restoring them on every node.
 
@@ -3213,11 +3213,11 @@ Continuation of #508 after §37.26. Backend-only: `batata-ui` untouched; no tag/
 
 **Tests and mutants.** Added five health-service tests: register/deregister emit the exact Raft requests with a node-qualified key, register fails closed on reject and transport failure, deregister fails closed on reject, standalone emits no Raft traffic, and bulk cleanup replicates one removal per check. Existing three-node cluster tests already prove `HealthCheckRegister`/`Deregister` apply on every node through the production hook. Four targeted mutants were all KILLED: `register_propose_removed`, `deregister_propose_removed`, `fail_closed_ignored`, `bulk_replication_removed`. Sources were restored byte-for-byte afterwards.
 
-**Boundary and next.** This slice is **not committed**; commit only on explicit user request. `agent.rs` service registration still pre-writes its local naming store before proposing catalog writes and bumps the local catalog index on the origin node (read-your-writes/index-drift items, addressed in §37.28); the deregister monitor's local `deregister_all_instance_checks` still relies on each node reaping its own copy because critical status replicates. Remaining ranked kernel items: a product decision for `?consistent` and `LockDelay`.
+**Boundary and next.** This slice was committed in `bdf2d5f0`. `agent.rs` service registration still pre-writes its local naming store before proposing catalog writes and bumps the local catalog index on the origin node (read-your-writes/index-drift items, addressed in §37.28); the deregister monitor's local `deregister_all_instance_checks` still relies on each node reaping its own copy because critical status replicates. Remaining ranked kernel items: a product decision for `?consistent` and `LockDelay`.
 
-### 37.28 Agent service writes: no local pre-write, FSM-stamped index (2026-11-19, uncommitted)
+### 37.28 Agent service writes: no local pre-write, FSM-stamped index (2026-11-19, committed in `bdf2d5f0`)
 
-Continuation of #508 after §37.27. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.27 remain uncommitted.
+Continuation of #508 after §37.27. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.27 were committed in `bdf2d5f0`.
 
 **Audit result.** Upstream `agent/agent_endpoint.go` registers a local service under the agent's own state and lets anti-entropy publish it through the catalog Raft path; batata collapses local and catalog state into one `ConsulNamingStore`. The `/v1/agent/service/register|deregister` handlers wrote that store locally *before* proposing `CatalogRegister`/`CatalogDeregister`, swallowed Raft transport failures and rejected applies (log-only, still HTTP 200), and unconditionally called `index_provider.increment(ConsulTable::Catalog)` on the origin. The FSM already applies catalog writes on every node including the leader (`NamingStoreApplyHook::on_catalog_register/deregister`), so the pre-write was redundant, the swallowed failures acknowledged local-only writes, and the origin-only increment let the leader's blocking-query index drift from followers' FSM-stamped log index.
 
@@ -3225,11 +3225,11 @@ Continuation of #508 after §37.27. Backend-only: `batata-ui` untouched; no tag/
 
 **Tests and mutants.** Added six agent-service tests: cluster register emits Raft with no local pre-write and no local index bump, rename emits stale deregister before register, register fails closed on reject and transport error, cluster deregister emits Raft without local pre-write, standalone write stays local and bumps the index, and cluster deregister fails closed on rejected apply. Four targeted mutants were all KILLED: `stale_deregister_removed`, `fail_closed_ignored`, `index_gate_removed`, `standalone_local_write_removed`. Sources were restored byte-for-byte afterwards.
 
-**Boundary and next.** This slice is **not committed**; commit only on explicit user request. The startup self-registration keeps its intentional local pre-write for node-unique keys. Remaining ranked kernel items: a product decision for `?consistent` (whether to forward/redirect follower reads using `ConsulRaftWriter::linearizable_read`/`leader_addr`) and `LockDelay`.
+**Boundary and next.** This slice was committed in `bdf2d5f0`. The startup self-registration keeps its intentional local pre-write for node-unique keys. Remaining ranked kernel items: a product decision for `?consistent` (whether to forward/redirect follower reads using `ConsulRaftWriter::linearizable_read`/`leader_addr`) and `LockDelay`.
 
-### 37.29 Consistency reads: follower forwarding + leader ReadIndex (2026-11-19, uncommitted)
+### 37.29 Consistency reads: follower forwarding + leader ReadIndex (2026-11-19, committed in `bdf2d5f0`)
 
-Continuation of #508 after §37.28. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.28 remain uncommitted.
+Continuation of #508 after §37.28. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.28 were committed in `bdf2d5f0`.
 
 **Audit result.** Upstream `agent/http.go:1145-1203` parses `?stale`, `?consistent`, `?leader`, `?cached`, `?max_stale` and rejects `stale+consistent` / `cached+consistent` with HTTP 400. `agent/consul/rpc.go:700-729,774-777` forwards every non-stale read to the local Raft leader, while `agent/blockingquery/blockingquery.go:117-167` performs `ConsistentRead()` only for `RequireConsistent`. Batata parsed the flags in `consul_meta.rs` but only three read handlers called `ensure_linearizable_read()`, and all of them swallowed `NotLeader` and served the follower's local FSM. Default reads never verified leadership, no parameter conflict was rejected, and the core Raft node only forwards writes, not HTTP reads.
 
@@ -3239,11 +3239,11 @@ Continuation of #508 after §37.28. Backend-only: `batata-ui` untouched; no tag/
 
 **Gates.** Final `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent) and `git diff --check` all rc=0. `cargo test --workspace --exclude batata-integration-tests` = **4279 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+11 over the 4268 agent-slice baseline). F-CON-CORE-005 note now records leader forwarding, ReadIndex, and local stale behavior; no F-ID / T-ID status or total changed.
 
-**Boundary and next.** This slice is **not committed**; commit only on explicit user request. The HTTP address is derived from the fixed Raft-port offset, so deployments using unrelated HTTP/Raft port pairs need an explicit mapping before enabling non-stale forwarding. Cross-DC forwarding is still absent, client-side `?cached` result caching is not implemented, and gossip-backed agent/coordinate/event state is intentionally local. Remaining ranked kernel item: `LockDelay`.
+**Boundary and next.** This slice was committed in `bdf2d5f0`. The HTTP address is derived from the fixed Raft-port offset, so deployments using unrelated HTTP/Raft port pairs need an explicit mapping before enabling non-stale forwarding. Cross-DC forwarding is still absent, client-side `?cached` result caching is not implemented, and gossip-backed agent/coordinate/event state is intentionally local. Remaining ranked kernel item: `LockDelay`.
 
-### 37.30 Consul LockDelay: leader pre-commit guard + per-node apply recording (2026-11-19, uncommitted)
+### 37.30 Consul LockDelay: leader pre-commit guard + per-node apply recording (2026-11-19, committed in `bdf2d5f0`)
 
-Continuation of #508 after §37.29. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.29 remain uncommitted.
+Continuation of #508 after §37.29. Backend-only: `batata-ui` untouched; no tag/version bump, no `--full`/matrix/SDK/perf run. This slice and §§37.25–37.29 were committed in `bdf2d5f0`.
 
 **Audit result.** Upstream `agent/consul/state/delay_ce.go` stores lock-delay expirations in server-local wall time and deliberately keeps them out of the deterministic FSM, because peers' clocks are not comparable. `agent/consul/kvs_endpoint.go` checks `KVSLockDelay()` on the leader before committing `KVLock`, and `agent/consul/state/session.go::deleteSessionTxn` sets the delay for every key held by an invalidated session, capped by `structs.MaxLockDelay = 60s` (`agent/structs/structs.go`). Batata parsed and returned `Session.LockDelay`, but never stored an expiration, never rejected a reacquire, and never applied the delay on a committed session destroy.
 
@@ -3253,4 +3253,23 @@ Continuation of #508 after §37.29. Backend-only: `batata-ui` untouched; no tag/
 
 **Gates.** Final `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` (577 feature rows / 1040 T-ID rows, Nacos 191/191 anchored, 3.3.0 GA consistent) and `git diff --check` all rc=0. `cargo test --workspace --exclude batata-integration-tests` = **4296 passed / 0 failed / 33 ignored**, 137 result lines, zero `FAILED` (+17 over the 4279 consistency-read baseline). F-CON-KV-002 and F-CON-SES-002 notes now record leader enforcement and per-node delay recording; no F-ID / T-ID status or total changed.
 
-**Boundary and next.** This slice is **not committed**; commit only on explicit user request. Lock delay remains leader-local wall time as upstream requires, so a new leader does not inherit expirations recorded by the old leader; unlike upstream there is no RPC that transfers the delay map during leader change. The pre-commit guard slot is single-owner and is currently claimed by Consul only. `LockDelay` from sessions destroyed while batata was stopped is not reconstructed at startup. These are the last ranked Consul kernel item from the earlier audit; broader Serf/anti-entropy/WAN/DNS and full Connect CA lifecycle gaps remain outside this compatibility layer.
+**Boundary and next.** This slice was committed in `bdf2d5f0`. Lock delay remains leader-local wall time as upstream requires, so a new leader does not inherit expirations recorded by the old leader; unlike upstream there is no RPC that transfers the delay map during leader change. The pre-commit guard slot is single-owner and is currently claimed by Consul only. `LockDelay` from sessions destroyed while batata was stopped is not reconstructed at startup. These are the last ranked Consul kernel item from the earlier audit; broader Serf/anti-entropy/WAN/DNS and full Connect CA lifecycle gaps remain outside this compatibility layer.
+
+### 37.31 Commit checkpoint and Path A real-Envoy acceptance (2026-11-19)
+
+User instruction: "提交。继续". The six uncommitted Consul backend slices in §§37.25–37.30 were committed together as **`bdf2d5f0`** (`fix(consul): complete Raft-authoritative HTTP semantics`, 20 files, +4144/-641, including `write_guard.rs`, `lock_delay.rs`, `read_consistency.rs`). Pre-commit gates were green and workspace unit tests were **4296/0/33**; `batata-ui` was untouched. `gitee/main` was pushed successfully. `origin/main` hit a transient proxy `Empty reply` / `CONNECT 502` even with HTTP/1.1; it remains to be back-filled when the network recovers. No version/tag/publish/yank/archive and no clean `--full` in this round.
+
+**Path A Envoy setup.** Completed the outstanding Path A validation from §37.21. Used the current-commit debug server with `BATATA_MESH_XDS_ENABLED=true`, `BATATA_PLUGIN_CONSUL_ENABLED=true`, `BATATA_CORE_AUTH_ENABLED=false`, and an isolated embedded data dir under `data/path-a-envoy-authoff`. A new bootstrap under that same repo data dir points ADS at `host.containers.internal:15010` (the Path B bootstrap uses 8502); `--mode validate` passed with the already-present Envoy v1.38 image. The image's default entrypoint could not `chown /dev/stdout` in this sandbox, so the probe was run with `--entrypoint envoy`, which changes no product code. One persistent Nacos instance was registered through `/nacos/v2/ns/instance`, then real Envoy v1.38 was attached over Podman.
+
+**Result — PASS.** Envoy accepted the Path A generated resources with no NACK and reached `all dependencies initialized. starting workers`.
+
+| Resource | Evidence from real Envoy |
+|---|---|
+| CDS | `cds: response indicates 1 added/updated cluster(s)`; `/config_dump` → `dynamic_active_clusters: DEFAULT@@path-a-web` (type EDS, ADS config source) |
+| EDS | `/clusters?format=json` → host `127.0.0.1:8080`; after the 15 s heartbeat timeout it became `eds_health_status: UNHEALTHY`, matching the Nacos instance becoming unhealthy. No EDS health bug: the xDS layer faithfully tracked Nacos health. |
+| LDS | `lds: add/update listener 'DEFAULT@@path-a-web-listener'`, plus `ingress-listener`; `/config_dump` lists both dynamic listeners |
+| RDS | `dynamic_route_configs=1`, `default-routes` with vhost `DEFAULT@@path-a-web-vhost` and route prefix `/` → cluster `DEFAULT@@path-a-web` |
+
+**Live data-source update.** After registering a second Nacos service, the 5 s Path A poll emitted new events without restarting Envoy: logs show `cds: added/updated 1 cluster(s)` and `lds: add/update listener 'DEFAULT@@path-a-api-listener'`; `/config_dump` then reported both `DEFAULT@@path-a-web` and `DEFAULT@@path-a-api` clusters and their listeners. This proves the `startup/xds_nacos_source.rs` → `NacosSyncBridge` → ADS path is live, not only an initial snapshot.
+
+**Cleanup and boundary.** The Envoy container was removed, the batata background process stopped, and ports 15010/8848/8500/19901/11000 are closed. No image pull, no product code change, no compat F-ID/T-ID change, no gate run and no commit for this acceptance slice. Upstream's native `nacos.istio.mcp.server.enabled` / port 18848 remains a separate Phase 1 product decision; Path A here is the batata ADS port 15010 path only.
