@@ -3027,3 +3027,9 @@ Ran the full acceptance chain end to end: start batata (Consul ADS enabled) → 
 Envoy reached `all dependencies initialized. starting workers` with **no NACK/rejection** — the hand-rolled minimal protobuf (CDS/EDS/LDS/TCP-proxy `Any.value`) is accepted by a real Envoy descriptor. The default LDS shape is exactly what the Phase 0 unit test `test_default_snapshot_publishes_encodable_listeners` asserts (`default_listener:<service>` at 15001+ with `tcp_proxy`), so real-Envoy behavior corroborates the unit contract.
 
 **Cleanup**: Envoy container removed; batata background task stopped; ports 8502/8848/8500/8081/19901/11000 all closed; no leftover probe containers. This is a host harness acceptance only — no compat F-ID / T-ID changes, no gate, no version bump.
+
+### 37.14 Mesh checkpoint committed (2026-11-19)
+
+The full P2 / P2-C / Phase 0 mesh checkpoint was committed on user instruction ("可以A") as `cce6c0d6` (`feat(mesh): real Envoy ADS with protobuf CDS/EDS/LDS/RDS and runtime repair`), 20 files, +3276/-249. This includes the real tonic ADS server, hand-rolled minimal LDS/RDS/HCM/TCP-proxy protos with upstream-verified field numbers, discovery-chain→RDS bridge, the P0 shutdown-sender fix, default LDS, and all ADS/e2e/runtime tests.
+
+**Push state**: `gitee/main` advanced to `cce6c0d6` (confirmed by `ls-remote`). `origin/main` remains at `3874d341` — the proxy tunnel at `127.0.0.1:50818` returns 502 and direct GitHub is unreachable (`curl` http_code=000 on both), i.e. an environment network outage, not a git/config error. Two HTTP/1.1 retries failed; origin push is deferred until connectivity recovers. Working tree is clean (`git status` count 0). No `--full`, no version bump, `batata-ui` untouched.
