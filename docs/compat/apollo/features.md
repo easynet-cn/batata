@@ -82,7 +82,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-ITEM-008 | GET `.../encodedItems/{key}` | | ⚪ | | base64-key read |
 | F-APO-ITEM-009 | GET `.../items-with-page` | | ⚪ | | paged |
 | F-APO-ITEM-010 | GET `/items/{itemId}` | | 🟢 | | by id |
-| F-APO-ITEM-011 | GET `/items-search/key-and-value?key=&value=` | | 🟡 | | global search — exists at `/search` (non-standard path) |
+| F-APO-ITEM-011 | GET `/items-search/key-and-value?key=&value=` | `batata-plugin-apollo` | 🟢 | | Upstream `ItemController.java:233-239` returns `PageDTO<ItemInfoDTO>` with `page/size`; batata registers the same path at `route/admin.rs:3050-3054` and reuses `SearchService` in `search_key_and_value` (`:2237-2272`). Route test `items_semantics_test.rs:140-182` covers the canonical path and PageDTO defaults. |
 | F-APO-ITEM-012 | POST `.../namespaces/{namespaceName}/itemset` | | 🟢 | | batch change (takes lock) |
 
 ## 6. adminservice — release / branch / history (`F-APO-RELEASE-`)
@@ -324,7 +324,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 2 long polling | 2 | 0 | 0 | 0 | 0 | 2 | 100% |
 | 3 metaservice | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
 | 4 adminservice apps/ns | 19 | 0 | 0 | 0 | 0 | 19 | 100% |
-| 5 adminservice items | 8 | 1 | 0 | 3 | 0 | 12 | 71% |
+| 5 adminservice items | 9 | 0 | 0 | 3 | 0 | 12 | 75% |
 | 6 adminservice release | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
 | 7 adminservice branch | 5 | 0 | 0 | 0 | 0 | 5 | 100% |
 | 8 adminservice misc | 22 | 0 | 0 | 0 | 0 | 22 | 100% |
@@ -335,7 +335,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
 | 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
 | 15 expanded openapi v1 | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
-| **Total** | 169 | 3 | 0 | 27 | 0 | 199 | 85% |
+| **Total** | 170 | 2 | 0 | 27 | 0 | 199 | 85% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >

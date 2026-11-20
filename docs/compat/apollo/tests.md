@@ -184,7 +184,7 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 | T-APO-ITEM-001-01 | F-APO-ITEM-001 | testCreate | HTTP_API | ⏳ | |
 | T-APO-ITEM-003-01 | F-APO-ITEM-003 | testUpdate | HTTP_API | ⏳ | |
 | T-APO-ITEM-004-01 | F-APO-ITEM-004 | testDelete | HTTP_API | ⏳ | |
-| T-APO-ITEM-011-01 | F-APO-ITEM-011 | testSearch | HTTP_API | ⏳ | GET /items-search/key-and-value |
+| T-APO-ITEM-011-01 | F-APO-ITEM-011 | testSearch | HTTP_API | ✅ pass | Rust route test `items_semantics_test::item011_key_and_value_search_returns_page_dto` |
 
 ## 12. adminservice — ItemSet (`ItemSetControllerTest`)
 
