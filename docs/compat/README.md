@@ -35,8 +35,8 @@ Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
 | Nacos    | 206      | 200 | 0  | 0 | 2 | 4  | 97%       | 424        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 181 | 0  | 0 | 0  | 0  | 100%      | 251        | HTTP_API, SDK_CLIENT |
-| Apollo   | 199      | 175 | 0  | 0 | 24 | 0  | 88%       | 391        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **586** | **556** | **0** | **0** | **26** | **4** | **95%** | **1066** | |
+| Apollo   | 199      | 175 | 0  | 0 | 22 | 2  | 88%       | 391        | HTTP_API, SDK_CLIENT, INTERNAL |
+| **Total** | **586** | **556** | **0** | **0** | **24** | **6** | **95%** | **1066** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E

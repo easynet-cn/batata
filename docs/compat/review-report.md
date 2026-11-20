@@ -3531,3 +3531,35 @@ note. All now state the 8502 extension is implemented and real-Envoy accepted,
 and explicitly separate "upstream Go gRPC cases not ported verbatim" from
 "feature missing". No F-ID / T-ID status or tally changed (Connect mesh stays
 16 🟢 / 16). No code, test, version, tag, or `batata-ui` change; docs-only.
+
+### 37.47 Apollo STORE-001/002 phantom upstream encryption mechanism retired (2026-11-20, task `#638`)
+
+After the last genuine Apollo 🟡 was closed, the remaining ⚪ items were audited to
+select the next atomic slice. Nacos residuals are post-GA develop drift or explicit
+⛔ non-goals; Consul is 100%; Apollo's 24 ⚪ are 22 upstream-`@Deprecated` legacy
+portal surfaces plus two Section-14 "storage-layer" rows. Those two rows were the
+only items labeled a "genuine gap" — and the audit proved the label was false.
+
+**Source audit (upstream Apollo `master 504e5cd7`, full tree + full git history):**
+- Zero hits for `EncryptionDecorator`, `StorageDecorator`, `apollo.encrypted`,
+  `apollo-biz` config-value encryption, or any AES/Cipher applied to `Item.value`.
+- `git log --all -S 'EncryptionDecorator'` and `-S 'apollo.encrypted'` both empty —
+  the mechanism never existed in any commit.
+- The only crypto symbols are Spring Security `PasswordEncoder` implementations
+  (`ApolloPasswordEncoderFactory`, `OidcLocalUserServiceImpl`) — password hashing
+  for portal users, unrelated to stored config values.
+- Section 14 was introduced 2026-09-02 in `1db870bd` on the false premise that this
+  decorator existed upstream; the "genuine gap" note is therefore unsupported.
+
+This is the same class of error corrected in §37.41 (`nacos.istio.enabled` never
+existed upstream) and §37.46 ("SDS/Delta/mTLS not yet" was stale). Batata's own
+`batata.config.encryption` / `ConfigEncryptionService` (aes-gcm) is a Nacos-side
+feature and has no bearing on Apollo parity either way.
+
+**Decision.** `F-APO-STORE-001/002` reclassified ⚪ → ⛔ (upstream has no such
+capability), with evidence-backed Notes and a rewritten Section 14 header. The rows
+are retained, not deleted, to preserve the 586-F baseline; impl rate stays 88%
+because ⛔ is not counted as ported. Apollo tally 175 🟢 / 0 🟡 / 22 ⚪ / 2 ⛔ of
+199; global 556 🟢 / 0 🟡 / 24 ⚪ / 6 ⛔ of 586; T-IDs unchanged at 1066 (no STORE
+T-IDs exist). Docs-only: no product code, tests, version, tag, or `batata-ui`
+change. `python3 scripts/compat_check.py` and `git diff --check` pass.

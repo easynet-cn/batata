@@ -269,16 +269,23 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 ---
 
-# Section 14 — Storage-layer capabilities (vs upstream `EncryptionDecorator`)
+# Section 14 — Storage-layer capabilities (phantom upstream item, retired)
 
-> 本节追踪 apollo 原项目中**非 HTTP 契约**的存储层能力。它们不在 legacy WebAPI / OpenAPI contract 内，
-> 而是 `apollo-biz` 对 Item `value` 的装饰器逻辑或后台任务。此前 Sections 1–13 只覆盖外部契约，
-> 故在此补齐，使"与 apollo 原项目对比"完整。
+> This section was added on 2026-09-02 on the assumption that upstream Apollo has a
+> non-HTTP `EncryptionDecorator` / `StorageDecorator` that encrypts `Item.value` behind
+> an `apollo.encrypted` switch. A source audit against upstream Apollo `master 504e5cd7`
+> (full working tree **and** full git history) found **no such mechanism**: zero hits for
+> `EncryptionDecorator`, `StorageDecorator`, `apollo.encrypted`, or any AES/config-value
+> encryption. The only crypto in the tree is Spring Security `PasswordEncoder`
+> (password hashing for portal users), unrelated to config-value storage. The two rows
+> are therefore **not gaps** — they describe a capability that does not exist upstream —
+> and are retired as ⛔. They are retained (not deleted) to preserve the stable 586-F
+> compatibility baseline; the impl-rate is unaffected because ⛔ is not a ported feature.
 
 | ID | Capability | Upstream ref | Status | Notes |
 |----|-----------|--------------|--------|-------|
-| F-APO-STORE-001 | 配置值加密存储（AES, `EncryptionDecorator` / `StorageDecorator` + `apollo.encrypted` 开关 + 密钥管理） | `apollo-biz` `EncryptionDecorator` | ⚪ | **NOT implemented.** batata's `batata.config.encryption` (`aes-gcm`, default `enabled: true` in `conf/application.yml`; `ConfigEncryptionService` in `batata-config`) is the **Nacos-side** feature and operates on batata's own (Nacos-aligned) config storage — it does **NOT** flow into the apollo plugin's separate storage layer, so apollo `Item.value` is **not** encrypted by it. The apollo-specific `EncryptionDecorator` (which keys off `apollo.encrypted` and manages its own keystore) is a genuine gap and must be re-implemented against the apollo Item model if/when config-value encryption is required for apollo namespaces. |
-| F-APO-STORE-002 | 加密密钥管理（key rotation / KMS 集成） | `apollo-biz` | ⚪ | NOT implemented — same as F-APO-STORE-001; apollo-specific keystore / rotation not wired. batata's Nacos-side `batata.config.encryption.key` does not apply to apollo storage. |
+| F-APO-STORE-001 | 配置值加密存储（`EncryptionDecorator` / `apollo.encrypted` — **does not exist upstream**) | none (phantom; cf. `docs/compat/review-report.md` §37.47) | ⛔ | **Not a gap.** Upstream Apollo `master 504e5cd7` has no config-value encryption: full-tree + full-history search for `EncryptionDecorator` / `apollo.encrypted` / AES `/encrypt` on `Item.value` returns zero hits; the only crypto is Spring Security `PasswordEncoder` (password hashing). This row was registered 2026-09-02 against a non-existent mechanism. batata's `batata.config.encryption` (`aes-gcm`, `ConfigEncryptionService` in `batata-config`) is a Nacos-side feature and is irrelevant to Apollo parity. Retired ⛔ (upstream has no such feature), not ⚪. |
+| F-APO-STORE-002 | 加密密钥管理（key rotation / KMS — **does not exist upstream**) | none (phantom; cf. `docs/compat/review-report.md` §37.47) | ⛔ | **Not a gap.** Same audit as F-APO-STORE-001: upstream Apollo has no apollo-specific keystore / rotation / KMS for config values. Retired ⛔ to match the absent upstream mechanism; batata's Nacos-side `batata.config.encryption.key` does not apply here and is not a parity concern. |
 
 ---
 
@@ -333,9 +340,9 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 11 portal releases | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
 | 12 portal misc | 21 | 0 | 0 | 0 | 0 | 21 | 100% |
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
-| 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
+| 14 storage-layer | 0 | 0 | 0 | 0 | 2 | 2 | 0% |
 | 15 expanded openapi v1 | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
-| **Total** | 175 | 0 | 0 | 24 | 0 | 199 | 88% |
+| **Total** | 175 | 0 | 0 | 22 | 2 | 199 | 88% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >
