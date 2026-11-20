@@ -14,6 +14,7 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::sleep;
 use tracing::{error, info};
 
 use batata_api::naming::NamingServiceProvider;
@@ -22,17 +23,20 @@ use batata_mesh::conversion::NacosService;
 use batata_mesh::sync::SyncBridgeConfig;
 use batata_mesh::sync::{NacosServiceData, ServiceChangeEvent};
 use batata_mesh::{
-    BatataMcpService, McpServer, McpServerConfig, build_resource_snapshot,
+    BatataMcpService, IstioConfigSourceEntry, McpServer, McpServerConfig, build_istio_mcp_snapshot,
     start_istio_mcp_grpc_server_on_listener,
 };
 
+use super::istio_mcp_config::IstioMcpConfigProvider;
 use super::xds_nacos_source::spawn_nacos_source;
 
-/// Owned handles for the Istio MCP server and its naming source.
+/// Owned handles for the Istio MCP server and its naming/config sources.
 pub struct IstioMcpServerHandle {
     service: Arc<BatataMcpService>,
     source_shutdown_tx: Option<oneshot::Sender<()>>,
     source_handle: Option<JoinHandle<()>>,
+    config_shutdown_tx: Option<oneshot::Sender<()>>,
+    config_handle: Option<JoinHandle<()>>,
     bridge_handle: Option<JoinHandle<()>>,
     grpc_shutdown_tx: Option<oneshot::Sender<()>>,
     #[allow(dead_code)]
@@ -45,15 +49,21 @@ impl IstioMcpServerHandle {
         self.service.clone()
     }
 
-    /// Gracefully stop the naming source, bridge and gRPC server.
+    /// Gracefully stop the naming/config sources, bridge and gRPC server.
     pub async fn shutdown(mut self) {
         info!("Shutting down Istio MCP service");
 
-        // Stop the producer first so it cannot refill the bridge queue.
+        // Stop producers first so they cannot refill the bridge queue.
         if let Some(tx) = self.source_shutdown_tx.take() {
             let _ = tx.send(());
         }
         if let Some(handle) = self.source_handle.take() {
+            let _ = handle.await;
+        }
+        if let Some(tx) = self.config_shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.config_handle.take() {
             let _ = handle.await;
         }
         if let Some(handle) = self.bridge_handle.take() {
@@ -77,6 +87,7 @@ pub async fn start_istio_mcp_service(
     port: u16,
     service_entry_port: u16,
     naming_service: Arc<dyn NamingServiceProvider>,
+    config_provider: Arc<dyn IstioMcpConfigProvider>,
 ) -> Result<Option<IstioMcpServerHandle>, Box<dyn std::error::Error + Send + Sync>> {
     if !enabled {
         info!("Istio MCP server disabled");
@@ -96,34 +107,65 @@ pub async fn start_istio_mcp_service(
     let (source_shutdown_tx, source_handle) =
         spawn_nacos_source(naming_service, event_tx, poll_interval);
 
+    let (config_tx, mut config_rx) = mpsc::channel(64);
+    let (config_shutdown_tx, mut config_shutdown_rx) = oneshot::channel();
+    let config_source = config_provider.clone();
+    let config_handle = tokio::spawn(async move {
+        loop {
+            let entries = config_source.load_virtual_service_configs().await;
+            if config_tx.send(entries).await.is_err() {
+                break;
+            }
+            tokio::select! {
+                _ = &mut config_shutdown_rx => break,
+                _ = sleep(Duration::from_secs(5)) => {}
+            }
+        }
+        info!("Istio MCP config source stopped");
+    });
+
     let bridge_server = mcp_server.clone();
     let bridge_service = service.clone();
     let xds_sync_config = SyncBridgeConfig::default();
     let bridge_handle = tokio::spawn(async move {
         let mut cache: HashMap<String, NacosServiceData> = HashMap::new();
-        while let Some(event) = event_rx.recv().await {
-            match event {
-                ServiceChangeEvent::Updated(data) => {
-                    let key =
-                        build_service_key(&data.namespace_id, &data.group_name, &data.service_name);
-                    cache.insert(key, data);
+        let mut configs: Vec<IstioConfigSourceEntry> = Vec::new();
+        loop {
+            tokio::select! {
+                Some(event) = event_rx.recv() => {
+                    match event {
+                        ServiceChangeEvent::Updated(data) => {
+                            let key = build_service_key(
+                                &data.namespace_id,
+                                &data.group_name,
+                                &data.service_name,
+                            );
+                            cache.insert(key, data);
+                        }
+                        ServiceChangeEvent::Removed {
+                            namespace_id,
+                            group_name,
+                            service_name,
+                        } => {
+                            let key =
+                                build_service_key(&namespace_id, &group_name, &service_name);
+                            cache.remove(&key);
+                        }
+                    }
                 }
-                ServiceChangeEvent::Removed {
-                    namespace_id,
-                    group_name,
-                    service_name,
-                } => {
-                    let key = build_service_key(&namespace_id, &group_name, &service_name);
-                    cache.remove(&key);
+                Some(entries) = config_rx.recv() => {
+                    configs = entries;
                 }
+                else => break,
             }
 
-            let services: Vec<NacosService> = cache.values().map(NacosService::from).collect();
+            let mut services: Vec<NacosService> = cache.values().map(NacosService::from).collect();
+            services.sort_by_key(NacosService::xds_cluster_name);
             bridge_server.sync_services(&services).await;
-            let xds_snapshot = build_resource_snapshot(&services, &xds_sync_config);
+            let xds_snapshot = build_istio_mcp_snapshot(&services, &configs, &xds_sync_config);
             bridge_service.publish_snapshot_with_xds(xds_snapshot);
         }
-        info!("Istio MCP naming bridge stopped");
+        info!("Istio MCP naming/config bridge stopped");
     });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -152,6 +194,8 @@ pub async fn start_istio_mcp_service(
         service,
         source_shutdown_tx: Some(source_shutdown_tx),
         source_handle: Some(source_handle),
+        config_shutdown_tx: Some(config_shutdown_tx),
+        config_handle: Some(config_handle),
         bridge_handle: Some(bridge_handle),
         grpc_shutdown_tx: Some(grpc_shutdown_tx),
         grpc_server_handle: Some(grpc_server_handle),
@@ -162,9 +206,30 @@ pub async fn start_istio_mcp_service(
 mod tests {
     use super::*;
 
+    use async_trait::async_trait;
     use batata_api::naming::Instance;
     use batata_naming::NamingService;
     use tokio::time::{sleep, timeout};
+
+    use crate::startup::IstioMcpConfigProvider;
+
+    struct EmptyConfigProvider;
+
+    #[async_trait]
+    impl IstioMcpConfigProvider for EmptyConfigProvider {
+        async fn load_virtual_service_configs(&self) -> Vec<IstioConfigSourceEntry> {
+            Vec::new()
+        }
+    }
+
+    struct StaticConfigProvider(Vec<IstioConfigSourceEntry>);
+
+    #[async_trait]
+    impl IstioMcpConfigProvider for StaticConfigProvider {
+        async fn load_virtual_service_configs(&self) -> Vec<IstioConfigSourceEntry> {
+            self.0.clone()
+        }
+    }
 
     fn instance(ip: &str, port: u16) -> Instance {
         Instance {
@@ -178,7 +243,7 @@ mod tests {
     #[tokio::test]
     async fn disabled_service_returns_none() {
         let naming = Arc::new(NamingService::new());
-        let handle = start_istio_mcp_service(false, 0, 0, naming)
+        let handle = start_istio_mcp_service(false, 0, 0, naming, Arc::new(EmptyConfigProvider))
             .await
             .expect("disabled startup");
 
@@ -197,10 +262,11 @@ mod tests {
 
         // Port 0 lets the OS choose a free port; the handle still owns the
         // bound listener and shuts it down with the rest of the service.
-        let handle = start_istio_mcp_service(true, 0, 18_080, naming)
-            .await
-            .expect("startup")
-            .expect("enabled");
+        let handle =
+            start_istio_mcp_service(true, 0, 18_080, naming, Arc::new(EmptyConfigProvider))
+                .await
+                .expect("startup")
+                .expect("enabled");
 
         let service = handle.service();
         timeout(Duration::from_secs(2), async {
@@ -232,10 +298,11 @@ mod tests {
             instance("127.0.0.1", 8080),
         );
 
-        let handle = start_istio_mcp_service(true, 0, 0, naming.clone())
-            .await
-            .expect("startup")
-            .expect("enabled");
+        let handle =
+            start_istio_mcp_service(true, 0, 0, naming.clone(), Arc::new(EmptyConfigProvider))
+                .await
+                .expect("startup")
+                .expect("enabled");
         let mut updates = handle.service().subscribe();
 
         naming.register_instance(
@@ -269,6 +336,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_virtual_service_routes_reach_mcp_snapshots() {
+        let naming = Arc::new(NamingService::new());
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "web",
+            instance("127.0.0.1", 8080),
+        );
+        let config = IstioConfigSourceEntry {
+            data_id: "web.yaml".to_string(),
+            group: "DEFAULT".to_string(),
+            namespace: "public".to_string(),
+            config_tags: "virtual-service".to_string(),
+            content: concat!(
+                "apiVersion: networking.istio.io/v1alpha3\n",
+                "kind: VirtualService\n",
+                "metadata:\n  name: web\n",
+                "spec:\n  hosts:\n  - web\n",
+                "  http:\n  - name: config-route\n",
+                "    match:\n      - uri:\n          prefix: /api\n",
+                "    route:\n      - destination:\n          host: web\n",
+            )
+            .to_string(),
+        };
+
+        let handle = start_istio_mcp_service(
+            true,
+            0,
+            0,
+            naming.clone(),
+            Arc::new(StaticConfigProvider(vec![config])),
+        )
+        .await
+        .expect("startup")
+        .expect("enabled");
+        let mut updates = handle.service().subscribe();
+
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "api",
+            instance("127.0.0.1", 9090),
+        );
+
+        let snapshot = timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(snapshot) = updates.recv().await
+                    && snapshot.xds.routes.contains_key("web_route_config")
+                    && snapshot.xds.clusters.len() == 2
+                {
+                    return snapshot;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("config-derived route should reach MCP snapshot");
+
+        assert_eq!(snapshot.xds.clusters.len(), 2);
+        let default = &snapshot.xds.routes["default-routes"];
+        assert!(
+            default
+                .virtual_hosts
+                .iter()
+                .any(|host| host.name == "web" && host.domains == vec!["web.nacos"])
+        );
+        let route = &snapshot.xds.routes["web_route_config"];
+        assert_eq!(route.virtual_hosts.len(), 1);
+        assert_eq!(route.virtual_hosts[0].routes[0].name, "config-route");
+
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn port_conflict_fails_startup_synchronously() {
         let naming = Arc::new(NamingService::new());
         let listener = TcpListener::bind("0.0.0.0:0")
@@ -276,10 +417,13 @@ mod tests {
             .expect("probe listener");
         let port = listener.local_addr().expect("addr").port();
 
-        let error = match start_istio_mcp_service(true, port, 0, naming).await {
-            Ok(_) => panic!("bind conflict must fail startup"),
-            Err(error) => error,
-        };
+        let error =
+            match start_istio_mcp_service(true, port, 0, naming, Arc::new(EmptyConfigProvider))
+                .await
+            {
+                Ok(_) => panic!("bind conflict must fail startup"),
+                Err(error) => error,
+            };
         assert!(
             error.to_string().contains("Address already in use")
                 || error.to_string().contains("address in use")

@@ -31,6 +31,7 @@ futures = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+yaml_serde = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

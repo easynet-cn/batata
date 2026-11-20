@@ -35,8 +35,8 @@ use tracing::{error, info, warn};
 use crate::context::DeploymentMode;
 use crate::model::common::{AppState, Configuration, DEPLOYMENT_TYPE_CONSOLE};
 use crate::startup::{
-    self, AIServices, GracefulShutdown, IstioMcpServerHandle, OtelConfig, XdsServerHandle,
-    start_istio_mcp_service, start_xds_service,
+    self, AIServices, GracefulShutdown, IstioMcpServerHandle, OtelConfig,
+    PersistenceIstioMcpConfigProvider, XdsServerHandle, start_istio_mcp_service, start_xds_service,
 };
 
 /// Application builder - orchestrates the full initialization sequence
@@ -1471,11 +1471,16 @@ async fn start_istio_mcp_if_enabled(
         service_entry_port = service_entry_port,
         "Starting Istio MCP server"
     );
+    let Some(persistence) = app_state.persistence.clone() else {
+        return Err("Istio MCP server requires a persistence service".into());
+    };
+    let config_provider = Arc::new(PersistenceIstioMcpConfigProvider::new(persistence));
     match start_istio_mcp_service(
         true,
         port,
         service_entry_port,
         grpc_servers.naming_provider(),
+        config_provider,
     )
     .await
     {

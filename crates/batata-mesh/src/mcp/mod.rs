@@ -8,6 +8,7 @@ pub mod encode;
 pub mod grpc;
 pub mod server;
 pub mod types;
+pub mod virtual_service;
 
 pub use ads::BatataIstioMcpAdsService;
 pub use encode::{
@@ -18,3 +19,8 @@ pub use encode::{
 pub use grpc::{BatataMcpService, McpSnapshot, start_istio_mcp_grpc_server_on_listener};
 pub use server::{McpServer, McpServerConfig};
 pub use types::*;
+pub use virtual_service::{
+    DESTINATION_RULE_TAG, IstioConfigSourceEntry, ROUTE_CONFIG_SUFFIX, VIRTUAL_SERVICE_API_VERSION,
+    VIRTUAL_SERVICE_KIND, VIRTUAL_SERVICE_TAG, build_istio_mcp_snapshot, is_istio_config_tag,
+    parse_virtual_service_config, virtual_service_to_route_config,
+};

@@ -611,6 +611,9 @@ gap register in `docs/compat/review-report.md`.
 | T-NAC-ISTIO-007-03 | F-NAC-ISTIO-007 | startup::istio_mcp::tests | publishes naming-derived clusters, endpoints, listeners and routes with MCP snapshots | INTERNAL | ✅ |
 | T-NAC-ISTIO-007-04 | F-NAC-ISTIO-007 | mcp::ads::tests | filters Envoy resources by `resource_names` and keeps wildcard subscriptions | INTERNAL | ✅ |
 | T-NAC-ISTIO-007-05 | F-NAC-ISTIO-007 | istio_mcp_e2e | answers an ACK carrying a changed EDS resource subscription | GRPC_API | ✅ |
+| T-NAC-ISTIO-008-01 | F-NAC-ISTIO-008 | mcp::virtual_service::tests | parses tagged YAML, compiles VirtualService routes and merges them into `default-routes` | INTERNAL | ✅ |
+| T-NAC-ISTIO-008-02 | F-NAC-ISTIO-008 | startup::istio_mcp::tests | publishes config-derived RDS routes with naming snapshots | INTERNAL | ✅ |
+| T-NAC-ISTIO-008-03 | F-NAC-ISTIO-008 | Envoy v1.38 | real Envoy receives config-derived `/api` route and live `/v2` update without NACK | GRPC_API | ✅ |
 
 ---
 
@@ -627,8 +630,8 @@ enforces these totals.
 | 4. Java SDK (gRPC) | 57 | 0 | 46 | 11 |
 | 5. Lock Service (gRPC) | 61 | 0 | 61 | 0 |
 | 6. Maintainer SDK (HTTP) | 38 | 0 | 38 | 0 |
-| 7. Istio MCP (gRPC) | 14 | 14 | 0 | 0 |
-| **Total** | **415** | **14** | **380** | **21** |
+| 7. Istio MCP (gRPC) | 17 | 17 | 0 | 0 |
+| **Total** | **418** | **17** | **380** | **21** |
 
 > The 21 `⏭️` rows are **not** skipped because a feature is missing. They reference
 > `F-NAC-ADM-AUTH-001`, `F-NAC-ADM-AI-008`, `F-NAC-CLIENT-010`,

@@ -10,6 +10,7 @@ mod dns;
 mod grpc;
 mod http;
 mod istio_mcp;
+mod istio_mcp_config;
 /// `logging` module.
 pub mod logging;
 /// `persistence` module.
@@ -33,6 +34,7 @@ pub use http::plugin_http_server;
 pub use http::{AIServices, console_server, health_routes, main_server, mcp_registry_server};
 /// Re-exported item.
 pub use istio_mcp::{IstioMcpServerHandle, start_istio_mcp_service};
+pub use istio_mcp_config::{IstioMcpConfigProvider, PersistenceIstioMcpConfigProvider};
 /// Re-exported item.
 pub use logging::{LogRotation, LoggingConfig, LoggingGuard, init_file_logging, init_logging};
 /// Re-exported item.

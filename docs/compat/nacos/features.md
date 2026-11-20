@@ -400,8 +400,9 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 > (`db1946649`, 3.3.0 revision line). Scope is upstream port 18848: Istio MCP
 > `ResourceSource` plus the config-source ADS stream that a real Istio sink
 > opens on the same port. Real Envoy CDS/EDS/LDS/RDS resources are served from
-> the same Nacos naming snapshot; VirtualService/DestinationRule config-to-RDS
-> remains deliberately deferred.
+> the same Nacos naming snapshot, and configs tagged `virtual-service` are
+> compiled into Envoy RDS. DestinationRule remains validate-only, matching
+> upstream Nacos 3.3.0.
 
 | ID | Istio MCP capability | batata impl | Status | Tests | Notes |
 |----|----------------------|-------------|--------|-------|-------|
@@ -412,6 +413,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | F-NAC-ISTIO-005 | Istio config-source ADS on port 18848 (`StreamAggregatedResources`) | `crates/batata-mesh/src/mcp/ads.rs` | 🟢 | | Upstream `IstioServer.java:57-80` also registers `NacosXdsService`; Istio's `configSources: xds://host:18848` path opens normal Envoy ADS and requests Pilot GVKs. Batata serves that stream alongside `ResourceSource`: `networking.istio.io/v1alpha3/ServiceEntry` gets full-state outer `Any` values of `type.googleapis.com/istio.mcp.v1alpha1.Resource`, `core/v1alpha1/MeshConfig` is ignored like upstream, other GVKs get empty full-state responses, and delta stays unimplemented. ACK/NACK and nonce checks are handled per GVK; snapshot pushes replace full state. |
 | F-NAC-ISTIO-006 | Opt-in ServiceEntry port override for strict sinks | `crates/batata-server-common/src/model/config.rs`, `crates/batata-mesh/src/mcp/server.rs` | 🟢 | | Upstream fidelity keeps ServiceEntry port 0 and carries real ports in endpoint port maps, but Istio 1.15 rejects port 0 on ingest. Batata adds `batata.istio.mcp.server.service-entry-port` (default 0, hyphen/underscore/env aliases, validated 0..=65535) so operators can opt into a non-zero ServiceEntry port without changing upstream-default wire output. |
 | F-NAC-ISTIO-007 | Envoy CDS/EDS/LDS/RDS data-plane resources on port 18848 | `crates/batata-mesh/src/mcp/ads.rs`, `crates/batata-mesh/src/sync.rs`, `crates/batata-server/src/startup/istio_mcp.rs` | 🟢 | | Upstream `NacosXdsService.java:292-305` answers the four standard Envoy ADS type URLs with real protobuf `Any` resources and the resource-snapshot version; `ApiConstants.java:55-63` defines the exact type URLs. Batata now shares the naming-to-xDS projection between Path A and 18848 (`build_resource_snapshot`), carries the resulting `ResourceSnapshot` in each MCP/ADS snapshot, and emits protobuf-encoded Cluster, ClusterLoadAssignment, Listener and RouteConfiguration resources with the xDS snapshot version. MeshConfig is still ignored, ServiceEntry keeps its MCP wrapper, and unknown/SDS/Runtime GVKs stay on the empty generator. SotW subscriptions track `resource_names` per type: an ACK only settles the last nonce when the requested set is unchanged, changed sets get a fresh response, and non-wildcard EDS/CDS/LDS/RDS responses only contain the requested resources. A real Envoy v1.38 run verified all four resources and live cluster/listener/route updates on port 18848. |
+| F-NAC-ISTIO-008 | Nacos config-tagged VirtualService → Envoy RDS on 18848 | `crates/batata-mesh/src/mcp/virtual_service.rs`, `crates/batata-server/src/startup/istio_mcp_config.rs`, `crates/batata-server/src/startup/istio_mcp.rs` | 🟢 | | Upstream `ConfigTagUtil.java:28-34,41-75` enables Istio processing from `virtual-service` / `destination-rule` tags (hyphen-insensitive), `IstioConfigProcessor.java:90-139` validates `networking.istio.io/v1alpha3` + `VirtualService`/`DestinationRule` YAML, and `RdsGenerator.java:136-225` compiles VirtualService hosts, prefix/exact URI matches and the first destination host into `RouteConfiguration` named `<metadata.name>_route_config`. Batata loads tagged configs from persistence on a 5s cadence (upstream uses an in-process event), parses the same envelope with `yaml_serde`, projects prefix/exact routes onto Nacos-derived clusters, serves the standalone route configuration on RDS, and merges its virtual host into `default-routes` so the current LDS listeners actually use it. Regex/redirect routes are skipped rather than guessed; DestinationRule remains validate-only like upstream. A real Envoy v1.38 run verified `/api` → `/v2` live config updates with no NACK. |
 
 ---
 
@@ -440,8 +442,8 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | B.8 Maintainer SDK | 9 | 0 | 0 | 1 | 0 | 10 | 90% |
 | B.9 Client SDK gaps | 7 | 0 | 0 | 1 | 0 | 8 | 88% |
 | B.10 Server AI ADMIN | 2 | 0 | 0 | 0 | 1 | 3 | 67% |
-| B.11 Istio MCP | 7 | 0 | 0 | 0 | 0 | 7 | 100% |
-| **Total** | 198 | 0 | 0 | 2 | 4 | 204 | 97% |
+| B.11 Istio MCP | 8 | 0 | 0 | 0 | 0 | 8 | 100% |
+| **Total** | 199 | 0 | 0 | 2 | 4 | 205 | 97% |
 
 > Recomputed from the F-ID rows on 2026-11-10 (`scripts/compat_check.py` enforces
 > this table). Initial verification was 2025-08-08; the maintainer SDK rows were

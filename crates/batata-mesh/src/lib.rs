@@ -41,9 +41,10 @@ pub use grpc::{
     start_xds_grpc_server_on_listener,
 };
 pub use mcp::{
-    BatataIstioMcpAdsService, BatataMcpService, McpServer, McpServerConfig,
+    BatataIstioMcpAdsService, BatataMcpService, IstioConfigSourceEntry, McpServer, McpServerConfig,
     SERVICE_ENTRY_COLLECTION, SERVICE_ENTRY_GVK_TYPE_URL, SERVICE_ENTRY_TYPE_URL,
-    start_istio_mcp_grpc_server_on_listener,
+    build_istio_mcp_snapshot, is_istio_config_tag, parse_virtual_service_config,
+    start_istio_mcp_grpc_server_on_listener, virtual_service_to_route_config,
 };
 pub use server::XdsServer;
 pub use snapshot::{DeltaClientState, ResourceSnapshot};
