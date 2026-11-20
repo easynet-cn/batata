@@ -1466,9 +1466,11 @@ async fn start_istio_mcp_if_enabled(
 
     let port = configuration.istio_mcp_server_port();
     let service_entry_port = configuration.istio_mcp_service_entry_port();
+    let domain_suffix = configuration.istio_domain_suffix().to_string();
     info!(
         port = port,
         service_entry_port = service_entry_port,
+        domain_suffix = %domain_suffix,
         "Starting Istio MCP server"
     );
     let Some(persistence) = app_state.persistence.clone() else {
@@ -1479,6 +1481,7 @@ async fn start_istio_mcp_if_enabled(
         true,
         port,
         service_entry_port,
+        domain_suffix,
         grpc_servers.naming_provider(),
         config_provider,
     )

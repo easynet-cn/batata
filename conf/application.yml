@@ -769,6 +769,8 @@ batata.mesh.xds.default.listener.port: 15001
 # Istio MCP Server
 # =============================================================================
 
+# Istio naming / MCP settings
+#batata.istio.domain.suffix: nacos
 # If turn on the Istio MCP server
 #batata.istio.mcp.server.enabled: false
 #batata.istio.mcp.server.port: 18848

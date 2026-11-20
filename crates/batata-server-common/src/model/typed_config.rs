@@ -329,6 +329,9 @@ fn default_mesh_xds_sync_interval_ms() -> i64 {
 fn default_mesh_xds_default_listener_port() -> i64 {
     15_001
 }
+fn default_istio_domain_suffix() -> String {
+    "nacos".to_string()
+}
 fn default_istio_mcp_server_port() -> i64 {
     18_848
 }
@@ -3802,8 +3805,27 @@ impl Default for PrometheusMetricsConfig {
 /// Configuration for `IstioConfig`.
 pub struct IstioConfig {
     #[serde(default)]
+    /// Domain suffix settings shared by the Istio generators.
+    pub domain: IstioDomainConfig,
+    #[serde(default)]
     /// Istio MCP settings.
     pub mcp: IstioMcpConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+/// Configuration for `IstioDomainConfig`.
+pub struct IstioDomainConfig {
+    #[serde(default = "default_istio_domain_suffix")]
+    /// Suffix appended verbatim to generated ServiceEntry hosts; upstream defaults to `nacos`.
+    pub suffix: String,
+}
+
+impl Default for IstioDomainConfig {
+    fn default() -> Self {
+        Self {
+            suffix: default_istio_domain_suffix(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

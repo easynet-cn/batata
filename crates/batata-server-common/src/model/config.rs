@@ -166,6 +166,7 @@ const ENV_KEY_ALIASES: &[(&str, &str)] = &[
         "BATATA_ISTIO_MCP_SERVER_SERVICE_ENTRY_PORT",
         "batata.istio.mcp.server.service_entry_port",
     ),
+    ("BATATA_ISTIO_DOMAIN_SUFFIX", "batata.istio.domain.suffix"),
 ];
 
 /// Map one environment variable name to its config key.
@@ -1429,6 +1430,11 @@ impl Configuration {
     // ========================================================================
     // Istio MCP Configuration (Nacos-compatible port 18848)
     // ========================================================================
+
+    /// Get the Istio domain suffix appended to generated hosts (default: `nacos`).
+    pub fn istio_domain_suffix(&self) -> &str {
+        &self.typed.istio.domain.suffix
+    }
 
     /// Check if the Istio MCP server is enabled (default: false).
     pub fn istio_mcp_server_enabled(&self) -> bool {
@@ -3182,6 +3188,7 @@ mod tests {
     #[test]
     fn test_typed_istio_mcp_defaults() {
         let cfg = build_config(vec![]);
+        assert_eq!(cfg.istio_domain_suffix(), "nacos");
         assert!(!cfg.istio_mcp_server_enabled());
         assert_eq!(cfg.istio_mcp_server_port(), 18848);
         assert_eq!(cfg.istio_mcp_service_entry_port(), 0);
@@ -3198,6 +3205,7 @@ mod tests {
     #[test]
     fn test_typed_istio_mcp_overrides() {
         let cfg = build_config(vec![
+            ("batata.istio.domain.suffix", ".example.test".into()),
             ("batata.istio.mcp.server.enabled", true.into()),
             ("batata.istio.mcp.server.port", 18849_i64.into()),
             (
@@ -3205,6 +3213,7 @@ mod tests {
                 18080_i64.into(),
             ),
         ]);
+        assert_eq!(cfg.istio_domain_suffix(), ".example.test");
         assert!(cfg.istio_mcp_server_enabled());
         assert_eq!(cfg.istio_mcp_server_port(), 18849);
         assert_eq!(cfg.istio_mcp_service_entry_port(), 18080);

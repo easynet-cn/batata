@@ -86,6 +86,7 @@ pub async fn start_istio_mcp_service(
     enabled: bool,
     port: u16,
     service_entry_port: u16,
+    domain_suffix: String,
     naming_service: Arc<dyn NamingServiceProvider>,
     config_provider: Arc<dyn IstioMcpConfigProvider>,
 ) -> Result<Option<IstioMcpServerHandle>, Box<dyn std::error::Error + Send + Sync>> {
@@ -98,6 +99,7 @@ pub async fn start_istio_mcp_service(
 
     let mcp_server = Arc::new(McpServer::new(McpServerConfig {
         service_entry_port,
+        domain_suffix,
         ..Default::default()
     }));
     let service = Arc::new(BatataMcpService::new(mcp_server.clone()));
@@ -243,9 +245,16 @@ mod tests {
     #[tokio::test]
     async fn disabled_service_returns_none() {
         let naming = Arc::new(NamingService::new());
-        let handle = start_istio_mcp_service(false, 0, 0, naming, Arc::new(EmptyConfigProvider))
-            .await
-            .expect("disabled startup");
+        let handle = start_istio_mcp_service(
+            false,
+            0,
+            0,
+            "nacos".to_string(),
+            naming,
+            Arc::new(EmptyConfigProvider),
+        )
+        .await
+        .expect("disabled startup");
 
         assert!(handle.is_none());
     }
@@ -262,11 +271,17 @@ mod tests {
 
         // Port 0 lets the OS choose a free port; the handle still owns the
         // bound listener and shuts it down with the rest of the service.
-        let handle =
-            start_istio_mcp_service(true, 0, 18_080, naming, Arc::new(EmptyConfigProvider))
-                .await
-                .expect("startup")
-                .expect("enabled");
+        let handle = start_istio_mcp_service(
+            true,
+            0,
+            18_080,
+            "nacos".to_string(),
+            naming,
+            Arc::new(EmptyConfigProvider),
+        )
+        .await
+        .expect("startup")
+        .expect("enabled");
 
         let service = handle.service();
         timeout(Duration::from_secs(2), async {
@@ -289,6 +304,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_domain_suffix_reaches_service_entries() {
+        let naming = Arc::new(NamingService::new());
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "web",
+            instance("127.0.0.1", 8080),
+        );
+
+        let handle = start_istio_mcp_service(
+            true,
+            0,
+            18_080,
+            ".example.test".to_string(),
+            naming,
+            Arc::new(EmptyConfigProvider),
+        )
+        .await
+        .expect("startup")
+        .expect("enabled");
+
+        let service = handle.service();
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if !service.server().get_service_entries().is_empty() {
+                    return;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("service entry should be published");
+
+        let entries = service.server().get_service_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].spec.hosts, vec!["web.example.test"]);
+
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn naming_updates_publish_mcp_snapshots() {
         let naming = Arc::new(NamingService::new());
         naming.register_instance(
@@ -298,11 +354,17 @@ mod tests {
             instance("127.0.0.1", 8080),
         );
 
-        let handle =
-            start_istio_mcp_service(true, 0, 0, naming.clone(), Arc::new(EmptyConfigProvider))
-                .await
-                .expect("startup")
-                .expect("enabled");
+        let handle = start_istio_mcp_service(
+            true,
+            0,
+            0,
+            "nacos".to_string(),
+            naming.clone(),
+            Arc::new(EmptyConfigProvider),
+        )
+        .await
+        .expect("startup")
+        .expect("enabled");
         let mut updates = handle.service().subscribe();
 
         naming.register_instance(
@@ -365,6 +427,7 @@ mod tests {
             true,
             0,
             0,
+            "nacos".to_string(),
             naming.clone(),
             Arc::new(StaticConfigProvider(vec![config])),
         )
@@ -417,13 +480,19 @@ mod tests {
             .expect("probe listener");
         let port = listener.local_addr().expect("addr").port();
 
-        let error =
-            match start_istio_mcp_service(true, port, 0, naming, Arc::new(EmptyConfigProvider))
-                .await
-            {
-                Ok(_) => panic!("bind conflict must fail startup"),
-                Err(error) => error,
-            };
+        let error = match start_istio_mcp_service(
+            true,
+            port,
+            0,
+            "nacos".to_string(),
+            naming,
+            Arc::new(EmptyConfigProvider),
+        )
+        .await
+        {
+            Ok(_) => panic!("bind conflict must fail startup"),
+            Err(error) => error,
+        };
         assert!(
             error.to_string().contains("Address already in use")
                 || error.to_string().contains("address in use")
