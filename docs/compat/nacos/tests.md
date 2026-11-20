@@ -617,7 +617,9 @@ gap register in `docs/compat/review-report.md`.
 | T-NAC-ISTIO-008-03 | F-NAC-ISTIO-008 | Envoy v1.38 | real Envoy receives config-derived `/api` route and live `/v2` update without NACK | GRPC_API | ✅ |
 | T-NAC-ISTIO-009-01 | F-NAC-ISTIO-009 | service::notifier::tests | successful publish broadcasts the config key to derived-state subscribers | INTERNAL | ✅ |
 | T-NAC-ISTIO-009-02 | F-NAC-ISTIO-009 | service::notifier::tests | delete notification does not emit a publish broadcast | INTERNAL | ✅ |
-| T-NAC-ISTIO-009-03 | F-NAC-ISTIO-009 | startup::istio_mcp::tests | publish event pushes RDS before the 5s config poll | INTERNAL | ✅ |
+| T-NAC-ISTIO-009-03 | F-NAC-ISTIO-009 | startup::istio_mcp::tests | tagged publish event pushes RDS before the 5s config poll | INTERNAL | ✅ |
+| T-NAC-ISTIO-009-04 | F-NAC-ISTIO-009 | startup::istio_mcp::tests | untagged publish and tag removal leave the derived RDS route untouched | INTERNAL | ✅ |
+| T-NAC-ISTIO-009-05 | F-NAC-ISTIO-009 | api::v2::config::tests | `configTags` from the publish form reaches the publish event | INTERNAL | ✅ |
 
 ---
 
@@ -634,8 +636,8 @@ enforces these totals.
 | 4. Java SDK (gRPC) | 57 | 0 | 46 | 11 |
 | 5. Lock Service (gRPC) | 61 | 0 | 61 | 0 |
 | 6. Maintainer SDK (HTTP) | 38 | 0 | 38 | 0 |
-| 7. Istio MCP (gRPC) | 21 | 21 | 0 | 0 |
-| **Total** | **422** | **21** | **380** | **21** |
+| 7. Istio MCP (gRPC) | 23 | 23 | 0 | 0 |
+| **Total** | **424** | **23** | **380** | **21** |
 
 > The 21 `⏭️` rows are **not** skipped because a feature is missing. They reference
 > `F-NAC-ADM-AUTH-001`, `F-NAC-ADM-AI-008`, `F-NAC-CLIENT-010`,

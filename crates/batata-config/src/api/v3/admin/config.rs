@@ -433,6 +433,7 @@ async fn create_config(
             &config_form.namespace_id,
             &config_form.group_name,
             &config_form.data_id,
+            &config_form.config_tags,
         );
     }
 
@@ -531,6 +532,7 @@ async fn update_config(
             &config_form.namespace_id,
             &config_form.group_name,
             &config_form.data_id,
+            &config_form.config_tags,
         );
     }
 

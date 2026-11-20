@@ -28,6 +28,12 @@ pub struct ConfigPublishEvent {
     pub group: String,
     /// Data ID of the published config.
     pub data_id: String,
+    /// Comma-separated config tags supplied on the publish request.
+    ///
+    /// Downstream materialized views need this to mirror upstream Nacos, where
+    /// `IstioConfigChangeEvent` is emitted only when `ConfigTagUtil.isIstio`
+    /// recognizes an Istio tag.
+    pub config_tags: String,
 }
 
 /// A single config-key notification entry.
@@ -130,12 +136,13 @@ impl ConfigChangeNotifier {
     }
 
     /// Notify waiters and publish subscribers that a config was successfully published.
-    pub fn notify_publish(&self, tenant: &str, group: &str, data_id: &str) {
+    pub fn notify_publish(&self, tenant: &str, group: &str, data_id: &str, config_tags: &str) {
         self.notify_change(tenant, group, data_id);
         let _ = self.publish_tx.send(ConfigPublishEvent {
             tenant: tenant.to_string(),
             group: group.to_string(),
             data_id: data_id.to_string(),
+            config_tags: config_tags.to_string(),
         });
     }
 
@@ -296,7 +303,7 @@ mod tests {
         let notifier = ConfigChangeNotifier::new();
         let mut publishes = notifier.subscribe_publishes();
 
-        notifier.notify_publish("public", "DEFAULT_GROUP", "web.yaml");
+        notifier.notify_publish("public", "DEFAULT_GROUP", "web.yaml", "virtual-service");
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), publishes.recv())
             .await
@@ -305,6 +312,7 @@ mod tests {
         assert_eq!(event.tenant, "public");
         assert_eq!(event.group, "DEFAULT_GROUP");
         assert_eq!(event.data_id, "web.yaml");
+        assert_eq!(event.config_tags, "virtual-service");
     }
 
     #[tokio::test]

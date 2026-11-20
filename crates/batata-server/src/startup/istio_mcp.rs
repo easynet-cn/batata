@@ -25,7 +25,7 @@ use batata_mesh::sync::SyncBridgeConfig;
 use batata_mesh::sync::{NacosServiceData, ServiceChangeEvent};
 use batata_mesh::{
     BatataMcpService, IstioConfigSourceEntry, McpServer, McpServerConfig, build_istio_mcp_snapshot,
-    start_istio_mcp_grpc_server_on_listener,
+    is_istio_config_tag, start_istio_mcp_grpc_server_on_listener,
 };
 
 use super::istio_mcp_config::IstioMcpConfigProvider;
@@ -170,7 +170,13 @@ pub async fn start_istio_mcp_service(
                 }
                 result = publish_rx.recv() => {
                     match result {
-                        Ok(_) => {
+                        Ok(event) => {
+                            // Upstream emits IstioConfigChangeEvent only for tagged
+                            // publishes. Untagged publishes and tag removal must not
+                            // rewrite the derived RDS snapshot.
+                            if !is_istio_config_tag(&event.config_tags) {
+                                continue;
+                            }
                             configs = bridge_provider.load_virtual_service_configs().await;
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -183,6 +189,7 @@ pub async fn start_istio_mcp_service(
                         Err(broadcast::error::RecvError::Closed) => {
                             warn!("Istio MCP config publish channel closed; re-subscribing");
                             publish_rx = bridge_notifier.subscribe_publishes();
+                            continue;
                         }
                     }
                 }
@@ -517,7 +524,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_publish_event_pushes_snapshot_before_poll() {
+    async fn config_publish_events_push_rds_only_for_istio_tags() {
         let naming = Arc::new(NamingService::new());
         let configs = Arc::new(std::sync::Mutex::new(Vec::new()));
         let notifier = Arc::new(ConfigChangeNotifier::new());
@@ -568,6 +575,21 @@ mod tests {
         .await;
         assert!(deleted.is_err(), "delete notification must not push RDS");
 
+        // Untagged publishes are ordinary config changes upstream and must not
+        // rewrite the Istio RDS projection.
+        notifier.notify_publish("public", "DEFAULT", "vs-web.yaml", "canary,gray");
+        let untagged = timeout(Duration::from_millis(500), async {
+            loop {
+                if let Ok(snapshot) = updates.recv().await
+                    && snapshot.xds.routes.contains_key("vs-web_route_config")
+                {
+                    return snapshot;
+                }
+            }
+        })
+        .await;
+        assert!(untagged.is_err(), "untagged publish must not push RDS");
+
         *configs.lock().expect("config lock") = vec![IstioConfigSourceEntry {
             data_id: "vs-web.yaml".to_string(),
             group: "DEFAULT".to_string(),
@@ -584,7 +606,7 @@ mod tests {
             )
             .to_string(),
         }];
-        notifier.notify_publish("public", "DEFAULT", "vs-web.yaml");
+        notifier.notify_publish("public", "DEFAULT", "vs-web.yaml", "virtual-service");
 
         let snapshot = timeout(Duration::from_millis(1_000), async {
             loop {
@@ -600,6 +622,22 @@ mod tests {
 
         let route = &snapshot.xds.routes["vs-web_route_config"];
         assert_eq!(route.virtual_hosts[0].routes[0].name, "vs-web-api");
+
+        // Removing the Istio tag is also an untagged publish upstream; the
+        // existing route stays until a later tagged publish replaces it.
+        *configs.lock().expect("config lock") = Vec::new();
+        notifier.notify_publish("public", "DEFAULT", "vs-web.yaml", "canary");
+        let removed = timeout(Duration::from_millis(500), async {
+            loop {
+                if let Ok(snapshot) = updates.recv().await
+                    && !snapshot.xds.routes.contains_key("vs-web_route_config")
+                {
+                    return snapshot;
+                }
+            }
+        })
+        .await;
+        assert!(removed.is_err(), "untagged tag removal must not push RDS");
 
         handle.shutdown().await;
     }

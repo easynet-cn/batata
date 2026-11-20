@@ -191,6 +191,13 @@ pub async fn get_config(
     }
 }
 
+/// Extract the publish-time config tags that downstream Istio projections need.
+///
+/// Kept as a named helper so the wire-to-event propagation is directly testable.
+fn publish_config_tags(form: &ConfigPublishParam) -> &str {
+    form.config_tags.as_deref().unwrap_or("")
+}
+
 /// Publish configuration
 ///
 /// POST /nacos/v2/cs/config
@@ -476,7 +483,12 @@ pub async fn publish_config(
     {
         Ok(_) => {
             // Notify long-polling HTTP listeners about config change
-            notifier.notify_publish(&namespace_id, &group, &form.data_id);
+            notifier.notify_publish(
+                &namespace_id,
+                &group,
+                &form.data_id,
+                publish_config_tags(&form),
+            );
 
             batata_plugin::global_trace_registry().fire_detached(
                 batata_plugin::TraceEvent::ConfigPublish {
@@ -707,6 +719,17 @@ mod tests {
     // Mutant-checkable: removing either the hard-cap check or the configured
     // limit check makes one of the "over" tests fail; the success path is
     // covered by the within-limits and exact-boundary cases.
+    #[test]
+    fn test_publish_config_tags_propagates_wire_value() {
+        let form: ConfigPublishParam = serde_json::from_value(serde_json::json!({
+            "dataId": "vs-web.yaml",
+            "content": "kind: VirtualService",
+            "configTags": "canary, virtual-service",
+        }))
+        .expect("publish form");
+        assert_eq!(publish_config_tags(&form), "canary, virtual-service");
+    }
+
     #[test]
     fn test_content_size_violation_under_and_at_boundary_ok() {
         assert!(content_size_violation("small config", 100).is_none());
