@@ -242,6 +242,9 @@ Nacos-compatible Istio MCP `ResourceSource` and config-source ADS streams,
 mapped from `nacos.istio.mcp.server.*`. `batata.istio.mcp.server.service-entry-port`
 defaults to `0` to preserve upstream Nacos wire semantics; set it to a non-zero
 port for sinks such as Istio 1.15 that validate ServiceEntry configs on ingest.
+There is no separate module-level gate: upstream's
+`nacos.extension.naming.istio.enabled` controls Java package scanning, so
+batata keeps only the server gate above.
 `batata.istio.domain.suffix` (default `nacos`, mapped from
 `nacos.istio.domain.suffix`) is appended verbatim to generated MCP ServiceEntry
 hosts; include a leading dot for DNS-style suffixes such as `.example.test`.

@@ -96,6 +96,7 @@ Nacos files into `conf/`.
 | `nacos.security.ignore.urls` | Batata derives public paths in code |
 | `nacos.naming.empty-service.*` | Batata handles empty-service cleanup internally |
 | `nacos.k8s.sync.*` | Batata K8s sync is part of `batata-plugin-cloud` |
+| `nacos.extension.naming.istio.enabled` | **Not ported by decision** — upstream Java package-scan/module gate; batata compiles Istio MCP into the server and uses `batata.istio.mcp.server.enabled` as the only actionable gate. `nacos.istio.enabled` does not exist upstream (verified at `b64bc9118` and `db1946649`). |
 | Oracle / Derby datasources | **Not supported** — Batata supports only SeaORM-backed databases (MySQL, PostgreSQL) plus embedded RocksDB |
 
 ## Reference files in `conf/`

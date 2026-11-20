@@ -3400,6 +3400,33 @@ A read-only source audit against upstream Nacos `db1946649` showed that several 
 | Auth / TLS / readiness gate on port 18848 | `IstioServer.java:67-71` builds a bare `ServerBuilder.forPort(...)`, registers two intercepted services and starts; no transport credentials or health service. `IstioConfig.java:31-46` has no auth/TLS/readiness setting, `ServerInterceptor.java:34-43` only logs, and `NacosXdsService.java:79` / `NacosMcpService.java:66` still contain `TODO add authN`. | Upstream 18848 is plaintext gRPC with no such gate. Adding one to batata would break wire compatibility unless explicitly requested as a batata-only extension. Deployment-level readiness outside this source tree is not claimed. |
 | "Real Istio Pilot ingestion of CDS/EDS/LDS/RDS" | `NacosXdsService.java:57-58` implements Envoy ADS and serves `CLUSTER_TYPE`/`ENDPOINT_TYPE`/`LISTENER_TYPE`/`ROUTE_TYPE` from `ApiConstants.java:55-63` to an Envoy sink. `NacosMcpService.java:47` implements `ResourceSource` and serves only `istio/networking/v1alpha3/serviceentries` (`ApiConstants.java:40-42`, `NacosMcpService.java:115-118,169-185`); the bundled MCP README describes Pilot/Mixer as the config sink (`proto/mcp/Readme.md:57-60,75-77`). | This was a category error, not a pending test: Pilot consumes Istio config resources, while Envoy consumes CDS/EDS/LDS/RDS. Acceptance is already correctly split — real Pilot 1.15.5 for `ServiceEntry` (§37.33) and real Envoy v1.38 for CDS/EDS/LDS/RDS + RDS live update (§§37.34–37.38). |
 
-**Remaining open decision.** The upstream two-level module gate (`nacos.extension.naming.istio.enabled` plus `nacos.istio.enabled`) is **not** included here: batata currently uses one canonical enable key, and the alias versus compatibility-gate choice is tracked separately as atomic task `#631`.
+**Decision recorded.** The upstream enable-gate question is closed in §37.41; batata keeps one canonical enable key. The separate decision task `#631` is complete.
 
 **Verification.** `python3 scripts/compat_check.py` and `git diff --check` pass; inventory counts are unchanged at 586 feature rows / 1063 T-ID rows with Nacos 200/200 anchors. No product code, F-ID or T-ID changed, so no workspace test rerun was needed.
+
+### 37.41 Upstream Istio enable-gate decision (2026-11-20, task `#631`)
+
+**Scope correction.** Upstream has **no** `nacos.istio.enabled` key. A full-tree search at the audit baseline `b64bc9118` and at the current checkout `db1946649` finds no such property; the two real gates are `nacos.extension.naming.istio.enabled` (Java package-scan/module gate) and `nacos.istio.mcp.server.enabled` (the gRPC server gate). The three relevant upstream files are byte-identical between those two commits, so the anchors below apply to both.
+
+**Source anchors.**
+
+- `istio/src/main/java/com/alibaba/nacos/istio/config/IstioEnabledFilter.java:40` declares `ISTIO_ENABLED_KEY = "nacos.extension.naming.istio.enabled"`; `:48-61` excludes the whole `com.alibaba.nacos.istio` package when the key is absent/false; `:64-69` also excludes non-empty function modes other than `naming` / `microservice`.
+- `istio/src/main/java/com/alibaba/nacos/istio/misc/IstioConfig.java:31-34` binds `nacos.istio.mcp.server.enabled` (default `false`) and `nacos.istio.mcp.server.port` (default `18848`); `:48-50` exposes the enable flag.
+- `istio/src/main/java/com/alibaba/nacos/istio/server/IstioServer.java:57-71` returns before building a server when that flag is false, otherwise registers MCP and xDS services on the configured port.
+- `specs/en/integration/integration-adapter-spec.md:121-124` states the same split: module loading, function mode and the dedicated gRPC server are separate conditions.
+- Batata's only gate is `batata.istio.mcp.server.enabled`: `typed_config.rs:3833-3862` defines it with default `false` next to the port and ServiceEntry port, `config.rs:1439-1442` exposes it, and `app_builder.rs:1458-1465` returns `None` before any Istio MCP startup when it is false.
+
+**Behavior matrix.**
+
+| Upstream module gate | Upstream function mode | Upstream MCP gate | Upstream 18848 | Batata equivalent (`batata.istio.mcp.server.enabled`) | Batata 18848 |
+|---|---|---|---|---|---|
+| absent/false | any | any | not started; classes excluded | no upstream alias exists | unchanged |
+| true | non-empty other than `naming` / `microservice` | any | not started; classes excluded | no function-mode concept | unchanged |
+| true | `naming` / `microservice` (or empty per code) | absent/false | not started; `IstioServer.start` returns early | `false` (default) | not started |
+| true | `naming` / `microservice` (or empty per code) | true | started with MCP + xDS services | `true` | started with MCP + xDS services |
+
+**Decision.** Keep batata's single canonical key `batata.istio.mcp.server.enabled`; do **not** add a `nacos.*` alias, do **not** add `nacos.istio.enabled`, and do **not** add a second AND gate.
+
+**Rationale.** The upstream module gate exists to stop Spring from scanning and instantiating a separate `istio` module; batata compiles the Istio MCP/xDS server into the Rust binary and has no package-scan boundary, module class loading, or function-mode switch. Adding a second key would require operators to satisfy a condition with no independent runtime effect, while an alias would imply that the module key alone can start 18848 — which is false upstream because the MCP gate defaults to `false`. The upstream MCP gate maps one-to-one to the existing batata key, so effective enablement is already compatible: an operator who follows upstream and sets only the module-level key would not get 18848 in either system.
+
+**Revisit condition.** If a future batata change introduces optional Istio module packaging/plugin loading, add a truly independent module gate in a separate atomic task. This decision is documentation-only: no product code, F-ID, T-ID or compat count changed.
