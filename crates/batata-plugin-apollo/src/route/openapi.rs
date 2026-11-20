@@ -3,7 +3,7 @@ use crate::api::dto::{
     ErrorResponse, GrayReleaseRuleDTO, ItemChangeSets, ItemDTO, NamespaceDTO, RoleDTO,
     ServerConfigDTO,
 };
-use crate::auth::permission::{current_identity, permission_type};
+use crate::auth::permission::{current_identity, current_token_scope, permission_type};
 use crate::auth::role::{build_cluster_role_name, build_cluster_target_id};
 use crate::auth::token_scope::{TokenScope, operation as op};
 use crate::entity::apollo_user_token;
@@ -853,18 +853,69 @@ async fn list_instances(
     }
 }
 
+/// Upstream `AccessKeyController` guards every operation with
+/// `@PreAuthorize isAppAdmin(#appId)` and additionally calls
+/// `requireAccessKeyPermissionForUserToken(appId, env)` for PATs.
+async fn require_access_key_permission(
+    data: &web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: &HttpRequest,
+    app_id: &str,
+    env: Option<&str>,
+) -> Result<(), HttpResponse> {
+    let allowed =
+        um::request_has_permission(req, data.get_ref(), permission_type::ASSIGN_ROLE, app_id)
+            .await
+            .map_err(management_error)?;
+    if !allowed {
+        return Err(forbidden("assign role permission required"));
+    }
+    if is_user_token(req) {
+        let scope = current_token_scope(req);
+        if !scope.allows_namespace(app_id, env.unwrap_or(""), "", "") {
+            return Err(forbidden("assign role permission is required"));
+        }
+    }
+    Ok(())
+}
+
+/// Upstream `OpenApiOperatorResolver`: USER / USER_TOKEN act as themselves; a
+/// CONSUMER must name an existing operator explicitly.
+async fn resolve_access_key_operator(
+    data: &web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: &HttpRequest,
+    explicit: Option<&str>,
+) -> Result<String, HttpResponse> {
+    let identity = current_identity(req);
+    um::resolve_operator(data.get_ref(), &identity, explicit)
+        .await
+        .map_err(|e| {
+            HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            })
+        })
+}
+
 async fn create_access_key(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     app_id: web::Path<String>,
-    body: web::Json<Value>,
+    query: web::Query<Value>,
 ) -> impl Responder {
     let app_id = app_id.into_inner();
-    let operator = body
-        .get("createdBy")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, None).await {
+        return response;
+    }
+    // Upstream reads `operator` from the query string. The legacy no-env path
+    // historically accepted `createdBy` in the body, but every resolved
+    // operator is derived from the authenticated identity here.
+    let explicit = query.get("operator").and_then(|v| v.as_str());
+    let operator = match resolve_access_key_operator(&data, &req, explicit).await {
+        Ok(operator) => operator,
+        Err(response) => return response,
+    };
     let service = AccessKeyService::new(data.get_ref().clone());
-    match service.create(&app_id, operator).await {
+    match service.create(&app_id, &operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -875,9 +926,13 @@ async fn create_access_key(
 
 async fn list_access_keys(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     app_id: web::Path<String>,
 ) -> impl Responder {
     let app_id = app_id.into_inner();
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, None).await {
+        return response;
+    }
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.list_by_app(&app_id).await {
         Ok(keys) => HttpResponse::Ok().json(keys),
@@ -890,16 +945,26 @@ async fn list_access_keys(
 
 async fn delete_access_key(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, id) = path.into_inner();
-    let operator = query
-        .get("operator")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, None).await {
+        return response;
+    }
+    let operator = match resolve_access_key_operator(
+        &data,
+        &req,
+        query.get("operator").and_then(|v| v.as_str()),
+    )
+    .await
+    {
+        Ok(operator) => operator,
+        Err(response) => return response,
+    };
     let service = AccessKeyService::new(data.get_ref().clone());
-    match service.delete(&app_id, id, operator).await {
+    match service.delete(&app_id, id, &operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -911,16 +976,21 @@ async fn delete_access_key(
 /// Frontend uses `/apps/{app_id}/envs/{env}/accesskeys` path.
 async fn create_access_key_with_env(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String)>,
-    body: web::Json<Value>,
+    query: web::Query<Value>,
 ) -> impl Responder {
-    let (app_id, _env) = path.into_inner();
-    let operator = body
-        .get("createdBy")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    let (app_id, env) = path.into_inner();
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, Some(&env)).await {
+        return response;
+    }
+    let explicit = query.get("operator").and_then(|v| v.as_str());
+    let operator = match resolve_access_key_operator(&data, &req, explicit).await {
+        Ok(operator) => operator,
+        Err(response) => return response,
+    };
     let service = AccessKeyService::new(data.get_ref().clone());
-    match service.create(&app_id, operator).await {
+    match service.create(&app_id, &operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -931,9 +1001,13 @@ async fn create_access_key_with_env(
 
 async fn list_access_keys_with_env(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String)>,
 ) -> impl Responder {
-    let (app_id, _env) = path.into_inner();
+    let (app_id, env) = path.into_inner();
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, Some(&env)).await {
+        return response;
+    }
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.list_by_app(&app_id).await {
         Ok(keys) => HttpResponse::Ok().json(keys),
@@ -946,16 +1020,26 @@ async fn list_access_keys_with_env(
 
 async fn delete_access_key_with_env(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let (app_id, _env, id) = path.into_inner();
-    let operator = query
-        .get("operator")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    let (app_id, env, id) = path.into_inner();
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, Some(&env)).await {
+        return response;
+    }
+    let operator = match resolve_access_key_operator(
+        &data,
+        &req,
+        query.get("operator").and_then(|v| v.as_str()),
+    )
+    .await
+    {
+        Ok(operator) => operator,
+        Err(response) => return response,
+    };
     let service = AccessKeyService::new(data.get_ref().clone());
-    match service.delete(&app_id, id, operator).await {
+    match service.delete(&app_id, id, &operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -2678,19 +2762,38 @@ async fn search_openapi(
     }
 }
 
-// PMISC-006: PUT /openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/activation - enable access key
+// PMISC-005/006: PUT /openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/activation
+// Upstream defaults `mode` to `AccessKeyMode.FILTER` (0) and resolves the
+// operator with `OpenApiOperatorResolver`.
 async fn enable_access_key_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let (app_id, _env, id) = path.into_inner();
-    let operator = query
-        .get("operator")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    let (app_id, env, id) = path.into_inner();
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, Some(&env)).await {
+        return response;
+    }
+    let operator = match resolve_access_key_operator(
+        &data,
+        &req,
+        query.get("operator").and_then(|v| v.as_str()),
+    )
+    .await
+    {
+        Ok(operator) => operator,
+        Err(response) => return response,
+    };
+    let mode = query
+        .get("mode")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|value| value.parse::<i64>().ok()))
+        })
+        .unwrap_or(0) as i32;
     let service = AccessKeyService::new(data.get_ref().clone());
-    match service.enable(&app_id, id, operator).await {
+    match service.enable(&app_id, id, mode, &operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -2699,19 +2802,29 @@ async fn enable_access_key_openapi(
     }
 }
 
-// PMISC-006: PUT /openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/deactivation - disable access key
+// PMISC-005/006: PUT /openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/deactivation
 async fn disable_access_key_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let (app_id, _env, id) = path.into_inner();
-    let operator = query
-        .get("operator")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    let (app_id, env, id) = path.into_inner();
+    if let Err(response) = require_access_key_permission(&data, &req, &app_id, Some(&env)).await {
+        return response;
+    }
+    let operator = match resolve_access_key_operator(
+        &data,
+        &req,
+        query.get("operator").and_then(|v| v.as_str()),
+    )
+    .await
+    {
+        Ok(operator) => operator,
+        Err(response) => return response,
+    };
     let service = AccessKeyService::new(data.get_ref().clone());
-    match service.disable(&app_id, id, operator).await {
+    match service.disable(&app_id, id, &operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,

@@ -524,10 +524,10 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 
 | T-ID | Feature | Upstream method | Type | Status | Skip reason |
 |------|---------|-----------------|------|--------|-------------|
-| T-APO-PMISC-006-01 | F-APO-PMISC-006 | enableAccessKeyShouldUseCurrentPortalUserAndDefaultMode | HTTP_API | ⏭️ | Feature ⚪ |
-| T-APO-PMISC-006-02 | F-APO-PMISC-006 | disableAccessKeyShouldRejectBlankConsumerOperator | HTTP_API | ⏭️ | Feature ⚪ |
-| T-APO-PMISC-005-01 | F-APO-PMISC-005 | createAccessKeyShouldUseConsumerOperatorQuery | HTTP_API | ⏳ | |
-| T-APO-PMISC-005-02 | F-APO-PMISC-005 | findAccessKeysShouldRejectUserTokenWithoutEnvScope | HTTP_API | ⏳ | |
+| T-APO-PMISC-006-01 | F-APO-PMISC-006 | enableAccessKeyShouldUseCurrentPortalUserAndDefaultMode | HTTP_API | ✅ pass | `access_key_openapi_test::pat_activation_uses_current_user_and_mode` (default mode 0 + current PAT user) |
+| T-APO-PMISC-006-02 | F-APO-PMISC-006 | disableAccessKeyShouldRejectBlankConsumerOperator | HTTP_API | ✅ pass | `access_key_openapi_test::consumer_deactivation_requires_operator` |
+| T-APO-PMISC-005-01 | F-APO-PMISC-005 | createAccessKeyShouldUseConsumerOperatorQuery | HTTP_API | ✅ pass | `access_key_openapi_test::consumer_create_access_key_uses_operator_query` |
+| T-APO-PMISC-005-02 | F-APO-PMISC-005 | findAccessKeysShouldRejectUserTokenWithoutEnvScope | HTTP_API | ✅ pass | `access_key_openapi_test::pat_env_scope_controls_access_key_list` |
 
 ## 30. portal OpenAPI — Permissions (`PermissionControllerTest`, `PermissionControllerParamBindLowLevelTest`)
 

@@ -220,8 +220,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-PMISC-002 | GET `/openapi/v1/envs/{env}/instances/by-release` | `openapi_list_instances_by_release` → `InstanceService::list_open_instances_by_release` | 🟢 | | comma-separated `releaseIds`; 404 (`findReleaseOrThrow`) if any requested release id is missing. |
 | F-APO-PMISC-003 | GET `/openapi/v1/envs/{env}/instances/by-namespace` | `openapi_count_instances` → `InstanceService::count_open_instances` | 🟢 | | returns the distinct instance config count (JSON number). |
 | F-APO-PMISC-004 | GET `/openapi/v1/envs/{env}/instances/by-namespace-and-releases-not-in` | `openapi_list_instances_by_release_not_in` → `InstanceService::list_open_instances_by_release_not_in` | 🟢 | | instance configs whose release is NOT in `releaseIds`; 404 on a missing release id. |
-| F-APO-PMISC-005 | POST/GET/DELETE `/openapi/v1/apps/{appId}/envs/{env}/accesskeys` | | 🟡 | | create/list/delete (no enable/disable) |
-| F-APO-PMISC-006 | PUT `.../accesskeys/{accessKeyId}/activation` / `.../deactivation` | | 🟢 | | enable/disable implemented (openapi.rs activation/deactivation routes registered) |
+| F-APO-PMISC-005 | POST/GET/DELETE `/openapi/v1/apps/{appId}/envs/{env}/accesskeys` | `openapi.rs` create/list/delete access-key handlers (env and legacy no-env paths) | 🟢 | access_key_openapi_test | app-admin RBAC + PAT env scope, `operator` query resolved via `OpenApiOperatorResolver` rules; no `createdBy` default. Upstream `AccessKeyController.java:51-70,94-99` + `OpenApiOperatorResolver.java:42-64`. |
+| F-APO-PMISC-006 | PUT `.../accesskeys/{accessKeyId}/activation` / `.../deactivation` | `openapi.rs` `enable_access_key_openapi` / `disable_access_key_openapi` | 🟢 | access_key_openapi_test | same admin/PAT/operator guards; activation reads `mode` (string or number) and defaults to `AccessKeyMode.FILTER=0`, and `AccessKeyService::enable` persists it. Upstream `AccessKeyController.java:72-92`, `AccessKeyMode.java:19-25`, `ServerAccessKeyOpenApiService.java:65-70`. |
 | F-APO-PMISC-007 | GET `/openapi/v1/permissions/root` | `openapi_permissions_root` | 🟢 | p6_portal_misc_test, user_auth_test | superadmin check from `apollo_users` authorities + `superAdmin` ServerConfig, ANDed with the PAT's `system:admin` scope. |
 | F-APO-PMISC-008 | GET `/openapi/v1/apps/{appId}/permissions/{permissionType}` | `openapi_permissions_app` | 🟢 | p6_portal_misc_test, user_auth_test | real `RolePersistence`/`PermissionPersistence` lookup (plus app-master blanket grant); PAT operation/app scope is ANDed with RBAC. |
 | F-APO-PMISC-009 | GET/POST/DELETE `/openapi/v1/apps/{appId}/roles/{roleType}` | `openapi_roles` | 🟢 | p6_portal_misc_test, user_management_persistence_test | role + user-role rows are persisted on both backends; role users are read from `apollo_user_role` instead of a fixed admin. |
@@ -331,11 +331,11 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 9 portal apps/ns | 26 | 0 | 0 | 0 | 0 | 26 | 100% |
 | 10 portal items | 12 | 0 | 0 | 0 | 0 | 12 | 100% |
 | 11 portal releases | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
-| 12 portal misc | 20 | 1 | 0 | 0 | 0 | 21 | 98% |
+| 12 portal misc | 21 | 0 | 0 | 0 | 0 | 21 | 100% |
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
 | 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
 | 15 expanded openapi v1 | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
-| **Total** | 171 | 1 | 0 | 27 | 0 | 199 | 86% |
+| **Total** | 172 | 0 | 0 | 27 | 0 | 199 | 86% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >

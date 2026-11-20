@@ -67,6 +67,7 @@ impl AccessKeyService {
         &self,
         app_id: &str,
         id: i64,
+        mode: i32,
         operator: &str,
     ) -> Result<AccessKeyDTO, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
@@ -75,6 +76,8 @@ impl AccessKeyService {
             .find(|k| k.id == id)
             .ok_or_else(|| anyhow::anyhow!("Access key not found: {}", id))?;
         stored.is_enabled = true;
+        // Upstream persists `AccessKeyMode` on enable (FILTER=0, OBSERVER=1).
+        stored.mode = mode;
         stored.data_change_last_modified_by = Some(operator.to_string());
         stored.data_change_last_time = Some(Utc::now().timestamp_millis());
         let updated = self.persistence.update(stored).await?;

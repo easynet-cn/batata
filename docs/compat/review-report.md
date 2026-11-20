@@ -3448,3 +3448,23 @@ A read-only source audit against upstream Nacos `db1946649` showed that several 
 **Verification.** New `crates/batata-plugin-apollo/tests/missing_namespaces_test.rs` has three passing route tests: PAT metadata scope, PAT env/cluster scope plus created namespaces and empty body, and consumer role/no-operator/allowed cases. Six mutants were killed: remove GET metadata guard, remove POST permission guard, remove PAT env/cluster guard, restore legacy JSON body, restore default `admin` operator, and remove sorted output. Sources were byte-restored and mtime-bumped after each mutant.
 
 **Docs closeout.** `F-APO-PORT-026` is 🟢; the three T-IDs are `✅ pass` with derived-label notes. Apollo tallies become 171 🟢 / 1 🟡 / 27 ⚪ of 199 (portal apps/ns 100%, total 86%), global 552 🟢 / 1 🟡 of 586; active test-type total becomes 385.
+
+### 37.44 Apollo OpenAPI access-key semantics (2026-11-20, task `#635`)
+
+**Upstream contract.** Apollo `504e5cd7` implements create/list/delete/enable/disable in one `openapi/v1` controller. `AccessKeyController.java:51-106` guards all five operations with `@PreAuthorize isAppAdmin(#appId)` (`PermissionValidator.java:47-49` = superadmin or `AssignRole` on the app) and calls `requireAccessKeyPermissionForUserToken(appId, env)` (`:101-106`) for PATs; that helper requires `hasAssignRolePermission(appId, env, null, null)`, i.e. `APP_MANAGE_ROLE`, app RBAC, and namespace/environment scope (`UserTokenPermissionValidator.java:88-99`). `OpenApiOperatorResolver.java:42-64` ignores the supplied operator for USER/USER_TOKEN and requires an existing user id for CONSUMER. `ServerAccessKeyOpenApiService.java:65-70` defaults a missing activation `mode` to `AccessKeyMode.FILTER = 0` (`AccessKeyMode.java:19-25`) and persists the requested mode. The binding tests are `AccessKeyControllerParamBindLowLevelTest.java:102-145`: portal-user activation uses mode 0, consumer deactivation without `operator` is 400, consumer create reads the `operator` query, and a PAT without env scope gets 403 on list.
+
+**Behavior matrix.**
+
+| Operation | Guard | Operator | Notable wire behavior |
+|---|---|---|---|
+| POST list path | app admin + PAT env scope | resolved identity; CONSUMER needs `?operator=<existing user>` | `200` + `OpenAccessKeyDTO`; no body/query fallback to `admin` |
+| GET list path | same | n/a | bare array |
+| DELETE | same | resolved identity | empty `200` |
+| PUT activation | same | resolved identity | `mode` accepted as number or query string, default `0`, persisted with `isEnabled=true` |
+| PUT deactivation | same | resolved identity | empty `200`, `isEnabled=false` |
+
+**Implementation.** `crates/batata-plugin-apollo/src/route/openapi.rs:859-900` adds shared `require_access_key_permission` (RBAC `AssignRole` plus PAT `allows_namespace(app, env, "", "")`) and `resolve_access_key_operator` (400 on missing/unknown consumer operator). The env-path create/list/delete handlers (`:981-1041`) and activation/deactivation handlers (`:2772-2839`) now use both; the legacy no-env aliases use the same guards without an env selector and keep working with the Java SDK's placeholder token. `crates/batata-plugin-apollo/src/service/access_key_service.rs:66-86` now persists `mode` on enable. The admin-path enable handler also accepts the same optional `mode` query so its status stays consistent.
+
+**Verification.** New `crates/batata-plugin-apollo/tests/access_key_openapi_test.rs` has five passing route tests covering all four upstream binding cases plus a PAT without `app:manage-role`. Five targeted mutants were all **KILLED**: app-admin guard removed, PAT env-scope guard removed, operator resolution hardcoded to `admin`, `mode` parsing replaced with `0`, and `stored.mode = mode` dropped. Sources were byte-restored and mtime-bumped after every mutant. `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` and `git diff --check` pass; `cargo test --workspace --exclude batata-integration-tests` = **4348 passed / 0 failed / 33 ignored** (+5 over `befde404`). Compat checker reports 586 feature rows / 1063 T-ID rows with Nacos 200/200 anchors.
+
+**Docs closeout.** `F-APO-PMISC-005` and `F-APO-PMISC-006` are both 🟢 with upstream and batata anchors. The four `T-APO-PMISC-005/006-*` HTTP_API labels in section 29 are `✅ pass`; `T-APO-PMISC-005-03` remains a skipped INTERNAL service-layer test. Apollo tallies become 172 🟢 / 0 🟡 / 27 ⚪ of 199 (portal misc 100%, total 86%), and the global tally becomes 553 🟢 / 0 🟡 of 586. No F-ID/T-ID was added.

@@ -2559,8 +2559,15 @@ async fn enable_access_key(
         .get("operator")
         .and_then(|v| v.as_str())
         .unwrap_or("admin");
+    let mode = query
+        .get("mode")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|value| value.parse::<i64>().ok()))
+        })
+        .unwrap_or(0) as i32;
     let service = AccessKeyService::new(data.get_ref().clone());
-    match service.enable(&app_id, id, operator).await {
+    match service.enable(&app_id, id, mode, operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
