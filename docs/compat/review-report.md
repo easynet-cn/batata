@@ -3468,3 +3468,37 @@ A read-only source audit against upstream Nacos `db1946649` showed that several 
 **Verification.** New `crates/batata-plugin-apollo/tests/access_key_openapi_test.rs` has five passing route tests covering all four upstream binding cases plus a PAT without `app:manage-role`. Five targeted mutants were all **KILLED**: app-admin guard removed, PAT env-scope guard removed, operator resolution hardcoded to `admin`, `mode` parsing replaced with `0`, and `stored.mode = mode` dropped. Sources were byte-restored and mtime-bumped after every mutant. `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `python3 scripts/compat_check.py` and `git diff --check` pass; `cargo test --workspace --exclude batata-integration-tests` = **4348 passed / 0 failed / 33 ignored** (+5 over `befde404`). Compat checker reports 586 feature rows / 1063 T-ID rows with Nacos 200/200 anchors.
 
 **Docs closeout.** `F-APO-PMISC-005` and `F-APO-PMISC-006` are both 🟢 with upstream and batata anchors. The four `T-APO-PMISC-005/006-*` HTTP_API labels in section 29 are `✅ pass`; `T-APO-PMISC-005-03` remains a skipped INTERNAL service-layer test. Apollo tallies become 172 🟢 / 0 🟡 / 27 ⚪ of 199 (portal misc 100%, total 86%), and the global tally becomes 553 🟢 / 0 🟡 of 586. No F-ID/T-ID was added.
+
+### 37.45 Apollo adminservice item read endpoints (2026-11-20, task `#636`)
+
+Three adminservice `ItemController` read endpoints were fully implemented in
+batata but still tracked as ⚪ with no decision record; one also had a wrong
+route path. Source audit against upstream `ItemController.java` (adminservice,
+GA baseline) confirmed the contracts:
+
+| F-ID | Upstream method / path | Gap found | Resolution |
+|---|---|---|---|
+| F-APO-ITEM-006 | `findDeletedItems` `.../items/deleted` (`:207-231`) | none in code; docs-only drift | promoted 🟢; existing service derives deletions from commits at/after latest active release |
+| F-APO-ITEM-008 | `getByEncodedKey` `.../encodedItems/{key}` (`:261-267`) | batata route had an extra `/items/` segment | route fixed to canonical path; base64url decode → 400 on invalid, 404 on missing |
+| F-APO-ITEM-009 | `findItemsByNamespace` `.../items-with-page` (`:269-279`) | `web::Query<Value>` returns string values, so `as_u64()` ignored explicit `page`/`size` | added `query_usize` accepting string or numeric values; explicit params now slice correctly |
+
+**Implementation.** `crates/batata-plugin-apollo/src/route/admin.rs:3063` now
+registers `.../namespaces/{ns}/encodedItems/{key}` (no `/items/`). The new local
+`query_usize` helper (`:2445`) is used by `list_items_with_page` (`:2457`) so
+`?page=1&size=2` is honored; defaults stay page 0 / size 20 per Spring
+`Pageable`. `get_deleted_items` (`:2491`) already delegated to
+`ItemService::list_deleted_since_last_release` (`service/item_service.rs:299`),
+whose since-release commit filter matches upstream.
+
+**Verification.** `crates/batata-plugin-apollo/tests/items_semantics_test.rs`
+gains `item008_encoded_key_read_uses_canonical_path` (canonical path, invalid
+base64 → 400, missing → 404) and `item009_items_with_page_returns_page_dto_and_slices`
+(page slicing, PageDTO shape, string/numeric query, defaults). Five targeted
+mutants were all **KILLED**: wrong `encodedItems` path, base64 decode removed,
+string query parse removed, page slicing removed, since-release commit filter
+removed. Sources were byte-restored and mtime-bumped after every mutant.
+
+**Docs closeout.** `F-APO-ITEM-006/008/009` are 🟢 with source anchors; three
+derived-label HTTP_API T-IDs (`T-APO-ITEM-006-01/008-01/009-01`) are `✅ pass`.
+Apollo tallies become 175 🟢 / 0 🟡 / 24 ⚪ of 199 (adminservice items 100%,
+total 88%), test cases 391; global 556 🟢 / 0 🟡 of 586, 1066 T-IDs.

@@ -2439,6 +2439,20 @@ async fn get_item_encoded(
     }
 }
 
+/// Reads a non-negative integer query field. `web::Query<Value>` deserializes
+/// URL query values as strings, so a plain `Value::as_u64()` would silently
+/// fall back to the default and ignore explicit `page`/`size` parameters.
+fn query_usize(query: &Value, key: &str, default: usize) -> usize {
+    query
+        .get(key)
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+        })
+        .map(|n| n as usize)
+        .unwrap_or(default)
+}
+
 // F-APO-ITEM-009: Paged items listing
 async fn list_items_with_page(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
@@ -2447,8 +2461,8 @@ async fn list_items_with_page(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     // Upstream `Pageable` defaults to page 0 with a size of 20.
-    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let page = query_usize(&query, "page", 0);
+    let size = query_usize(&query, "size", 20);
     let service = ItemService::new(data.get_ref().clone());
     match service.list(&app_id, &cluster_name, &namespace_name).await {
         Ok(all_items) => {
@@ -3046,7 +3060,7 @@ pub fn configure_admin_routes(cfg: &mut actix_web::web::ServiceConfig) {
     )
     // F-APO-ITEM-008: Get item by base64 URL-encoded key
     .service(
-        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items/encodedItems/{key}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/encodedItems/{key}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
             .route(web::get().to(get_item_encoded))
     )
     // F-APO-ITEM-009: Paged items listing

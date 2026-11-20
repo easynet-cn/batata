@@ -77,12 +77,12 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-ITEM-003 | PUT `.../items/{itemId}` | | 🟢 | | update (value/type/comment) |
 | F-APO-ITEM-004 | DELETE `/items/{itemId}?operator=` | | 🟢 | | delete by id |
 | F-APO-ITEM-005 | GET `.../namespaces/{namespaceName}/items` | | 🟢 | | list |
-| F-APO-ITEM-006 | GET `.../items/deleted` | | ⚪ | | deleted since last publish |
+| F-APO-ITEM-006 | GET `.../items/deleted` | `batata-plugin-apollo` | 🟢 | | Upstream `ItemController.java:207-231` derives deleted items from commits at/after the latest active release, not currently soft-deleted items. Batata `route/admin.rs:2491` `get_deleted_items` calls `ItemService::list_deleted_since_last_release` (`service/item_service.rs:299`), which applies the same boundary; route test `items_semantics_test::item006_deleted_items_are_scoped_to_latest_release` covers both sides of a publish. |
 | F-APO-ITEM-007 | GET `.../items/{key}` | | 🟢 | | read by key |
-| F-APO-ITEM-008 | GET `.../encodedItems/{key}` | | ⚪ | | base64-key read |
-| F-APO-ITEM-009 | GET `.../items-with-page` | | ⚪ | | paged |
+| F-APO-ITEM-008 | GET `.../encodedItems/{key}` | `batata-plugin-apollo` | 🟢 | | Upstream `ItemController.java:261-267` base64url-decodes the key and reads the item. Batata `route/admin.rs:3063` registers the canonical `.../namespaces/{ns}/encodedItems/{key}` path (no intermediate `/items/`) and `get_item_encoded` (`:2400`) decodes URL_SAFE_NO_PAD then URL_SAFE; invalid base64 → 400, missing → 404. Route test `items_semantics_test::item008_encoded_key_read_uses_canonical_path`. |
+| F-APO-ITEM-009 | GET `.../items-with-page` | `batata-plugin-apollo` | 🟢 | | Upstream `ItemController.java:269-279` returns `PageDTO<ItemDTO>` (`total/content/page/size`) via Spring `Pageable` (defaults page 0/size 20). Batata `route/admin.rs:2457` `list_items_with_page` slices namespace items and accepts string or numeric `page`/`size` (`query_usize` at `:2445`); route test `items_semantics_test::item009_items_with_page_returns_page_dto_and_slices`. |
 | F-APO-ITEM-010 | GET `/items/{itemId}` | | 🟢 | | by id |
-| F-APO-ITEM-011 | GET `/items-search/key-and-value?key=&value=` | `batata-plugin-apollo` | 🟢 | | Upstream `ItemController.java:233-239` returns `PageDTO<ItemInfoDTO>` with `page/size`; batata registers the same path at `route/admin.rs:3050-3054` and reuses `SearchService` in `search_key_and_value` (`:2237-2272`). Route test `items_semantics_test.rs:140-182` covers the canonical path and PageDTO defaults. |
+| F-APO-ITEM-011 | GET `/items-search/key-and-value?key=&value=` | `batata-plugin-apollo` | 🟢 | | Upstream `ItemController.java:233-239` returns `PageDTO<ItemInfoDTO>` with `page/size`; batata registers the same path at `route/admin.rs:3073` and reuses `SearchService` in `search_key_and_value` (`:2237`). Route test `items_semantics_test.rs:140-182` covers the canonical path and PageDTO defaults. |
 | F-APO-ITEM-012 | POST `.../namespaces/{namespaceName}/itemset` | | 🟢 | | batch change (takes lock) |
 
 ## 6. adminservice — release / branch / history (`F-APO-RELEASE-`)
@@ -324,7 +324,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 2 long polling | 2 | 0 | 0 | 0 | 0 | 2 | 100% |
 | 3 metaservice | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
 | 4 adminservice apps/ns | 19 | 0 | 0 | 0 | 0 | 19 | 100% |
-| 5 adminservice items | 9 | 0 | 0 | 3 | 0 | 12 | 75% |
+| 5 adminservice items | 12 | 0 | 0 | 0 | 0 | 12 | 100% |
 | 6 adminservice release | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
 | 7 adminservice branch | 5 | 0 | 0 | 0 | 0 | 5 | 100% |
 | 8 adminservice misc | 22 | 0 | 0 | 0 | 0 | 22 | 100% |
@@ -335,7 +335,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
 | 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
 | 15 expanded openapi v1 | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
-| **Total** | 172 | 0 | 0 | 27 | 0 | 199 | 86% |
+| **Total** | 175 | 0 | 0 | 24 | 0 | 199 | 88% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >

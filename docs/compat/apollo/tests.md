@@ -184,6 +184,9 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 | T-APO-ITEM-001-01 | F-APO-ITEM-001 | testCreate | HTTP_API | ⏳ | |
 | T-APO-ITEM-003-01 | F-APO-ITEM-003 | testUpdate | HTTP_API | ⏳ | |
 | T-APO-ITEM-004-01 | F-APO-ITEM-004 | testDelete | HTTP_API | ⏳ | |
+| T-APO-ITEM-006-01 | F-APO-ITEM-006 | findDeletedItems | HTTP_API | ✅ pass | Derived label; Rust `items_semantics_test::item006_deleted_items_are_scoped_to_latest_release` |
+| T-APO-ITEM-008-01 | F-APO-ITEM-008 | getByEncodedKey | HTTP_API | ✅ pass | Derived label; Rust `items_semantics_test::item008_encoded_key_read_uses_canonical_path` |
+| T-APO-ITEM-009-01 | F-APO-ITEM-009 | findItemsByNamespace | HTTP_API | ✅ pass | Derived label; Rust `items_semantics_test::item009_items_with_page_returns_page_dto_and_slices` |
 | T-APO-ITEM-011-01 | F-APO-ITEM-011 | testSearch | HTTP_API | ✅ pass | Rust route test `items_semantics_test::item011_key_and_value_search_returns_page_dto` |
 
 ## 12. adminservice — ItemSet (`ItemSetControllerTest`)
@@ -743,7 +746,7 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 | 8 | adminservice — Clusters | 1 | 0 | 2 | 3 |
 | 9 | adminservice — AppNamespace | 1 | 0 | 0 | 1 |
 | 10 | adminservice — Namespace | 1 | 0 | 0 | 1 |
-| 11 | adminservice — Items | 4 | 0 | 0 | 4 |
+| 11 | adminservice — Items | 7 | 0 | 0 | 7 |
 | 12 | adminservice — ItemSet | 6 | 0 | 0 | 6 |
 | 13 | adminservice — Release | 1 | 0 | 1 | 2 |
 | 14 | adminservice — Server config | 6 | 0 | 0 | 6 |
@@ -775,7 +778,7 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 | 38 | SDK client — Java compatibility | 0 | 5 | 0 | 5 |
 | 39 | portal — Service tests | 0 | 0 | 5 | 5 |
 | 40 | portal — Auth/util tests | 0 | 0 | 8 | 8 |
-| **Total** | | **300** | **5** | **80** | **385** |
+| **Total** | | **303** | **5** | **80** | **388** |
 
 > **Porting priorities:**
 > - **High**: Sections 1–4 (configservice, 56 tests) — core client contract, must pass for SDK compatibility
