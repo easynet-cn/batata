@@ -6,6 +6,7 @@
 - [x] OpenTelemetry integration (OTLP export)
 - [x] Multi-datacenter support (locality-aware sync)
 - [x] Consul Connect xDS protocol (EDS, CDS, LDS, RDS, ADS; verified with real Envoy); Nacos Istio MCP `ResourceSource` + config-source ADS `ServiceEntry`, Envoy CDS/EDS/LDS/RDS, and config-tagged VirtualService → RDS on 18848 (DestinationRule remains validate-only like upstream)
+  - Explicit non-goals for Nacos Istio parity are recorded in `docs/compat/review-report.md` §37.40; they match upstream rather than representing unfinished work.
 - [x] AI Integration (MCP Server Registry, A2A Agent Registry)
 - [x] Kubernetes sync (bidirectional service sync)
 - [x] LDAP authentication
