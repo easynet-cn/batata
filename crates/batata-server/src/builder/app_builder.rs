@@ -1484,6 +1484,7 @@ async fn start_istio_mcp_if_enabled(
         domain_suffix,
         grpc_servers.naming_provider(),
         config_provider,
+        grpc_servers.config_change_notifier().clone(),
     )
     .await
     {

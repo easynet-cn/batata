@@ -476,7 +476,7 @@ pub async fn publish_config(
     {
         Ok(_) => {
             // Notify long-polling HTTP listeners about config change
-            notifier.notify_change(&namespace_id, &group, &form.data_id);
+            notifier.notify_publish(&namespace_id, &group, &form.data_id);
 
             batata_plugin::global_trace_registry().fire_detached(
                 batata_plugin::TraceEvent::ConfigPublish {

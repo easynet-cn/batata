@@ -8,10 +8,27 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, broadcast};
 
 /// Maximum number of tracked notifier entries to prevent unbounded memory growth.
 const MAX_NOTIFIER_ENTRIES: usize = 100_000;
+
+/// Capacity of the publish-only broadcast used by downstream materialized views.
+const PUBLISH_BROADCAST_CAPACITY: usize = 256;
+
+/// A successful config publish, emitted to subscribers that rebuild derived state.
+///
+/// Config deletion intentionally does not produce this event: upstream Nacos
+/// only notifies its Istio RDS projection on publish, not on delete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigPublishEvent {
+    /// Tenant (namespace) that owns the published config.
+    pub tenant: String,
+    /// Group that owns the published config.
+    pub group: String,
+    /// Data ID of the published config.
+    pub data_id: String,
+}
 
 /// A single config-key notification entry.
 ///
@@ -42,13 +59,17 @@ pub struct ConfigChangeNotifier {
     /// Map of config key -> notification entry
     /// Key format: "{tenant}+{group}+{dataId}"
     notifiers: DashMap<String, Arc<NotifyEntry>>,
+    /// Publish-only broadcast for consumers that rebuild derived snapshots.
+    publish_tx: broadcast::Sender<ConfigPublishEvent>,
 }
 
 impl ConfigChangeNotifier {
     /// Creates a new, empty `ConfigChangeNotifier`.
     pub fn new() -> Self {
+        let (publish_tx, _) = broadcast::channel(PUBLISH_BROADCAST_CAPACITY);
         Self {
             notifiers: DashMap::new(),
+            publish_tx,
         }
     }
 
@@ -97,6 +118,25 @@ impl ConfigChangeNotifier {
             entry.generation.fetch_add(1, Ordering::SeqCst);
             entry.notify.notify_waiters();
         }
+    }
+
+    /// Subscribe to successful config publishes.
+    ///
+    /// Deletions are deliberately excluded so derived Istio RDS state keeps the
+    /// upstream Nacos behavior of retaining a route until a later tagged
+    /// publish replaces the full RDS response.
+    pub fn subscribe_publishes(&self) -> broadcast::Receiver<ConfigPublishEvent> {
+        self.publish_tx.subscribe()
+    }
+
+    /// Notify waiters and publish subscribers that a config was successfully published.
+    pub fn notify_publish(&self, tenant: &str, group: &str, data_id: &str) {
+        self.notify_change(tenant, group, data_id);
+        let _ = self.publish_tx.send(ConfigPublishEvent {
+            tenant: tenant.to_string(),
+            group: group.to_string(),
+            data_id: data_id.to_string(),
+        });
     }
 
     /// Current generation counter for a config key.
@@ -249,5 +289,35 @@ mod tests {
         ];
         // Should not panic
         notifier.notify_changes(&keys);
+    }
+
+    #[tokio::test]
+    async fn test_notify_publish_broadcasts_config_key() {
+        let notifier = ConfigChangeNotifier::new();
+        let mut publishes = notifier.subscribe_publishes();
+
+        notifier.notify_publish("public", "DEFAULT_GROUP", "web.yaml");
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), publishes.recv())
+            .await
+            .expect("publish event")
+            .expect("broadcast value");
+        assert_eq!(event.tenant, "public");
+        assert_eq!(event.group, "DEFAULT_GROUP");
+        assert_eq!(event.data_id, "web.yaml");
+    }
+
+    #[tokio::test]
+    async fn test_notify_change_does_not_broadcast_publish() {
+        let notifier = ConfigChangeNotifier::new();
+        let mut publishes = notifier.subscribe_publishes();
+
+        notifier.notify_change("public", "DEFAULT_GROUP", "web.yaml");
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), publishes.recv(),)
+                .await
+                .is_err()
+        );
     }
 }

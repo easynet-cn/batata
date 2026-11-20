@@ -792,7 +792,7 @@ impl PayloadHandler for ConfigPublishHandler {
 
                 // Notify long-polling HTTP listeners about config change
                 self.config_change_notifier
-                    .notify_change(tenant, group, data_id);
+                    .notify_publish(tenant, group, data_id);
 
                 // Notify fuzzy watchers about config change (non-blocking)
                 {

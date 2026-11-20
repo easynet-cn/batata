@@ -429,7 +429,7 @@ async fn create_config(
         .await;
 
     if result.is_ok() {
-        notifier.notify_change(
+        notifier.notify_publish(
             &config_form.namespace_id,
             &config_form.group_name,
             &config_form.data_id,
@@ -527,7 +527,7 @@ async fn update_config(
         .await;
 
     if result.is_ok() {
-        notifier.notify_change(
+        notifier.notify_publish(
             &config_form.namespace_id,
             &config_form.group_name,
             &config_form.data_id,

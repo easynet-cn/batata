@@ -12,13 +12,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use batata_api::naming::NamingServiceProvider;
 use batata_common::build_service_key;
+use batata_config::ConfigChangeNotifier;
 use batata_mesh::conversion::NacosService;
 use batata_mesh::sync::SyncBridgeConfig;
 use batata_mesh::sync::{NacosServiceData, ServiceChangeEvent};
@@ -37,6 +38,7 @@ pub struct IstioMcpServerHandle {
     source_handle: Option<JoinHandle<()>>,
     config_shutdown_tx: Option<oneshot::Sender<()>>,
     config_handle: Option<JoinHandle<()>>,
+    bridge_shutdown_tx: Option<oneshot::Sender<()>>,
     bridge_handle: Option<JoinHandle<()>>,
     grpc_shutdown_tx: Option<oneshot::Sender<()>>,
     #[allow(dead_code)]
@@ -66,6 +68,9 @@ impl IstioMcpServerHandle {
         if let Some(handle) = self.config_handle.take() {
             let _ = handle.await;
         }
+        if let Some(tx) = self.bridge_shutdown_tx.take() {
+            let _ = tx.send(());
+        }
         if let Some(handle) = self.bridge_handle.take() {
             let _ = handle.await;
         }
@@ -89,6 +94,7 @@ pub async fn start_istio_mcp_service(
     domain_suffix: String,
     naming_service: Arc<dyn NamingServiceProvider>,
     config_provider: Arc<dyn IstioMcpConfigProvider>,
+    config_notifier: Arc<ConfigChangeNotifier>,
 ) -> Result<Option<IstioMcpServerHandle>, Box<dyn std::error::Error + Send + Sync>> {
     if !enabled {
         info!("Istio MCP server disabled");
@@ -126,9 +132,13 @@ pub async fn start_istio_mcp_service(
         info!("Istio MCP config source stopped");
     });
 
+    let mut publish_rx = config_notifier.subscribe_publishes();
+    let bridge_provider = config_provider.clone();
+    let bridge_notifier = config_notifier.clone();
     let bridge_server = mcp_server.clone();
     let bridge_service = service.clone();
     let xds_sync_config = SyncBridgeConfig::default();
+    let (bridge_shutdown_tx, mut bridge_shutdown_rx) = oneshot::channel();
     let bridge_handle = tokio::spawn(async move {
         let mut cache: HashMap<String, NacosServiceData> = HashMap::new();
         let mut configs: Vec<IstioConfigSourceEntry> = Vec::new();
@@ -158,6 +168,25 @@ pub async fn start_istio_mcp_service(
                 Some(entries) = config_rx.recv() => {
                     configs = entries;
                 }
+                result = publish_rx.recv() => {
+                    match result {
+                        Ok(_) => {
+                            configs = bridge_provider.load_virtual_service_configs().await;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!(
+                                skipped,
+                                "Istio MCP config publish notifications lagged; reloading configs"
+                            );
+                            configs = bridge_provider.load_virtual_service_configs().await;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            warn!("Istio MCP config publish channel closed; re-subscribing");
+                            publish_rx = bridge_notifier.subscribe_publishes();
+                        }
+                    }
+                }
+                _ = &mut bridge_shutdown_rx => break,
                 else => break,
             }
 
@@ -198,6 +227,7 @@ pub async fn start_istio_mcp_service(
         source_handle: Some(source_handle),
         config_shutdown_tx: Some(config_shutdown_tx),
         config_handle: Some(config_handle),
+        bridge_shutdown_tx: Some(bridge_shutdown_tx),
         bridge_handle: Some(bridge_handle),
         grpc_shutdown_tx: Some(grpc_shutdown_tx),
         grpc_server_handle: Some(grpc_server_handle),
@@ -233,6 +263,15 @@ mod tests {
         }
     }
 
+    struct SharedConfigProvider(Arc<std::sync::Mutex<Vec<IstioConfigSourceEntry>>>);
+
+    #[async_trait]
+    impl IstioMcpConfigProvider for SharedConfigProvider {
+        async fn load_virtual_service_configs(&self) -> Vec<IstioConfigSourceEntry> {
+            self.0.lock().expect("config lock").clone()
+        }
+    }
+
     fn instance(ip: &str, port: u16) -> Instance {
         Instance {
             instance_id: format!("{ip}:{port}"),
@@ -252,6 +291,7 @@ mod tests {
             "nacos".to_string(),
             naming,
             Arc::new(EmptyConfigProvider),
+            Arc::new(ConfigChangeNotifier::new()),
         )
         .await
         .expect("disabled startup");
@@ -278,6 +318,7 @@ mod tests {
             "nacos".to_string(),
             naming,
             Arc::new(EmptyConfigProvider),
+            Arc::new(ConfigChangeNotifier::new()),
         )
         .await
         .expect("startup")
@@ -320,6 +361,7 @@ mod tests {
             ".example.test".to_string(),
             naming,
             Arc::new(EmptyConfigProvider),
+            Arc::new(ConfigChangeNotifier::new()),
         )
         .await
         .expect("startup")
@@ -361,6 +403,7 @@ mod tests {
             "nacos".to_string(),
             naming.clone(),
             Arc::new(EmptyConfigProvider),
+            Arc::new(ConfigChangeNotifier::new()),
         )
         .await
         .expect("startup")
@@ -430,6 +473,7 @@ mod tests {
             "nacos".to_string(),
             naming.clone(),
             Arc::new(StaticConfigProvider(vec![config])),
+            Arc::new(ConfigChangeNotifier::new()),
         )
         .await
         .expect("startup")
@@ -473,6 +517,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_publish_event_pushes_snapshot_before_poll() {
+        let naming = Arc::new(NamingService::new());
+        let configs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notifier = Arc::new(ConfigChangeNotifier::new());
+
+        let handle = start_istio_mcp_service(
+            true,
+            0,
+            0,
+            "nacos".to_string(),
+            naming.clone(),
+            Arc::new(SharedConfigProvider(configs.clone())),
+            notifier.clone(),
+        )
+        .await
+        .expect("startup")
+        .expect("enabled");
+        let mut updates = handle.service().subscribe();
+
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "web",
+            instance("127.0.0.1", 8080),
+        );
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(snapshot) = updates.recv().await
+                    && snapshot.xds.clusters.contains_key("web")
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("naming source should publish the initial snapshot");
+
+        // Delete notifications are deliberately ignored by the Istio RDS bridge.
+        notifier.notify_change("public", "DEFAULT", "vs-web.yaml");
+        let deleted = timeout(Duration::from_millis(500), async {
+            loop {
+                if let Ok(snapshot) = updates.recv().await
+                    && snapshot.xds.routes.contains_key("vs-web_route_config")
+                {
+                    return snapshot;
+                }
+            }
+        })
+        .await;
+        assert!(deleted.is_err(), "delete notification must not push RDS");
+
+        *configs.lock().expect("config lock") = vec![IstioConfigSourceEntry {
+            data_id: "vs-web.yaml".to_string(),
+            group: "DEFAULT".to_string(),
+            namespace: "public".to_string(),
+            config_tags: "virtual-service".to_string(),
+            content: concat!(
+                "apiVersion: networking.istio.io/v1alpha3\n",
+                "kind: VirtualService\n",
+                "metadata:\n  name: vs-web\n",
+                "spec:\n  hosts:\n  - vs-web\n",
+                "  http:\n  - name: vs-web-api\n",
+                "    match:\n      - uri:\n          prefix: /api\n",
+                "    route:\n      - destination:\n          host: vs-web\n",
+            )
+            .to_string(),
+        }];
+        notifier.notify_publish("public", "DEFAULT", "vs-web.yaml");
+
+        let snapshot = timeout(Duration::from_millis(1_000), async {
+            loop {
+                if let Ok(snapshot) = updates.recv().await
+                    && snapshot.xds.routes.contains_key("vs-web_route_config")
+                {
+                    return snapshot;
+                }
+            }
+        })
+        .await
+        .expect("publish event must push RDS before the 5s poll");
+
+        let route = &snapshot.xds.routes["vs-web_route_config"];
+        assert_eq!(route.virtual_hosts[0].routes[0].name, "vs-web-api");
+
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn port_conflict_fails_startup_synchronously() {
         let naming = Arc::new(NamingService::new());
         let listener = TcpListener::bind("0.0.0.0:0")
@@ -487,6 +619,7 @@ mod tests {
             "nacos".to_string(),
             naming,
             Arc::new(EmptyConfigProvider),
+            Arc::new(ConfigChangeNotifier::new()),
         )
         .await
         {
