@@ -5,7 +5,7 @@ use crate::api::dto::{
 };
 use crate::auth::permission::{current_identity, permission_type};
 use crate::auth::role::{build_cluster_role_name, build_cluster_target_id};
-use crate::auth::token_scope::TokenScope;
+use crate::auth::token_scope::{TokenScope, operation as op};
 use crate::entity::apollo_user_token;
 use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::{
@@ -2720,13 +2720,40 @@ async fn disable_access_key_openapi(
     }
 }
 
+// Upstream `UserTokenPermissionValidator.APP_READ_OPERATIONS` (3.3.0 GA).
+const APP_READ_OPERATIONS: &[&str] = &[
+    op::CONFIG_READ,
+    op::CONFIG_MODIFY,
+    op::CONFIG_RELEASE,
+    op::NAMESPACE_CREATE,
+    op::NAMESPACE_DELETE,
+    op::CLUSTER_CREATE,
+    op::APP_MANAGE_ROLE,
+    op::SYSTEM_ADMIN,
+];
+
+fn is_user_token(req: &HttpRequest) -> bool {
+    req.extensions().get::<apollo_user_token::Model>().is_some()
+}
+
 // PORT-026: GET /openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/missing-namespaces
 // Find AppNamespaces defined for the app but not yet created as Namespaces in the given cluster
 async fn find_missing_namespaces_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String)>,
 ) -> impl Responder {
     let (app_id, _env, cluster_name) = path.into_inner();
+    if is_user_token(&req) {
+        let scope = crate::auth::permission::current_token_scope(&req);
+        if !APP_READ_OPERATIONS
+            .iter()
+            .any(|operation| scope.allows_operation(operation))
+            || !scope.allows_app(&app_id)
+        {
+            return forbidden("application read permission required");
+        }
+    }
     let app_ns_service = AppNamespaceService::new(data.get_ref().clone());
     let ns_service = NamespaceService::new(data.get_ref().clone());
 
@@ -2755,27 +2782,62 @@ async fn find_missing_namespaces_openapi(
         .map(|ns| ns.namespace_name)
         .collect();
 
-    let missing: Vec<String> = app_namespaces
+    let mut missing: Vec<String> = app_namespaces
         .into_iter()
         .filter(|app_ns| !existing_names.contains(&app_ns.name))
         .map(|app_ns| app_ns.name)
         .collect();
+    missing.sort();
 
     HttpResponse::Ok().json(missing)
 }
 
 // PORT-026: POST /openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/missing-namespaces
-// Create the missing namespaces
+// Create the missing namespaces and return upstream's empty 200 response.
 async fn create_missing_namespaces_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
     path: web::Path<(String, String, String)>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let (app_id, _env, cluster_name) = path.into_inner();
-    let operator = query
-        .get("operator")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    let (app_id, env, cluster_name) = path.into_inner();
+    let allowed = match um::request_has_permission(
+        &req,
+        data.get_ref(),
+        permission_type::CREATE_NAMESPACE,
+        &app_id,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(e) => return management_error(e),
+    };
+    if !allowed {
+        return forbidden("create namespace permission required");
+    }
+    if is_user_token(&req) {
+        let scope = crate::auth::permission::current_token_scope(&req);
+        if !scope.allows_namespace(&app_id, &env, &cluster_name, "") {
+            return forbidden("create namespace permission is required");
+        }
+    }
+
+    let identity = current_identity(&req);
+    let operator = match um::resolve_operator(
+        data.get_ref(),
+        &identity,
+        query.get("operator").and_then(|v| v.as_str()),
+    )
+    .await
+    {
+        Ok(operator) => operator,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            });
+        }
+    };
 
     let app_ns_service = AppNamespaceService::new(data.get_ref().clone());
     let ns_service = NamespaceService::new(data.get_ref().clone());
@@ -2810,7 +2872,6 @@ async fn create_missing_namespaces_openapi(
         .filter(|app_ns| !existing_names.contains(&app_ns.name))
         .collect();
 
-    let mut created: Vec<String> = Vec::new();
     for app_ns in missing {
         let ns_dto = NamespaceDTO {
             app_id: app_id.clone(),
@@ -2823,26 +2884,20 @@ async fn create_missing_namespaces_openapi(
             } else {
                 Some(app_ns.comment.clone())
             },
-            data_change_created_by: Some(operator.to_string()),
+            data_change_created_by: Some(operator.clone()),
             data_change_last_modified_by: None,
             data_change_created_time: None,
             data_change_last_time: None,
         };
-        match ns_service.create(&app_id, &cluster_name, ns_dto).await {
-            Ok(ns) => created.push(ns.namespace_name),
-            Err(e) => {
-                return HttpResponse::BadRequest().json(ErrorResponse {
-                    status: 400,
-                    message: format!("Failed to create namespace {}: {}", app_ns.name, e),
-                });
-            }
+        if let Err(e) = ns_service.create(&app_id, &cluster_name, ns_dto).await {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: format!("Failed to create namespace {}: {}", app_ns.name, e),
+            });
         }
     }
 
-    HttpResponse::Ok().json(serde_json::json!({
-        "created": created,
-        "count": created.len(),
-    }))
+    HttpResponse::Ok().finish()
 }
 
 /// Performs the `configure_openapi_routes` operation.

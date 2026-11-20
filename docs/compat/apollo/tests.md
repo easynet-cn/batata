@@ -420,9 +420,9 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 | T-APO-PORT-020-01 | F-APO-PORT-020 | namespaceLockShouldRejectUserTokenWithoutAssignRole | HTTP_API | ⏳ | |
 | T-APO-PORT-020-02 | F-APO-PORT-020 | namespaceLockShouldAllowAuthorizedConsumerToken | HTTP_API | ⏳ | |
 | T-APO-PORT-020-03 | F-APO-PORT-020 | namespaceLockShouldRejectUnauthorizedConsumerToken | HTTP_API | ⏳ | |
-| T-APO-PORT-026-01 | F-APO-PORT-026 | missingNamespacesShouldRejectUserTokenWithoutMetadataScope | HTTP_API | ⏭️ | Feature ⚪ |
-| T-APO-PORT-026-02 | F-APO-PORT-026 | missingNamespacesShouldAllowAuthorizedConsumerToken | HTTP_API | ⏭️ | Feature ⚪ |
-| T-APO-PORT-026-03 | F-APO-PORT-026 | missingNamespacesShouldRejectUnauthorizedConsumerToken | HTTP_API | ⏭️ | Feature ⚪ |
+| T-APO-PORT-026-01 | F-APO-PORT-026 | missingNamespacesShouldRejectUserTokenWithoutMetadataScope | HTTP_API | ✅ pass | Derived label; Rust `missing_namespaces_test::pat_metadata_scope_controls_missing_namespaces_get` |
+| T-APO-PORT-026-02 | F-APO-PORT-026 | missingNamespacesShouldAllowAuthorizedConsumerToken | HTTP_API | ✅ pass | Derived label; Rust `missing_namespaces_test::consumer_create_namespace_role_controls_missing_namespaces_post` |
+| T-APO-PORT-026-03 | F-APO-PORT-026 | missingNamespacesShouldRejectUnauthorizedConsumerToken | HTTP_API | ✅ pass | Derived label; Rust `missing_namespaces_test::consumer_create_namespace_role_controls_missing_namespaces_post` |
 
 ## 27. portal OpenAPI — Items param bind (`ItemControllerParamBindLowLevelTest`)
 
@@ -758,7 +758,7 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 | 23 | portal — Envs | 2 | 0 | 0 | 2 |
 | 24 | portal — Organizations | 2 | 0 | 0 | 2 |
 | 25 | portal — Namespace | 5 | 0 | 0 | 5 |
-| 26 | portal — Namespace param bind | 15 | 0 | 0 | 15 |
+| 26 | portal — Namespace param bind | 18 | 0 | 0 | 18 |
 | 27 | portal — Items param bind | 14 | 0 | 0 | 14 |
 | 28a | portal — Releases | 25 | 0 | 0 | 25 |
 | 28b | portal — Branches | 13 | 0 | 0 | 13 |
@@ -775,7 +775,7 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 | 38 | SDK client — Java compatibility | 0 | 5 | 0 | 5 |
 | 39 | portal — Service tests | 0 | 0 | 5 | 5 |
 | 40 | portal — Auth/util tests | 0 | 0 | 8 | 8 |
-| **Total** | | **297** | **5** | **80** | **382** |
+| **Total** | | **300** | **5** | **80** | **385** |
 
 > **Porting priorities:**
 > - **High**: Sections 1–4 (configservice, 56 tests) — core client contract, must pass for SDK compatibility

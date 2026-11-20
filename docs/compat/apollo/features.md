@@ -174,7 +174,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-PORT-023 | GET `/openapi/v1/apps/{appId}/appnamespaces` | | 🟢 | | |
 | F-APO-PORT-024 | GET `/openapi/v1/apps/{appId}/appnamespaces/{namespaceName}/usage` | `openapi_appnamespace_usage` | 🟢 | | returns `AppNamespaceUsageDTO` (envs/clusters/usedBy derived from the namespaces table). Single-tenant: every usage maps to all 4 canonical envs. |
 | F-APO-PORT-025 | GET `/openapi/v1/apps/{appId}/namespaces/releases/status` | | 🟢 | p5_batch2_test | frontend getNamespacePublishInfo — same payload as ADM-019 publish_info |
-| F-APO-PORT-026 | GET `.../missing-namespaces` | | 🟡 | p5_batch2_test | public namespaces not yet linked to cluster (GET done; POST semantics pending) |
+| F-APO-PORT-026 | GET/POST `.../missing-namespaces` | `batata-plugin-apollo` | 🟢 | missing_namespaces_test | Upstream `NamespaceController.java:227-246` requires metadata scope on GET and `CreateNamespace` plus env/cluster scope on POST; POST resolves the operator and returns an empty 200. Batata mirrors this in `route/openapi.rs:2741-2900` with sorted GET output and role/PAT guards. Three route tests cover PAT metadata scope, PAT env/cluster scope, and consumer roles. Single-tenant deployment maps every canonical env to one cluster. |
 
 ## 10. portal — items (`F-APO-PITEM-`)
 
@@ -328,14 +328,14 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 6 adminservice release | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
 | 7 adminservice branch | 5 | 0 | 0 | 0 | 0 | 5 | 100% |
 | 8 adminservice misc | 22 | 0 | 0 | 0 | 0 | 22 | 100% |
-| 9 portal apps/ns | 25 | 1 | 0 | 0 | 0 | 26 | 98% |
+| 9 portal apps/ns | 26 | 0 | 0 | 0 | 0 | 26 | 100% |
 | 10 portal items | 12 | 0 | 0 | 0 | 0 | 12 | 100% |
 | 11 portal releases | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
 | 12 portal misc | 20 | 1 | 0 | 0 | 0 | 21 | 98% |
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
 | 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
 | 15 expanded openapi v1 | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
-| **Total** | 170 | 2 | 0 | 27 | 0 | 199 | 85% |
+| **Total** | 171 | 1 | 0 | 27 | 0 | 199 | 86% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >
