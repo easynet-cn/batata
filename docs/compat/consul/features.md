@@ -3,7 +3,7 @@
 Upstream baseline: **Hashicorp Consul 2.1.0-dev** (local `~/work/github/easynet-cn/consul`, `api/` package).
 
 > Purpose & scope: track batata's Consul **compatibility** implementation status.
-> Consul's external contract is **HTTP `/v1/**` + blocking queries (long-poll)**. gRPC/8502 (Connect xDS) is implemented as an extension (CDS/EDS/LDS/RDS/ADS + intentions→RBAC; SDS/Delta/mTLS not yet) and is **not** required for ordinary SDK / `prometheus_consul_sd` / `consul-template` clients; gossip remains out of core scope.
+> Consul's external contract is **HTTP `/v1/**` + blocking queries (long-poll)**. gRPC/8502 (Connect xDS) is implemented as an extension: CDS/EDS/LDS/RDS/ADS + L4/L7 intentions→RBAC + SDS (Connect leaf/root secrets, CA persistence/rotation, mTLS transport sockets with SPIFFE URI SAN) + true incremental Delta xDS — all accepted by real Envoy v1.38 (§37.19/§37.20). It is **not** required for ordinary SDK / `prometheus_consul_sd` / `consul-template` clients; gossip remains out of core scope. Go gRPC test cases (`agent/grpc-external/`) are not ported verbatim — the 8502 data plane is verified via real-Envoy acceptance instead.
 >
 > Granularity: each row is one external HTTP contract (method + path + key query semantics). Verified against `api/*.go` request constructors.
 >
@@ -320,4 +320,4 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 > value against the ACL store, so the endpoint cannot grant privileges.
 > 11/11 compile-safe mutants killed; Agent module 96%→100%, protocol 99%→100%.
 >
-> HTTP paths verified against `api/*.go`; blocking-query + header contract is the hard interop dependency for Consul SDKs. gRPC/8502 + gossip out of scope. Update statuses per actual implementation and sync this table.
+> HTTP paths verified against `api/*.go`; blocking-query + header contract is the hard interop dependency for Consul SDKs. gRPC/8502 is an implemented Connect xDS extension (CDS/EDS/LDS/RDS/ADS + intentions→RBAC + SDS/mTLS + Delta, §37.15/§37.19/§37.20); only gossip remains out of scope. Update statuses per actual implementation and sync this table.

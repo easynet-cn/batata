@@ -5,7 +5,7 @@ Upstream baseline: **Hashicorp Consul 2.1.0-dev** (local `~/work/github/easynet-
 > Purpose: map upstream Consul test cases to batata F-IDs for compatibility tracking.
 > Test types: `HTTP_API` (agent endpoint tests), `SDK_CLIENT` (Go SDK `api/` package tests), `CLI` (command tests).
 > Internal RPC tests (`agent/consul/*_test.go`) are excluded — they test Consul's internal Go RPC layer, not the HTTP contract.
-> gRPC tests (`agent/grpc-external/`) are excluded — gRPC/8502 is out of scope for batata's Consul compatibility.
+> Go gRPC tests (`agent/grpc-external/`) are not ported verbatim; the gRPC/8502 Connect xDS data plane is implemented and verified via real-Envoy acceptance (§37.15/§37.19/§37.20), not via upstream Go test translation.
 
 Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔)
 > Last run: 2026-08-09 standalone-rock | 500 PASS / 0 FAIL / 23 SKIP

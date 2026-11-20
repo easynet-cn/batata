@@ -517,7 +517,7 @@ and `reports/regression/<timestamp>/report.md`. The Nacos `tests.md` keeps a
 - **Strategy**: adapt upstream tests to point at batata server; fix batata bugs when tests fail; keep the port-status column and the Summary table in sync
 - **Scope exclusions**:
   - Nacos: internal unit tests (`@RunWith(MockitoJUnitRunner.class)`) excluded
-  - Consul: internal RPC tests (`agent/consul/*_test.go`) and gRPC tests (`agent/grpc-external/*`) excluded — gRPC/8502 out of scope
+  - Consul: internal RPC tests (`agent/consul/*_test.go`) excluded; Go gRPC tests (`agent/grpc-external/*`) not ported verbatim — gRPC/8502 Connect xDS is implemented and verified via real-Envoy acceptance (§37.15/§37.19/§37.20)
   - Apollo: pure Mockito unit tests and AOP aspect tests listed as INTERNAL (not ported)
 
 The per-module Summary tables at the bottom of `consul/tests.md` (255 cases)
@@ -676,7 +676,7 @@ A module = a composable feature domain from the upstream project (not a server p
 
 > **Nacos HTTP path families**: most `console-ui-next` calls use `v3/console/**` (config `v3/console/cs/**`, naming `v3/console/ns/**`, core/namespace/plugin `v3/console/{core,server,plugin}/**`, auth `v3/auth/**`), plus a dedicated AI console surface `v3/console/ai/**` and copilot `v3/console/copilot/**`. Admin API (`v3/admin/**`) is used by the maintainer SDK and open platform. Client API (`v3/client/**`) is the SDK v2 HTTP fallback. All three surfaces are tracked in features.md.
 
-> **Consul surface**: external contract is HTTP `/v1/**` + **blocking queries** (`?index=&wait=` long-poll, `?stale/consistent/cached`) and headers `X-Consul-Index` / `X-Consul-ContentHash`. Agent-local registration (`/v1/agent/service/register`) syncs to catalog (`/v1/catalog/*`) and is aggregated into `/v1/health/*`. gRPC (8502, Connect xDS) is implemented as an extension (CDS/EDS/LDS/RDS/ADS + L4/L7 intentions→RBAC; SDS/Delta/mTLS not yet); gossip remains out of core scope. ACL via `X-Consul-Token`.
+> **Consul surface**: external contract is HTTP `/v1/**` + **blocking queries** (`?index=&wait=` long-poll, `?stale/consistent/cached`) and headers `X-Consul-Index` / `X-Consul-ContentHash`. Agent-local registration (`/v1/agent/service/register`) syncs to catalog (`/v1/catalog/*`) and is aggregated into `/v1/health/*`. gRPC (8502, Connect xDS) is an implemented extension (CDS/EDS/LDS/RDS/ADS + L4/L7 intentions→RBAC + SDS/mTLS + true incremental Delta, all real-Envoy accepted, §37.19/§37.20); gossip remains out of core scope. ACL via `X-Consul-Token`.
 
 ### Consul (consul)
 

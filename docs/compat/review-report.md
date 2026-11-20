@@ -3502,3 +3502,32 @@ removed. Sources were byte-restored and mtime-bumped after every mutant.
 derived-label HTTP_API T-IDs (`T-APO-ITEM-006-01/008-01/009-01`) are `✅ pass`.
 Apollo tallies become 175 🟢 / 0 🟡 / 24 ⚪ of 199 (adminservice items 100%,
 total 88%), test cases 391; global 556 🟢 / 0 🟡 of 586, 1066 T-IDs.
+
+### 37.46 Consul Connect mesh docs drift closeout (2026-11-20, task `#637`)
+
+A user question ("mesh 的功能已经全面对齐了？") prompted a source audit of the
+gRPC/8502 Connect xDS extension. The audit found **no functional gap** — only
+stale documentation.
+
+**Evidence chain (all committed ancestors of HEAD):**
+- SDS + Connect CA persistence/rotation + mTLS transport sockets with SPIFFE URI
+  SAN: committed in `63beb6a6` (§37.19), 19 tests, 13/13 mutants killed, real
+  Envoy v1.38 `/config_dump` showed exactly `connect-leaf` + `connect-root`,
+  clusters/listeners carried `envoy.transport_sockets.tls`, no NACK.
+- True incremental Delta xDS on the live ADS path: committed in `c1a4514b`
+  (§37.20), 16/16 mutants killed, real Envoy `DELTA_GRPC` reached worker startup
+  with `sha256:` per-resource versions, no NACK.
+- L4/L7 intentions→RBAC: committed in `2b3cee29` (§37.15), real Envoy accepted
+  DENY/ALLOW policies and SPIFFE principal regex.
+- Runtime wiring verified in source: `plugin.rs:1091` `with_connect_ca(...)` and
+  `:1117` `start_xds_grpc_server_on_listener(...)` bind the configured
+  `grpc_port` (8502); `ConsulSyncBridge` rebuilds per-proxy snapshots on CA
+  revision changes and attaches SDS secrets + downstream/upstream mTLS sockets.
+
+**Doc drift fixed.** Five statements still claimed `SDS/Delta/mTLS not yet` or
+`gRPC/8502 out of scope`: `consul/features.md` scope note + §10 footnote,
+`consul/tests.md` header, `compat/README.md` scope-exclusions + Consul-surface
+note. All now state the 8502 extension is implemented and real-Envoy accepted,
+and explicitly separate "upstream Go gRPC cases not ported verbatim" from
+"feature missing". No F-ID / T-ID status or tally changed (Connect mesh stays
+16 🟢 / 16). No code, test, version, tag, or `batata-ui` change; docs-only.
