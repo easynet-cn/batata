@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 // ==================== ACL Token Tests ====================
 
 // CACL-001: Test create ACL token
@@ -55,7 +54,8 @@ func TestACLTokenRead(t *testing.T) {
 
 	// Read
 	read, _, err := client.ACL().TokenRead(created.AccessorID, nil)
-	assert.NoError(t, err, "Token read should succeed")
+	require.NoError(t, err, "Token read should succeed")
+	require.NotNil(t, read, "Token read must return a token")
 	assert.Equal(t, created.AccessorID, read.AccessorID)
 	assert.Equal(t, token.Description, read.Description)
 }
@@ -150,7 +150,8 @@ func TestACLPolicyRead(t *testing.T) {
 
 	// Read
 	read, _, err := client.ACL().PolicyRead(created.ID, nil)
-	assert.NoError(t, err, "Policy read should succeed")
+	require.NoError(t, err, "Policy read should succeed")
+	require.NotNil(t, read, "Policy read must return a policy")
 	assert.Equal(t, created.ID, read.ID)
 	assert.Equal(t, policy.Name, read.Name)
 }
@@ -239,7 +240,8 @@ func TestACLRoleRead(t *testing.T) {
 
 	// Read
 	read, _, err := client.ACL().RoleRead(created.ID, nil)
-	assert.NoError(t, err, "Role read should succeed")
+	require.NoError(t, err, "Role read should succeed")
+	require.NotNil(t, read, "Role read must return a role")
 	assert.Equal(t, created.ID, read.ID)
 }
 
@@ -261,7 +263,8 @@ func TestACLRoleUpdate(t *testing.T) {
 	// Update
 	created.Description = "Updated description"
 	updated, _, err := client.ACL().RoleUpdate(created, nil)
-	assert.NoError(t, err, "Role update should succeed")
+	require.NoError(t, err, "Role update should succeed")
+	require.NotNil(t, updated, "Role update must return a role")
 	assert.Equal(t, "Updated description", updated.Description)
 }
 
@@ -389,6 +392,7 @@ func TestACLTokenUpdate(t *testing.T) {
 	created.Description = "Updated description"
 	updated, _, err := client.ACL().TokenUpdate(created, nil)
 	require.NoError(t, err, "Token update should succeed")
+	require.NotNil(t, updated, "Token update must return a token")
 	assert.Equal(t, "Updated description", updated.Description, "Description should be updated")
 	assert.Equal(t, created.AccessorID, updated.AccessorID, "AccessorID should not change")
 	assert.Equal(t, created.SecretID, updated.SecretID, "SecretID should not change")
@@ -1688,8 +1692,15 @@ func TestACLPolicyNameUniqueness(t *testing.T) {
 		"Creating a policy with duplicate name must fail (Consul enforces unique names)")
 }
 
-// CACL-STRICT-002: Test ACL token SecretID visibility
-// SecretID should be returned on create, but NOT in list responses
+// CACL-STRICT-002: Test ACL token SecretID visibility.
+//
+// Upstream Consul (agent/structs/aclfilter/filter.go filterTokenStub) redacts
+// SecretID to "<hidden>" ONLY for callers lacking acl:write. A caller holding
+// acl:write (the SDK's root token) sees the real SecretID in list responses —
+// the list stub carries SecretID and the filter leaves it intact for writers.
+// This mirrors TokenRead. The old assertion that list ALWAYS hides SecretID
+// contradicted upstream and was fixed in the SDK once batata aligned its ACL
+// control plane (commit 3874d341).
 func TestACLTokenSecretIDVisibility(t *testing.T) {
 	client := getClient(t)
 
@@ -1709,18 +1720,22 @@ func TestACLTokenSecretIDVisibility(t *testing.T) {
 	assert.NotEmpty(t, created.AccessorID,
 		"AccessorID must be returned when creating a token")
 
-	// SecretID should NOT be in list responses
+	// With acl:write (root), the list stub must expose the real SecretID,
+	// matching upstream's filterTokenStub behavior.
 	tokens, _, err := client.ACL().TokenList(nil)
 	require.NoError(t, err)
 
+	found := false
 	for _, tok := range tokens {
 		if tok.AccessorID == created.AccessorID {
-			assert.Empty(t, tok.SecretID,
-				"SecretID must NOT be visible in token list response "+
-					"(Consul hides SecretID in list for security)")
+			found = true
+			assert.Equal(t, created.SecretID, tok.SecretID,
+				"acl:write caller must see the real SecretID in token list "+
+					"(upstream Consul filterTokenStub leaves it intact for writers)")
 			break
 		}
 	}
+	assert.True(t, found, "created token must appear in the list response")
 }
 
 // CACL-STRICT-003: Test ACL policy create with full field validation

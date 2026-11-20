@@ -206,7 +206,8 @@ func TestQueryExecute(t *testing.T) {
 
 	// Execute
 	result, _, err := client.PreparedQuery().Execute(queryID, nil)
-	assert.NoError(t, err, "Query execute should succeed")
+	require.NoError(t, err, "Query execute should succeed")
+	require.NotNil(t, result, "Query execute must return a result")
 	assert.NotEmpty(t, result.Nodes, "Should find service nodes")
 
 	t.Logf("Query returned %d nodes", len(result.Nodes))
@@ -241,7 +242,8 @@ func TestQueryExecuteByName(t *testing.T) {
 
 	// Execute by name
 	result, _, err := client.PreparedQuery().Execute(queryName, nil)
-	assert.NoError(t, err, "Query execute by name should succeed")
+	require.NoError(t, err, "Query execute by name should succeed")
+	require.NotNil(t, result, "Query execute must return a result")
 
 	t.Logf("Query by name returned %d nodes", len(result.Nodes))
 }

@@ -246,12 +246,9 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
             }
         }
 
-        // Convert ConsulRaftResponse -> RaftResponse
-        if consul_resp.success {
-            RaftResponse::success()
-        } else {
-            RaftResponse::failure(consul_resp.message.unwrap_or_default())
-        }
+        // Keep the FSM payload intact: KVTransaction returns the full TxnResult
+        // here, and the HTTP handler cannot serve /v1/txn without it.
+        raft_response_from_consul(consul_resp)
     }
 
     fn build_snapshot(&self, db: &DB) -> Result<Vec<u8>, String> {
@@ -1459,6 +1456,30 @@ pub struct ConsulRaftWriter {
     core_raft: Arc<RaftNode>,
 }
 
+/// Convert a core Raft response without losing the state machine's payload.
+///
+/// The FSM returns `data` for operations whose result is not just a boolean
+/// (e.g. `KVTransaction` returns the whole `TxnResult`). Collapsing every
+/// success to `ConsulRaftResponse::success()` silently empties that payload
+/// and makes cluster-mode writes such as `/v1/txn` fail with 503 even though
+/// the entry was committed on every node.
+fn consul_response_from_raft(resp: RaftResponse) -> ConsulRaftResponse {
+    ConsulRaftResponse {
+        success: resp.success,
+        data: resp.data,
+        message: resp.message,
+    }
+}
+
+/// Inverse conversion at the FSM boundary; the same payload must survive.
+fn raft_response_from_consul(resp: ConsulRaftResponse) -> RaftResponse {
+    RaftResponse {
+        success: resp.success,
+        data: resp.data,
+        message: resp.message,
+    }
+}
+
 impl ConsulRaftWriter {
     /// The `new` associated function.
     pub fn new(core_raft: Arc<RaftNode>) -> Self {
@@ -1482,13 +1503,7 @@ impl ConsulRaftWriter {
 
         let (resp, log_index) = self.core_raft.write_with_index(raft_request).await?;
 
-        let consul_resp = if resp.success {
-            ConsulRaftResponse::success()
-        } else {
-            ConsulRaftResponse::failure(resp.message.unwrap_or_default())
-        };
-
-        Ok((consul_resp, log_index))
+        Ok((consul_response_from_raft(resp), log_index))
     }
 
     /// Write without returning the log index (convenience method).
@@ -1526,6 +1541,15 @@ impl ConsulRaftWriter {
     /// Used by consistent-read redirect path.
     pub fn leader_addr(&self) -> Option<String> {
         self.core_raft.leader_addr()
+    }
+
+    /// Get this node's own Raft listener address.
+    ///
+    /// Read forwarding uses the port delta between the leader's address and
+    /// this address to derive the leader's Consul HTTP port. Taking the real
+    /// address avoids depending on any assumed `main_port - 1000` derivation.
+    pub fn local_addr(&self) -> &str {
+        self.core_raft.addr()
     }
 }
 
@@ -2004,5 +2028,39 @@ mod tests {
         let response = apply_consul_request(&db, &table_index, conflict, 51);
         assert!(!response.success);
         assert_eq!(table_index.current_index(ConsulTable::KVS), 50);
+    }
+
+    #[test]
+    fn writer_preserves_fsm_result_data_and_message() {
+        // KVTransaction is the reason this exists: its FSM result carries the
+        // TxnResult in `data`. Dropping it makes the HTTP /v1/txn handler
+        // report "transaction response missing result data" -> 503 on cluster.
+        let payload = br#"{"Results":[],"Errors":null}"#.to_vec();
+        let ok = consul_response_from_raft(RaftResponse {
+            success: true,
+            data: Some(payload.clone()),
+            message: None,
+        });
+        assert!(ok.success);
+        assert_eq!(ok.data, Some(payload.clone()));
+        assert_eq!(ok.message, None);
+
+        let failed = consul_response_from_raft(RaftResponse {
+            success: false,
+            data: Some(vec![1, 2, 3]),
+            message: Some("CAS conflict".to_string()),
+        });
+        assert!(!failed.success);
+        assert_eq!(failed.data, Some(vec![1, 2, 3]));
+        assert_eq!(failed.message.as_deref(), Some("CAS conflict"));
+
+        // The FSM -> core Raft conversion must not drop the same payload.
+        let round_trip = raft_response_from_consul(ConsulRaftResponse {
+            success: true,
+            data: Some(payload.clone()),
+            message: None,
+        });
+        assert!(round_trip.success);
+        assert_eq!(round_trip.data, Some(payload.clone()));
     }
 }

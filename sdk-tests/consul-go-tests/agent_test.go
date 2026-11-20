@@ -169,8 +169,8 @@ func TestAgentServiceDetail(t *testing.T) {
 
 	// Get service detail
 	service, _, err := client.Agent().Service(serviceID, nil)
-	assert.NoError(t, err)
-	assert.NotNil(t, service)
+	require.NoError(t, err)
+	require.NotNil(t, service)
 	assert.Equal(t, "detail-service", service.Service)
 	assert.Equal(t, 9090, service.Port)
 	assert.Equal(t, "10.0.0.1", service.Address)

@@ -9,11 +9,17 @@
 //!
 //! Batata has no HTTP-level leader forwarding in the core cluster RPC path, so
 //! this module provides it at the Consul `/v1` scope. Followers proxy non-stale
-//! GET/HEAD requests to the leader's Consul HTTP endpoint; the leader runs a
-//! Raft ReadIndex barrier only for `?consistent`. `?stale` stays local. Local
-//! agent state, gossip state, snapshots and status endpoints are excluded
-//! because upstream serves them on the contacted agent rather than forwarding
-//! them to the leader.
+//! GET/HEAD requests **for Raft-replicated state** (KV and sessions) to the
+//! leader's Consul HTTP endpoint; the leader runs a Raft ReadIndex barrier only
+//! for `?consistent`. `?stale` stays local.
+//!
+//! Upstream can proxy every read because its whole FSM is replicated to every
+//! server. Batata only replicates a subset: ACL entities, namespaces,
+//! partitions, autopilot config, config entries, catalog/health views and agent
+//! state still live on the contacted node (catalog/health additionally resolve
+//! the local node identity). Proxying those to another server returns 404 or
+//! stale data, so they are served locally. This is a deliberate parity gap;
+//! forwarding is restricted to the prefixes below rather than all `/v1`.
 
 use std::future::{Ready, ready};
 use std::pin::Pin;
@@ -38,13 +44,43 @@ pub const FORWARDED_BY_HEADER: &str = "x-batata-consul-forwarded-by";
 const FORWARD_TIMEOUT: Duration = Duration::from_secs(610);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-const LOCAL_ONLY_PREFIXES: [&str; 5] = [
+/// Only these surfaces are backed by the Raft-replicated Consul FSM on every
+/// node. A different server can answer their reads correctly; all other `/v1`
+/// reads must stay on the contacted node (see the module docs).
+const LEADER_READ_PREFIXES: [&str; 3] = ["/v1/kv/", "/v1/session/", "/v1/txn"];
+
+fn is_leader_read_path(path: &str) -> bool {
+    LEADER_READ_PREFIXES.iter().any(|p| path.starts_with(p))
+}
+
+const LOCAL_ONLY_PREFIXES: [&str; 11] = [
     "/v1/agent/",
     "/v1/status/",
     "/v1/event/",
     "/v1/snapshot",
     "/v1/coordinate/",
+    // These keep per-node in-memory state (or a memory-backed ACL store when
+    // ACL is disabled). Catalog/health views additionally resolve the
+    // *contacted* node's identity, so a different server cannot answer them.
+    "/v1/acl/",
+    "/v1/namespace",
+    "/v1/partition",
+    "/v1/operator/autopilot/",
+    "/v1/catalog/",
+    "/v1/health/",
 ];
+
+/// Request headers that must not be replayed verbatim when proxying.
+///
+/// The caller's `Accept-Encoding: gzip` would make the leader compress the
+/// response. The proxy strips `Content-Encoding` on the way back (the body is
+/// already decoded by reqwest), so the SDK would then receive gzip bytes with
+/// no encoding header and fail to parse them as JSON. Only `identity` is sent.
+const SUPPRESSED_REQUEST_HEADERS: [&str; 1] = ["accept-encoding"];
+
+fn should_copy_forward_header(name: &str) -> bool {
+    !HOP_BY_HOP_HEADERS.contains(&name) && !SUPPRESSED_REQUEST_HEADERS.contains(&name)
+}
 
 const HOP_BY_HOP_HEADERS: [&str; 9] = [
     "connection",
@@ -134,34 +170,65 @@ fn should_forward(method: &Method, path: &str, decision: ConsistencyDecision) ->
     decision.forward
         && matches!(*method, Method::GET | Method::HEAD)
         && path.starts_with("/v1/")
+        && is_leader_read_path(path)
         && !is_local_only_path(path)
 }
 
-/// Convert a Raft listener address to the paired Consul HTTP address.
-///
-/// Batata derives Raft ports as `http_port - 1000`, so the inverse mapping is
-/// `raft_port + 1000`. IPv6 bracket forms hostnames are both handled.
-pub fn raft_addr_to_http_addr(raft_addr: &str) -> Option<String> {
-    if raft_addr.is_empty() {
+/// Split a Raft `host:port` address, normalising IPv6 brackets away.
+fn split_host_port(addr: &str) -> Option<(String, u16)> {
+    if addr.is_empty() {
         return None;
     }
-
-    if let Ok(socket) = raft_addr.parse::<std::net::SocketAddr>() {
-        let port = socket.port().checked_add(1000)?;
-        let ip = socket.ip();
-        return Some(match ip {
-            std::net::IpAddr::V6(_) => format!("[{}]:{}", ip, port),
-            std::net::IpAddr::V4(_) => format!("{}:{}", ip, port),
-        });
+    if let Ok(socket) = addr.parse::<std::net::SocketAddr>() {
+        return Some((socket.ip().to_string(), socket.port()));
     }
-
-    let (host, port) = raft_addr.rsplit_once(':')?;
+    let (host, port) = addr.rsplit_once(':')?;
     let port: u16 = port.parse().ok()?;
     let host = host.trim_start_matches('[').trim_end_matches(']');
     if host.is_empty() {
         return None;
     }
-    Some(format!("{}:{}", host, port.checked_add(1000)?))
+    Some((host.to_string(), port))
+}
+
+/// Re-attach a port to a host, restoring IPv6 brackets when needed.
+fn join_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Convert a Raft listener address to the paired Batata **main** HTTP address.
+///
+/// Raft ports are derived as `main_port - 1000`, so the inverse is
+/// `raft_port + 1000`. This yields the Nacos-facing listener (8848 by default),
+/// NOT the Consul compatibility listener (8500 by default). Read forwarding
+/// must use [`raft_addr_to_consul_addr`] instead — forwarding a Consul `/v1/**`
+/// request here returns 404 because the main listener has no such routes.
+pub fn raft_addr_to_http_addr(raft_addr: &str) -> Option<String> {
+    let (host, port) = split_host_port(raft_addr)?;
+    Some(join_host_port(&host, port.checked_add(1000)?))
+}
+
+/// Convert the leader's Raft address to its **Consul** HTTP address.
+///
+/// Cluster nodes step every listener by the same delta (e.g. node 1 uses
+/// 7848/8500, node 2 7858/8510), so the leader's Consul port is the local
+/// Consul port plus the Raft port delta. Using the real local Raft address
+/// keeps this correct for any node layout without a hard-coded offset.
+pub fn raft_addr_to_consul_addr(
+    leader_raft_addr: &str,
+    local_raft_addr: &str,
+    local_consul_port: u16,
+) -> Option<String> {
+    let (host, leader_raft_port) = split_host_port(leader_raft_addr)?;
+    let (_, local_raft_port) = split_host_port(local_raft_addr)?;
+    let delta = i32::from(leader_raft_port) - i32::from(local_raft_port);
+    let consul_port = i32::from(local_consul_port).checked_add(delta)?;
+    let consul_port = u16::try_from(consul_port).ok()?;
+    Some(join_host_port(&host, consul_port))
 }
 
 /// Abstraction over Raft leader state used by the forwarding middleware.
@@ -181,16 +248,21 @@ pub trait ConsulReadPolicy: Send + Sync {
 pub struct RaftReadPolicy {
     raft: Option<Arc<ConsulRaftWriter>>,
     node_id: String,
+    /// This node's Consul compatibility HTTP port (e.g. 8500).
+    consul_port: u16,
 }
 
 impl RaftReadPolicy {
     /// Build a policy. Standalone nodes pass `None` and never forward.
-    pub fn new(raft: Option<Arc<ConsulRaftWriter>>, node_id: String) -> Self {
-        Self { raft, node_id }
-    }
-
-    fn raft_addr(&self) -> Option<String> {
-        self.raft.as_ref()?.leader_addr()
+    ///
+    /// `consul_port` is required (no default) so a caller cannot silently
+    /// forward to the wrong listener on a non-default cluster node.
+    pub fn new(raft: Option<Arc<ConsulRaftWriter>>, node_id: String, consul_port: u16) -> Self {
+        Self {
+            raft,
+            node_id,
+            consul_port,
+        }
     }
 }
 
@@ -208,7 +280,8 @@ impl ConsulReadPolicy for RaftReadPolicy {
     }
 
     fn leader_http_addr(&self) -> Option<String> {
-        raft_addr_to_http_addr(&self.raft_addr()?)
+        let raft = self.raft.as_ref()?;
+        raft_addr_to_consul_addr(&raft.leader_addr()?, raft.local_addr(), self.consul_port)
     }
 
     async fn verify_leader(&self) -> Result<(), LinearizableReadError> {
@@ -291,7 +364,7 @@ fn copy_forward_headers(req: &ServiceRequest) -> (Vec<(String, String)>, bool) {
             already_forwarded = true;
             continue;
         }
-        if HOP_BY_HOP_HEADERS.contains(&name) {
+        if !should_copy_forward_header(name) {
             continue;
         }
         if let Ok(value) = value.to_str() {
@@ -449,7 +522,10 @@ where
             });
         }
 
-        if decision.verify {
+        // `?consistent` only has meaning for Raft-replicated state. For
+        // node-local surfaces the ReadIndex barrier would reject the follower
+        // outright, even though the contacted node can answer correctly.
+        if decision.verify && is_leader_read_path(&path) {
             return Box::pin(async move {
                 if let Err(e) = policy.verify_leader().await {
                     return Ok(req
@@ -493,6 +569,68 @@ mod tests {
         );
         assert_eq!(raft_addr_to_http_addr("node-a"), None);
         assert_eq!(raft_addr_to_http_addr("node-a:65500"), None);
+    }
+
+    #[test]
+    fn maps_leader_raft_addr_to_consul_port() {
+        // Leader is this node: stay on the local Consul listener.
+        assert_eq!(
+            raft_addr_to_consul_addr("127.0.0.1:7848", "127.0.0.1:7848", 8500).as_deref(),
+            Some("127.0.0.1:8500")
+        );
+        // Node 1 forwards to a leader on node 2 (both listeners step by 10).
+        assert_eq!(
+            raft_addr_to_consul_addr("127.0.0.1:7858", "127.0.0.1:7848", 8500).as_deref(),
+            Some("127.0.0.1:8510")
+        );
+        // Node 2 forwards back to a leader on node 1 (negative delta).
+        assert_eq!(
+            raft_addr_to_consul_addr("127.0.0.1:7848", "127.0.0.1:7858", 8510).as_deref(),
+            Some("127.0.0.1:8500")
+        );
+        // IPv6 and hostname forms keep their syntax.
+        assert_eq!(
+            raft_addr_to_consul_addr("[::1]:7858", "[::1]:7848", 8500).as_deref(),
+            Some("[::1]:8510")
+        );
+        assert_eq!(
+            raft_addr_to_consul_addr("node-b:7858", "node-a:7848", 8500).as_deref(),
+            Some("node-b:8510")
+        );
+        // Malformed addresses and out-of-range ports fail closed.
+        assert_eq!(
+            raft_addr_to_consul_addr("node-b", "node-a:7848", 8500),
+            None
+        );
+        assert_eq!(
+            raft_addr_to_consul_addr("127.0.0.1:7858", "127.0.0.1:7848", 65530),
+            None
+        );
+    }
+
+    #[test]
+    fn consul_forwarding_never_targets_main_http_port() {
+        // Forwarding a Consul /v1/** read to the main listener (raft + 1000)
+        // yields 404: that listener has no Consul routes. The two mappings
+        // must stay distinct for every cluster node.
+        for (leader_raft, main_http, consul_http) in [
+            ("127.0.0.1:7848", "127.0.0.1:8848", "127.0.0.1:8500"),
+            ("127.0.0.1:7858", "127.0.0.1:8858", "127.0.0.1:8510"),
+            ("127.0.0.1:7868", "127.0.0.1:8868", "127.0.0.1:8520"),
+        ] {
+            assert_eq!(
+                raft_addr_to_http_addr(leader_raft).as_deref(),
+                Some(main_http)
+            );
+            assert_eq!(
+                raft_addr_to_consul_addr(leader_raft, "127.0.0.1:7848", 8500).as_deref(),
+                Some(consul_http)
+            );
+            assert_ne!(
+                raft_addr_to_consul_addr(leader_raft, "127.0.0.1:7848", 8500),
+                raft_addr_to_http_addr(leader_raft)
+            );
+        }
     }
 
     #[test]
@@ -560,12 +698,69 @@ mod tests {
         assert!(!should_forward(&Method::GET, "/v1/status/leader", decision));
         assert!(!should_forward(&Method::POST, "/v1/kv/key", decision));
         assert!(should_forward(&Method::GET, "/v1/kv/key", decision));
-        assert!(should_forward(
+        assert!(should_forward(&Method::HEAD, "/v1/session/list", decision));
+        assert!(!should_forward(
             &Method::HEAD,
             "/v1/catalog/services",
             decision
         ));
         assert!(is_agent_local_path("/v1/agent/self"));
+    }
+
+    #[test]
+    fn node_local_state_paths_are_not_proxied() {
+        let decision = ConsistencyDecision {
+            forward: true,
+            verify: false,
+            consistency: "leader",
+        };
+        // Writes to these endpoints land on the contacted node only. Proxying
+        // the subsequent read to a different node returns 404 / stale data.
+        for path in [
+            "/v1/acl/token/abc",
+            "/v1/acl/tokens",
+            "/v1/acl/policies",
+            "/v1/namespace/team-a",
+            "/v1/namespaces",
+            "/v1/partition/team-a",
+            "/v1/partitions",
+            "/v1/operator/autopilot/configuration",
+            "/v1/catalog/node/c1",
+            "/v1/catalog/services",
+            "/v1/health/service/web",
+            "/v1/health/state/critical",
+            "/v1/config/service-defaults/web",
+            "/v1/config",
+            "/v1/query/abc",
+            "/v1/operator/raft/configuration",
+            "/v1/connect/ca/roots",
+        ] {
+            assert!(
+                !should_forward(&Method::GET, path, decision),
+                "{path} must be served by the contacted node"
+            );
+        }
+        // Only Raft-replicated KV/session state goes to the leader.
+        for path in [
+            "/v1/kv/app",
+            "/v1/kv/app?recurse",
+            "/v1/session/info/abc",
+            "/v1/session/list",
+            "/v1/txn",
+        ] {
+            assert!(
+                should_forward(&Method::GET, path, decision),
+                "{path} must still be forwarded"
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_never_replays_client_accept_encoding() {
+        assert!(!should_copy_forward_header("accept-encoding"));
+        assert!(!should_copy_forward_header("connection"));
+        assert!(should_copy_forward_header("x-consul-token"));
+        assert!(should_copy_forward_header("x-consul-index"));
     }
 
     struct FakePolicy {

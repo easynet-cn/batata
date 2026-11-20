@@ -445,7 +445,7 @@ func TestCatalogNodeServiceListFilter(t *testing.T) {
 		t.Skipf("Node service list filter not available: %v", err)
 	}
 
-	assert.NotNil(t, services, "Node service list should not be nil")
+	require.NotNil(t, services, "Node service list should not be nil")
 	t.Logf("Filtered services on node: %d", len(services.Services))
 }
 

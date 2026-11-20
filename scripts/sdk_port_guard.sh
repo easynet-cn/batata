@@ -11,8 +11,11 @@
 # `clear` owns the SDK ports before startup; `verify` proves the Apollo
 # endpoint really is batata before any suite is allowed to run.
 
-SDK_PORT_LIST=(8848 8858 8868 8081 8082 8083 8080 8500 8510 8520 \
+SDK_PORT_LIST=(8848 8858 8868 8081 8082 8083 8080 8500 8502 8510 8520 \
                18080 18090 18100 9848 9858 9868 9849 9859 9869 7848 7858 7868)
+# 8502 is the Consul Connect xDS gRPC listener (wired by the SDS/CA work).
+# A stale xDS listener here makes a fresh batata bind fail with
+# "Address already in use", so it must be cleared like the HTTP ports.
 
 sdk_ports_clear() {
     local port

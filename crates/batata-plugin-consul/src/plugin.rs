@@ -283,10 +283,17 @@ impl ConsulPlugin {
         index_provider: ConsulIndexProvider,
     ) -> ConsulPluginInner {
         let lock_delay = ConsulLockDelay::default();
-        let session = ConsulSessionService::new()
-            .with_node_name(self.dc_config.node_name.clone())
-            .with_lock_delay(lock_delay.clone());
-        let kv = ConsulKVService::new().with_lock_delay(lock_delay);
+        // Share one in-memory RocksDB between session and KV services.
+        // `apply_session_destroy` scans the `kidx:` session-to-key index that
+        // KV lock acquisition writes; if the two services owned separate temp
+        // DBs that index was invisible and destroying a session left KV locks
+        // held, so Go SDK lock monitors never saw the leader channel close.
+        let (shared_db, shared_db_dir) = crate::kv::open_temp_consul_db();
+        let session =
+            ConsulSessionService::with_rocks_and_tempdir(shared_db.clone(), shared_db_dir)
+                .with_node_name(self.dc_config.node_name.clone())
+                .with_lock_delay(lock_delay.clone());
+        let kv = ConsulKVService::with_rocks(shared_db).with_lock_delay(lock_delay);
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
         let peering = Arc::new(ConsulPeeringService::new());
         let config_entry = ConsulConfigEntryService::new();
@@ -784,6 +791,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             std::sync::Arc::new(crate::read_consistency::RaftReadPolicy::new(
                 inner.raft_writer.clone(),
                 inner.dc_config.node_id.clone(),
+                inner.dc_config.consul_port,
             ));
 
         cfg.app_data(actix_web::web::Data::from(inner.naming_store.clone()))
@@ -1404,6 +1412,63 @@ mod tests {
             after > before,
             "health change must advance the index observed by HTTP blocking queries"
         );
+    }
+
+    #[tokio::test]
+    async fn standalone_session_destroy_releases_kv_lock() {
+        // Regression: `build_inner_standalone` used to give session and KV
+        // services separate temporary RocksDBs. `apply_session_destroy` scans
+        // the `kidx:` session-to-key index written by KV lock acquisition;
+        // with separate DBs the index was invisible, so destroying a session
+        // left the KV key's Session set and Go SDK lock monitors never saw the
+        // leader channel close (15s timeout in the Consul matrix).
+        let plugin = ConsulPlugin::from_plugin_config(ConsulPluginConfig {
+            enabled: true,
+            dc_config: ConsulDatacenterConfig::new("dc1".to_string()),
+            ..ConsulPluginConfig::default()
+        });
+        let index = ConsulIndexProvider::new();
+        let store = Arc::new(crate::naming_store::ConsulNamingStore::new());
+        let handler = Arc::new(crate::result_handler::ConsulResultHandler::new(
+            store.clone(),
+            Arc::new(index.clone()),
+        ));
+        let registry = Arc::new(InstanceCheckRegistry::new(
+            handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>
+        ));
+
+        let inner = plugin.build_inner_standalone(store, registry, index);
+
+        let session = inner
+            .session
+            .create_session(crate::model::SessionCreateRequest::default())
+            .await;
+        inner
+            .kv
+            .put("standalone/lock".to_string(), "value", None)
+            .await;
+        assert!(
+            inner
+                .kv
+                .acquire_session("standalone/lock", &session.id)
+                .await,
+            "lock acquisition must succeed"
+        );
+
+        assert!(
+            inner.session.destroy_session(&session.id).await,
+            "session destroy must succeed"
+        );
+
+        let pair = inner
+            .kv
+            .get("standalone/lock")
+            .expect("released key must survive");
+        assert!(
+            pair.session.is_none(),
+            "session destroy must clear the KV lock holder (shared DB)"
+        );
+        assert!(inner.session.get_session(&session.id).is_none());
     }
 
     #[tokio::test]

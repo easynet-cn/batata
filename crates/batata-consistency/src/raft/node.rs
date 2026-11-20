@@ -23,6 +23,45 @@ use super::state_machine::RocksStateMachine;
 use super::types::{NodeId, Raft, RaftMetrics, StoredMembership};
 use crate::RaftPluginHandler;
 
+/// Upper bound for a local `client_write`. openraft has no internal deadline:
+/// during a leadership change it can wait indefinitely, which used to leave
+/// HTTP writes hanging until the SDK's own timeout fired (10 minutes in the
+/// Go suite, 15 minutes in the Rust suites).
+const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Finite leader-discovery budget. Raft metrics briefly report no leader while
+/// an election is in flight; polling gives the election time to settle instead
+/// of answering a perfectly valid write with a spurious 503. The budget keeps
+/// a genuinely leaderless cluster from looping forever.
+const LEADERLESS_MAX_POLLS: u32 = 25;
+const LEADERLESS_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// `Some(delay)` while an election may still settle, `None` once the budget is
+/// exhausted so the write fails in bounded time.
+fn leaderless_poll_delay(poll: u32) -> Option<Duration> {
+    (poll < LEADERLESS_MAX_POLLS).then_some(LEADERLESS_POLL_INTERVAL)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LeaderDiscovery {
+    Ready(String),
+    Wait(u32, Duration),
+    GiveUp,
+}
+
+/// Decide the next step of write forwarding. A missing leader is an election
+/// window, not a failed write: wait for it to settle (within the budget)
+/// before giving up.
+fn discover_leader(polls: u32, known_leader: Option<String>) -> LeaderDiscovery {
+    match known_leader {
+        Some(addr) => LeaderDiscovery::Ready(addr),
+        None => match leaderless_poll_delay(polls) {
+            Some(delay) => LeaderDiscovery::Wait(polls + 1, delay),
+            None => LeaderDiscovery::GiveUp,
+        },
+    }
+}
+
 /// Resolve the index to report after a write forwarded to the leader.
 ///
 /// The follower must only answer once its own state machine has applied the
@@ -40,8 +79,41 @@ fn forwarded_write_applied_index(
     })
 }
 
-/// Run the optional leader-side guard for one write.
+/// Interpret a leader's reply to a forwarded write.
 ///
+/// `success = false` with a `leader_id` means the target stepped down and the
+/// write never reached the state machine: that is a transport-level failure
+/// and the caller must retry against the new leader. `success = false` without
+/// a `leader_id` is the state machine's own business answer (a CAS index
+/// mismatch, a contested lock, a conflicting transaction). That entry is
+/// already committed, so the follower must pass the reply back with its
+/// `data`/`message` intact; turning it into an error makes an ordinary Consul
+/// conflict surface as a 503 and loses the `/v1/txn` error payload.
+fn forwarded_write_response(
+    response: batata_server_api::raft::ClientWriteResponse,
+) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
+    let batata_server_api::raft::ClientWriteResponse {
+        success,
+        data,
+        message,
+        leader_id,
+        log_index,
+        ..
+    } = response;
+    if !success && leader_id.is_some() {
+        return Err(message.into());
+    }
+    Ok((
+        RaftResponse {
+            success,
+            data: (!data.is_empty()).then_some(data),
+            message: (!message.is_empty()).then_some(message),
+        },
+        log_index,
+    ))
+}
+
+/// Run the optional leader-side guard for one write.
 /// Extracted from `write_with_index` so the leader-only ordering — validate,
 /// then record accepted side effects — has a direct unit-test seam. Followers
 /// skip the guard because only the leader's wall clock is authoritative;
@@ -509,8 +581,25 @@ impl RaftNode {
             return Err(e.into());
         }
 
-        // Try local client_write first (succeeds if this node is the leader)
-        match self.raft.client_write(request.clone()).await {
+        // Try local client_write first (succeeds if this node is the leader).
+        // Bound it: openraft has no deadline of its own, and a leadership
+        // change used to leave this future pending until the client gave up.
+        let local_write = tokio::time::timeout(
+            CLIENT_WRITE_TIMEOUT,
+            self.raft.client_write(request.clone()),
+        )
+        .await;
+        let local_result: Result<_, Box<dyn std::error::Error + Send + Sync>> = match local_write {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(Box::new(e)),
+            Err(_) => Err(format!(
+                "local client_write timed out after {:?}",
+                CLIENT_WRITE_TIMEOUT
+            )
+            .into()),
+        };
+
+        match local_result {
             Ok(result) => {
                 let log_index = result.log_id.index;
                 Ok((result.data, log_index))
@@ -521,16 +610,33 @@ impl RaftNode {
                 // repeated serialization of potentially large config content.
                 let max_retries = self.config.forward_max_retries;
                 let initial_delay = self.config.forward_initial_delay_ms;
-                let mut last_err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
+                let mut last_err = e;
+                let mut leaderless_polls = 0u32;
 
                 let request_bytes = serde_json::to_vec(&request)
                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
                 let op_type = request.op_type();
 
                 for attempt in 0..max_retries {
-                    let leader_addr = match self.leader_addr() {
-                        Some(addr) => addr,
-                        None => break, // No leader known, give up
+                    // Raft metrics briefly report no leader during an election.
+                    // Poll for a bounded time so the write can still be
+                    // forwarded once the election settles, instead of
+                    // returning a spurious 503 (or hanging on a stale future).
+                    let leader_addr = loop {
+                        match discover_leader(leaderless_polls, self.leader_addr()) {
+                            LeaderDiscovery::Ready(addr) => break Some(addr),
+                            LeaderDiscovery::Wait(next_polls, delay) => {
+                                leaderless_polls = next_polls;
+                                last_err = "no Raft leader known while an election is in flight"
+                                    .to_string()
+                                    .into();
+                                tokio::time::sleep(delay).await;
+                            }
+                            LeaderDiscovery::GiveUp => break None,
+                        }
+                    };
+                    let Some(leader_addr) = leader_addr else {
+                        break;
                     };
 
                     debug!(
@@ -672,22 +778,7 @@ impl RaftNode {
             }
         };
 
-        if response.success {
-            Ok((
-                RaftResponse {
-                    success: true,
-                    data: if response.data.is_empty() {
-                        None
-                    } else {
-                        Some(response.data)
-                    },
-                    message: None,
-                },
-                response.log_index,
-            ))
-        } else {
-            Err(response.message.into())
-        }
+        forwarded_write_response(response)
     }
 
     /// Trigger an election on a remote node (for leader transfer).
@@ -1179,5 +1270,104 @@ mod tests {
     fn forwarded_write_does_not_invent_an_index_when_metrics_are_missing() {
         let err = forwarded_write_applied_index(Ok(()), None, 12).unwrap_err();
         assert!(err.to_string().contains("no last_applied index"), "{err}");
+    }
+
+    #[test]
+    fn forwarded_write_keeps_committed_state_machine_conflict() {
+        use batata_server_api::raft::ClientWriteResponse;
+        // A CAS mismatch / txn conflict is a committed business result, not a
+        // transport failure. Dropping `data` here is what made a follower
+        // answer /v1/txn with 503 instead of 409 + Errors.
+        let payload = br#"{"Results":[],"Errors":[{"OpIndex":0,"What":"CAS failed"}]}"#.to_vec();
+        let (out, idx) = forwarded_write_response(ClientWriteResponse {
+            success: false,
+            data: payload.clone(),
+            message: "CAS failed: index mismatch".into(),
+            leader_id: None,
+            leader_addr: None,
+            log_index: 42,
+        })
+        .unwrap();
+        assert!(!out.success);
+        assert_eq!(idx, 42);
+        assert_eq!(out.data, Some(payload));
+        assert_eq!(out.message.as_deref(), Some("CAS failed: index mismatch"));
+    }
+
+    #[test]
+    fn forwarded_write_keeps_success_payload_and_message() {
+        use batata_server_api::raft::ClientWriteResponse;
+        let (out, idx) = forwarded_write_response(ClientWriteResponse {
+            success: true,
+            data: vec![9, 8, 7],
+            message: String::new(),
+            leader_id: None,
+            leader_addr: None,
+            log_index: 7,
+        })
+        .unwrap();
+        assert!(out.success);
+        assert_eq!(idx, 7);
+        assert_eq!(out.data, Some(vec![9, 8, 7]));
+        assert_eq!(out.message, None);
+    }
+
+    #[test]
+    fn forwarded_write_still_retries_when_target_is_not_leader() {
+        use batata_server_api::raft::ClientWriteResponse;
+        // Losing the `leader_id` distinction would make the retry loop accept
+        // a redirect as a committed conflict and silently drop the write.
+        let err = forwarded_write_response(ClientWriteResponse {
+            success: false,
+            data: Vec::new(),
+            message: "Not leader, redirect to leader 2".into(),
+            leader_id: Some(2),
+            leader_addr: Some("127.0.0.1:7858".into()),
+            log_index: 0,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("Not leader"), "{err}");
+    }
+
+    #[test]
+    fn leaderless_discovery_is_bounded() {
+        assert_eq!(leaderless_poll_delay(0), Some(LEADERLESS_POLL_INTERVAL));
+        assert_eq!(
+            leaderless_poll_delay(LEADERLESS_MAX_POLLS - 1),
+            Some(LEADERLESS_POLL_INTERVAL)
+        );
+        // Removing this budget would spin forever on a genuinely leaderless
+        // cluster instead of failing the write in bounded time.
+        assert_eq!(leaderless_poll_delay(LEADERLESS_MAX_POLLS), None);
+        assert_eq!(leaderless_poll_delay(u32::MAX), None);
+        let total = LEADERLESS_POLL_INTERVAL * LEADERLESS_MAX_POLLS;
+        assert!(total <= Duration::from_secs(10), "{total:?}");
+    }
+
+    #[test]
+    fn election_window_waits_for_a_leader_instead_of_failing() {
+        let addr = "127.0.0.1:7848".to_string();
+        assert_eq!(
+            discover_leader(0, Some(addr.clone())),
+            LeaderDiscovery::Ready(addr)
+        );
+        // Old behavior (`None => break`) is what produced the 503s in
+        // cluster-mysql while an election was in flight.
+        assert_eq!(
+            discover_leader(0, None),
+            LeaderDiscovery::Wait(1, LEADERLESS_POLL_INTERVAL)
+        );
+        assert_eq!(
+            discover_leader(LEADERLESS_MAX_POLLS, None),
+            LeaderDiscovery::GiveUp
+        );
+    }
+
+    #[test]
+    fn local_client_write_has_a_finite_deadline() {
+        // The Go SDK suite allows 10 minutes; an unbounded openraft
+        // client_write used to consume all of it on a single request.
+        assert!(CLIENT_WRITE_TIMEOUT > Duration::ZERO);
+        assert!(CLIENT_WRITE_TIMEOUT < Duration::from_secs(60));
     }
 }

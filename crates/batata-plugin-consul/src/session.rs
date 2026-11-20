@@ -150,6 +150,26 @@ impl ConsulSessionService {
         }
     }
 
+    /// Create a session service backed by a shared in-memory RocksDB whose
+    /// temporary directory must stay alive for as long as the DB is used.
+    ///
+    /// Standalone mode shares one temporary DB between the session and KV
+    /// services so that `apply_session_destroy` can see the `kidx:` session
+    /// index written by KV lock acquisition. The caller gives ownership of
+    /// the temp dir to this service (the KV service borrows the same `db`).
+    pub fn with_rocks_and_tempdir(db: Arc<DB>, temp_dir: Arc<tempfile::TempDir>) -> Self {
+        let node_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
+        Self {
+            db,
+            node_name,
+            _temp_dir: Some(temp_dir),
+            raft_node: None,
+            lock_delay: crate::lock_delay::ConsulLockDelay::default(),
+        }
+    }
+
     /// Create a new session service backed by a Raft-replicated RocksDB.
     /// Does NOT clean up expired sessions locally on startup — cleanup goes through Raft.
     pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
