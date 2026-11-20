@@ -50,6 +50,39 @@ fn io_error(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
 }
 
+/// Run a durable RocksDB write on Tokio's blocking pool.
+///
+/// Every write below uses `set_sync(true)`, i.e. an fsync. `RocksLogStore` is
+/// driven by openraft's `RaftCore`, which -- like the Raft gRPC server, the
+/// election deadline notifier and the heartbeat worker -- is spawned with
+/// `tokio::spawn` on the actix `current_thread` runtime. One inline fsync (or
+/// a compaction-induced write stall) therefore freezes *every* task on that
+/// thread: heartbeats, AppendEntries replies and election timers all miss
+/// their deadline, and openraft's RPC budget is only one heartbeat interval.
+///
+/// Awaiting the blocking pool keeps the write on the durability path (the
+/// `IOFlushed` callback is still signalled only after the fsync) and keeps the
+/// writes serialised, because `RaftCore` awaits each storage call in order.
+/// The difference is that the runtime thread stays free to poll other tasks
+/// while the disk is busy.
+async fn blocking_write<F, T>(f: F) -> Result<T, std::io::Error>
+where
+    F: FnOnce() -> Result<T, std::io::Error> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| io_error(format!("RocksDB write task failed: {e}")))?
+}
+
+/// Look up a column family inside a blocking task, where `self` is not
+/// available. Both CFs are created in `with_options`, so a missing one is a
+/// corrupted database rather than a recoverable condition.
+fn required_cf<'a>(db: &'a DB, name: &str) -> Result<&'a ColumnFamily, std::io::Error> {
+    db.cf_handle(name)
+        .ok_or_else(|| io_error(format!("{name} column family missing")))
+}
+
 /// RocksDB-based log store for Raft
 pub struct RocksLogStore {
     db: Arc<DB>,
@@ -283,9 +316,13 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
 
     async fn save_vote(&mut self, vote: &Vote) -> Result<(), std::io::Error> {
         let bytes = bincode::serialize(vote).map_err(io_error)?;
-        self.db
-            .put_cf_opt(self.cf_state(), KEY_VOTE, &bytes, &sync_write_options())
-            .map_err(io_error)?;
+        let db = self.db.clone();
+        blocking_write(move || {
+            let cf = required_cf(&db, CF_STATE)?;
+            db.put_cf_opt(cf, KEY_VOTE, &bytes, &sync_write_options())
+                .map_err(io_error)
+        })
+        .await?;
 
         *self.vote.write().await = Some(*vote);
         debug!("Saved vote: {:?}", vote);
@@ -318,26 +355,37 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
             return Ok(());
         }
 
-        let mut batch = rocksdb::WriteBatch::default();
-        let mut last_log_id = None;
+        let last_log_id = entries.last().map(|entry| entry.log_id);
+        // Serialize before crossing into the blocking task so only plain byte
+        // vectors (unambiguously `Send`) are moved across the boundary.
+        let prepared = entries
+            .iter()
+            .map(|entry| {
+                Ok((
+                    Self::encode_log_index(entry.log_id.index),
+                    Self::serialize_entry(entry)?,
+                ))
+            })
+            .collect::<Result<Vec<(Vec<u8>, Vec<u8>)>, std::io::Error>>()?;
+        let appended = prepared.len();
 
-        for entry in &entries {
-            let key = Self::encode_log_index(entry.log_id.index);
-            let value = Self::serialize_entry(entry)?;
-            batch.put_cf(self.cf_logs(), &key, &value);
-            last_log_id = Some(entry.log_id);
-        }
-
-        self.db
-            .write_opt(batch, &sync_write_options())
-            .map_err(io_error)?;
+        let db = self.db.clone();
+        blocking_write(move || {
+            let cf = required_cf(&db, CF_LOGS)?;
+            let mut batch = rocksdb::WriteBatch::default();
+            for (key, value) in &prepared {
+                batch.put_cf(cf, key, value);
+            }
+            db.write_opt(batch, &sync_write_options()).map_err(io_error)
+        })
+        .await?;
 
         if let Some(log_id) = last_log_id {
             *self.last_log_id.write().await = Some(log_id);
         }
 
-        if entries.len() > 1 {
-            debug!("Appended {} log entries", entries.len());
+        if appended > 1 {
+            debug!("Appended {} log entries", appended);
         }
         callback.io_completed(Ok(()));
         Ok(())
@@ -348,20 +396,21 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         let start = last_log_id.map(|id| id.index + 1).unwrap_or(0);
         let start_key = Self::encode_log_index(start);
 
-        let mut batch = rocksdb::WriteBatch::default();
-        let mut iter = self.db.raw_iterator_cf(self.cf_logs());
-        iter.seek(&start_key);
-
-        while iter.valid() {
-            if let Some(key) = iter.key() {
-                batch.delete_cf(self.cf_logs(), key);
+        let db = self.db.clone();
+        blocking_write(move || {
+            let cf = required_cf(&db, CF_LOGS)?;
+            let mut batch = rocksdb::WriteBatch::default();
+            let mut iter = db.raw_iterator_cf(cf);
+            iter.seek(&start_key);
+            while iter.valid() {
+                if let Some(key) = iter.key() {
+                    batch.delete_cf(cf, key);
+                }
+                iter.next();
             }
-            iter.next();
-        }
-
-        self.db
-            .write_opt(batch, &sync_write_options())
-            .map_err(io_error)?;
+            db.write_opt(batch, &sync_write_options()).map_err(io_error)
+        })
+        .await?;
 
         // Update cached last log ID
         *self.last_log_id.write().await = last_log_id;
@@ -374,27 +423,30 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         // Delete all entries with index <= log_id.index
         let end_key = Self::encode_log_index(log_id.index + 1);
 
-        let mut batch = rocksdb::WriteBatch::default();
-        let mut iter = self.db.raw_iterator_cf(self.cf_logs());
-        iter.seek_to_first();
-
-        while iter.valid() {
-            if let Some(key) = iter.key() {
-                if key >= end_key.as_slice() {
-                    break;
-                }
-                batch.delete_cf(self.cf_logs(), key);
-            }
-            iter.next();
-        }
-
-        // Save last purged log ID
         let last_purged_bytes = bincode::serialize(&log_id).map_err(io_error)?;
-        batch.put_cf(self.cf_state(), KEY_LAST_PURGED, &last_purged_bytes);
+        let db = self.db.clone();
+        blocking_write(move || {
+            let cf_logs = required_cf(&db, CF_LOGS)?;
+            let cf_state = required_cf(&db, CF_STATE)?;
+            let mut batch = rocksdb::WriteBatch::default();
+            let mut iter = db.raw_iterator_cf(cf_logs);
+            iter.seek_to_first();
 
-        self.db
-            .write_opt(batch, &sync_write_options())
-            .map_err(io_error)?;
+            while iter.valid() {
+                if let Some(key) = iter.key() {
+                    if key >= end_key.as_slice() {
+                        break;
+                    }
+                    batch.delete_cf(cf_logs, key);
+                }
+                iter.next();
+            }
+
+            // Save last purged log ID in the same durable batch.
+            batch.put_cf(cf_state, KEY_LAST_PURGED, &last_purged_bytes);
+            db.write_opt(batch, &sync_write_options()).map_err(io_error)
+        })
+        .await?;
 
         *self.last_purged.write().await = Some(log_id);
 
@@ -430,5 +482,31 @@ mod tests {
                 "Encoding should preserve ordering"
             );
         }
+    }
+
+    /// The whole point of `blocking_write` is that the fsync does not run on
+    /// the (single-threaded) async worker. Replacing `spawn_blocking` with a
+    /// direct call must turn this test red.
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_write_runs_off_the_async_worker_thread() {
+        let async_thread = std::thread::current().id();
+        let blocking_thread =
+            blocking_write(move || Ok::<_, std::io::Error>(std::thread::current().id()))
+                .await
+                .expect("blocking write must succeed");
+        assert_ne!(
+            async_thread, blocking_thread,
+            "durable writes must not occupy the async worker thread"
+        );
+    }
+
+    /// A failed fsync must surface as the same `io::Error` the storage trait
+    /// expects, not as a swallowed join error.
+    #[tokio::test]
+    async fn blocking_write_propagates_io_errors() {
+        let err = blocking_write(|| Err::<(), _>(io_error("fsync failed")))
+            .await
+            .expect_err("write failure must be propagated");
+        assert!(err.to_string().contains("fsync failed"));
     }
 }

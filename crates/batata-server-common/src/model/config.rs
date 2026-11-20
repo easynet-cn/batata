@@ -1840,15 +1840,18 @@ impl Configuration {
 
     // ---- Raft consensus tuning ----
 
-    /// Raft election timeout in milliseconds (default: 5000).
+    /// Raft election timeout in milliseconds (default: 1000).
     /// If a follower doesn't hear from the leader within this time, it starts an election.
+    /// `to_openraft_config` uses this as `election_timeout_min` and `2 * this` as max.
     /// Increase for WAN clusters or high-latency networks.
     pub fn raft_election_timeout_ms(&self) -> u64 {
         self.typed.raft.election_timeout_ms as u64
     }
 
-    /// Raft heartbeat interval in milliseconds (default: 1000).
-    /// Leader sends heartbeats at this interval. Should be < election_timeout / 3.
+    /// Raft heartbeat interval in milliseconds (default: 200).
+    /// Leader sends heartbeats at this interval. openraft requires it to be
+    /// strictly smaller than `election_timeout_ms`; the project convention is
+    /// at most one third of it.
     pub fn raft_heartbeat_interval_ms(&self) -> u64 {
         self.typed.raft.heartbeat_interval_ms as u64
     }

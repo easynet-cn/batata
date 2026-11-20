@@ -29,6 +29,10 @@
 #   standard  + unit(all crates), integration(java + go SDK)
 #   full      + matrix (standalone/cluster x rock/mysql/postgres)
 #
+# The matrix stage additionally asserts Raft health: zero steady-state
+# elections and zero apply/client-write timeouts (scripts/raft_health_check.py).
+# A missing telemetry liveness marker fails closed rather than passing silently.
+#
 # Reports are written to reports/regression/<timestamp>/ (gitignored) with a
 # stable symlink at reports/regression/latest. Never /tmp: it gets cleaned.
 #
@@ -501,6 +505,23 @@ stage_matrix() {
         rc=1
     else
         echo "    coverage: every anchored (combination, suite) ran its full case count"
+    fi
+
+    # Raft health gate. matrix.log aggregates every node's WARN lines for all
+    # six combinations (test.sh scan_logs), while the node stdout logs carry
+    # the INFO-level telemetry liveness marker. A run where telemetry never
+    # started is a false green, so the checker fails closed in that case.
+    local health_args=("$log")
+    local node_dir
+    for node_dir in "${ROOT}/logs/sdk-node1" "${ROOT}/logs/sdk-node2" "${ROOT}/logs/sdk-node3"; do
+        [ -f "${node_dir}/stdout.log" ] && health_args+=("${node_dir}/stdout.log")
+    done
+    local health_summary
+    if health_summary=$(python3 "${SCRIPT_DIR}/raft_health_check.py" "${health_args[@]}" 2>&1); then
+        echo "    raft health: ${health_summary}"
+    else
+        record_failure matrix "raft health: ${health_summary}"
+        rc=1
     fi
     stage_end matrix $rc "6 combinations"
 }

@@ -20,26 +20,49 @@ use super::network::BatataRaftNetworkFactory;
 use super::plugin::PluginRegistry;
 use super::request::{RaftRequest, RaftResponse};
 use super::state_machine::RocksStateMachine;
+use super::telemetry::{
+    RaftHealthSnapshot, RaftHealthTracker, emit_event, record_apply_wait, record_client_write,
+    record_forward, record_health, record_leaderless_give_up,
+};
 use super::types::{NodeId, Raft, RaftMetrics, StoredMembership};
 use crate::RaftPluginHandler;
 
-/// Upper bound for a local `client_write`. openraft has no internal deadline:
-/// during a leadership change it can wait indefinitely, which used to leave
-/// HTTP writes hanging until the SDK's own timeout fired (10 minutes in the
-/// Go suite, 15 minutes in the Rust suites).
-const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Leader-discovery sampling budget, derived from `RaftConfig::timing()`.
+///
+/// The total wait must cover one maximum election window plus one RPC round
+/// (Consul's `rpc_hold_timeout` plays the same role). Sampling at half a
+/// heartbeat cannot miss a leader that appears during that window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LeaderlessBudget {
+    max_polls: u32,
+    poll_interval: Duration,
+}
 
-/// Finite leader-discovery budget. Raft metrics briefly report no leader while
-/// an election is in flight; polling gives the election time to settle instead
-/// of answering a perfectly valid write with a spurious 503. The budget keeps
-/// a genuinely leaderless cluster from looping forever.
-const LEADERLESS_MAX_POLLS: u32 = 25;
-const LEADERLESS_POLL_INTERVAL: Duration = Duration::from_millis(200);
+impl LeaderlessBudget {
+    fn from_config(config: &RaftConfig) -> Self {
+        let wait = config.timing().leaderless_wait;
+        let poll_interval = (config.heartbeat_interval() / 2)
+            .max(Duration::from_millis(10))
+            .min(Duration::from_millis(200));
+        let interval_ms = poll_interval.as_millis().max(1);
+        let polls = wait.as_millis() / interval_ms;
+        let max_polls = u32::try_from(polls).unwrap_or(u32::MAX).max(1);
+        Self {
+            max_polls,
+            poll_interval,
+        }
+    }
+
+    /// Total time the discovery loop may spend waiting for a leader.
+    fn total_wait(&self) -> Duration {
+        self.poll_interval * self.max_polls
+    }
+}
 
 /// `Some(delay)` while an election may still settle, `None` once the budget is
 /// exhausted so the write fails in bounded time.
-fn leaderless_poll_delay(poll: u32) -> Option<Duration> {
-    (poll < LEADERLESS_MAX_POLLS).then_some(LEADERLESS_POLL_INTERVAL)
+fn leaderless_poll_delay(poll: u32, budget: LeaderlessBudget) -> Option<Duration> {
+    (poll < budget.max_polls).then_some(budget.poll_interval)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -52,10 +75,14 @@ enum LeaderDiscovery {
 /// Decide the next step of write forwarding. A missing leader is an election
 /// window, not a failed write: wait for it to settle (within the budget)
 /// before giving up.
-fn discover_leader(polls: u32, known_leader: Option<String>) -> LeaderDiscovery {
+fn discover_leader(
+    polls: u32,
+    known_leader: Option<String>,
+    budget: LeaderlessBudget,
+) -> LeaderDiscovery {
     match known_leader {
         Some(addr) => LeaderDiscovery::Ready(addr),
-        None => match leaderless_poll_delay(polls) {
+        None => match leaderless_poll_delay(polls, budget) {
             Some(delay) => LeaderDiscovery::Wait(polls + 1, delay),
             None => LeaderDiscovery::GiveUp,
         },
@@ -254,6 +281,24 @@ impl RaftNode {
         info!(
             "Creating Raft node: id={}, addr={}, data_dir={:?}",
             node_id, addr, config.data_dir
+        );
+
+        // Reject timing combinations that openraft or the derived write
+        // deadlines cannot honour before any directory or DB is opened.
+        config
+            .validate()
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        let timing = config.timing();
+        info!(
+            "Raft timing derived: election={:?}..{:?} heartbeat={:?} election_cycle={:?} leaderless_wait={:?} apply_wait={:?} client_write={:?} leaderless_budget={:?}",
+            timing.election_timeout_min,
+            timing.election_timeout_max,
+            config.heartbeat_interval(),
+            timing.election_cycle,
+            timing.leaderless_wait,
+            timing.apply_wait,
+            timing.client_write,
+            LeaderlessBudget::from_config(&config).total_wait(),
         );
 
         // Ensure data directories exist
@@ -571,6 +616,9 @@ impl RaftNode {
         &self,
         request: RaftRequest,
     ) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
+        let started = std::time::Instant::now();
+        let timing = self.config.timing();
+        let budget = LeaderlessBudget::from_config(&self.config);
         debug!("Writing through Raft: {}", request.op_type());
 
         // Leader-local wall-clock checks (e.g. Consul lock delay) must happen
@@ -584,17 +632,17 @@ impl RaftNode {
         // Try local client_write first (succeeds if this node is the leader).
         // Bound it: openraft has no deadline of its own, and a leadership
         // change used to leave this future pending until the client gave up.
-        let local_write = tokio::time::timeout(
-            CLIENT_WRITE_TIMEOUT,
-            self.raft.client_write(request.clone()),
-        )
-        .await;
+        let local_write =
+            tokio::time::timeout(timing.client_write, self.raft.client_write(request.clone()))
+                .await;
+        let local_timed_out = local_write.is_err();
+        record_client_write(started.elapsed(), local_timed_out);
         let local_result: Result<_, Box<dyn std::error::Error + Send + Sync>> = match local_write {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(e)) => Err(Box::new(e)),
             Err(_) => Err(format!(
                 "local client_write timed out after {:?}",
-                CLIENT_WRITE_TIMEOUT
+                timing.client_write
             )
             .into()),
         };
@@ -623,7 +671,7 @@ impl RaftNode {
                     // forwarded once the election settles, instead of
                     // returning a spurious 503 (or hanging on a stale future).
                     let leader_addr = loop {
-                        match discover_leader(leaderless_polls, self.leader_addr()) {
+                        match discover_leader(leaderless_polls, self.leader_addr(), budget) {
                             LeaderDiscovery::Ready(addr) => break Some(addr),
                             LeaderDiscovery::Wait(next_polls, delay) => {
                                 leaderless_polls = next_polls;
@@ -636,6 +684,7 @@ impl RaftNode {
                         }
                     };
                     let Some(leader_addr) = leader_addr else {
+                        record_leaderless_give_up(started.elapsed());
                         break;
                     };
 
@@ -647,20 +696,24 @@ impl RaftNode {
                         op_type
                     );
 
-                    match self
+                    let forward_started = std::time::Instant::now();
+                    let forwarded = self
                         .forward_write_to_leader_bytes(&leader_addr, &request_bytes)
-                        .await
-                    {
+                        .await;
+                    record_forward(forward_started.elapsed(), forwarded.is_ok());
+                    match forwarded {
                         Ok((resp, leader_log_index)) => {
                             // Wait for the local state machine to catch up to
                             // the leader's committed index before returning, so
                             // subsequent local reads see the written data.
+                            let wait_started = std::time::Instant::now();
                             let wait_result = if leader_log_index > 0 {
-                                self.wait_for_applied(leader_log_index, Duration::from_secs(5))
+                                self.wait_for_applied(leader_log_index, timing.apply_wait)
                                     .await
                             } else {
                                 Ok(())
                             };
+                            record_apply_wait(wait_started.elapsed(), wait_result.is_err());
                             let idx = forwarded_write_applied_index(
                                 wait_result,
                                 self.last_applied_index(),
@@ -854,6 +907,50 @@ impl RaftNode {
             .ensure_linearizable(openraft::ReadPolicy::ReadIndex)
             .await?;
         Ok(())
+    }
+
+    /// Start a background task that publishes Raft health metrics.
+    ///
+    /// Instead of polling on a timer, the task subscribes to openraft's
+    /// metrics watch channel: every state change (including a Candidate state
+    /// that lasts only a few milliseconds) is observed. A 100ms poll was
+    /// measured to miss two of three elections on a fast leader node.
+    /// The task only reads metrics; it never writes or changes protocol state.
+    /// It stops when the owning `Arc<RaftNode>` is dropped or the Raft handle
+    /// closes the channel.
+    pub fn start_health_telemetry(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        use std::sync::Weak;
+
+        let weak: Weak<Self> = Arc::downgrade(self);
+        let node_id = self.node_id;
+        let mut metrics_rx = self.raft.metrics();
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            info!(
+                target: super::telemetry::HEALTH_LOG_TARGET,
+                raft_event = "telemetry_started",
+                node_id = node_id,
+                "Raft health telemetry started (metrics watch)"
+            );
+            let mut tracker = RaftHealthTracker::default();
+            loop {
+                if weak.upgrade().is_none() {
+                    debug!("Raft health telemetry exiting (RaftNode dropped)");
+                    break;
+                }
+                let current = metrics_rx.borrow_watched().clone();
+                let snapshot = RaftHealthSnapshot::from(&current);
+                let now_ms = started.elapsed().as_millis() as u64;
+                for event in tracker.observe(snapshot, now_ms) {
+                    emit_event(node_id, &event);
+                }
+                record_health(&snapshot, tracker.steady_state_elections);
+                if metrics_rx.changed().await.is_err() {
+                    debug!("Raft health telemetry exiting (metrics channel closed)");
+                    break;
+                }
+            }
+        })
     }
 
     /// Start a background task that periodically reaps expired locks.
@@ -1329,45 +1426,132 @@ mod tests {
         assert!(err.to_string().contains("Not leader"), "{err}");
     }
 
+    fn default_budget() -> LeaderlessBudget {
+        LeaderlessBudget::from_config(&RaftConfig::default())
+    }
+
     #[test]
-    fn leaderless_discovery_is_bounded() {
-        assert_eq!(leaderless_poll_delay(0), Some(LEADERLESS_POLL_INTERVAL));
+    fn leaderless_discovery_is_bounded_and_derived() {
+        let budget = default_budget();
+        assert_eq!(leaderless_poll_delay(0, budget), Some(budget.poll_interval));
         assert_eq!(
-            leaderless_poll_delay(LEADERLESS_MAX_POLLS - 1),
-            Some(LEADERLESS_POLL_INTERVAL)
+            leaderless_poll_delay(budget.max_polls - 1, budget),
+            Some(budget.poll_interval)
         );
         // Removing this budget would spin forever on a genuinely leaderless
         // cluster instead of failing the write in bounded time.
-        assert_eq!(leaderless_poll_delay(LEADERLESS_MAX_POLLS), None);
-        assert_eq!(leaderless_poll_delay(u32::MAX), None);
-        let total = LEADERLESS_POLL_INTERVAL * LEADERLESS_MAX_POLLS;
-        assert!(total <= Duration::from_secs(10), "{total:?}");
+        assert_eq!(leaderless_poll_delay(budget.max_polls, budget), None);
+        assert_eq!(leaderless_poll_delay(u32::MAX, budget), None);
+
+        let timing = RaftConfig::default().timing();
+        assert!(budget.total_wait() <= timing.leaderless_wait);
+        assert!(budget.total_wait() + budget.poll_interval >= timing.leaderless_wait);
+        assert!(budget.total_wait() >= timing.election_timeout_max);
+    }
+
+    /// The production typed defaults (1000ms election min / 200ms heartbeat)
+    /// produce a 7s leaderless wait sampled every 100ms, i.e. 70 polls.
+    #[test]
+    fn production_budget_covers_one_election_cycle() {
+        let config = RaftConfig {
+            election_timeout_ms: 1000,
+            heartbeat_interval_ms: 200,
+            ..Default::default()
+        };
+        let budget = LeaderlessBudget::from_config(&config);
+        let timing = config.timing();
+        assert_eq!(budget.poll_interval, Duration::from_millis(100));
+        assert_eq!(budget.max_polls, 70);
+        assert_eq!(budget.total_wait(), Duration::from_millis(7000));
+        assert_eq!(timing.apply_wait, Duration::from_millis(7000));
+        assert!(budget.total_wait() >= timing.election_timeout_max);
     }
 
     #[test]
     fn election_window_waits_for_a_leader_instead_of_failing() {
+        let budget = default_budget();
         let addr = "127.0.0.1:7848".to_string();
         assert_eq!(
-            discover_leader(0, Some(addr.clone())),
+            discover_leader(0, Some(addr.clone()), budget),
             LeaderDiscovery::Ready(addr)
         );
         // Old behavior (`None => break`) is what produced the 503s in
         // cluster-mysql while an election was in flight.
         assert_eq!(
-            discover_leader(0, None),
-            LeaderDiscovery::Wait(1, LEADERLESS_POLL_INTERVAL)
+            discover_leader(0, None, budget),
+            LeaderDiscovery::Wait(1, budget.poll_interval)
         );
         assert_eq!(
-            discover_leader(LEADERLESS_MAX_POLLS, None),
+            discover_leader(budget.max_polls, None, budget),
             LeaderDiscovery::GiveUp
         );
     }
 
+    /// Fault injection without a live cluster: make the leader appear exactly
+    /// one maximum election window after the write starts. The old hardcoded
+    /// 5s budget gave up before the library default's 6s window closed.
     #[test]
-    fn local_client_write_has_a_finite_deadline() {
-        // The Go SDK suite allows 10 minutes; an unbounded openraft
-        // client_write used to consume all of it on a single request.
-        assert!(CLIENT_WRITE_TIMEOUT > Duration::ZERO);
-        assert!(CLIENT_WRITE_TIMEOUT < Duration::from_secs(60));
+    fn leader_appearing_after_one_election_window_is_still_discovered() {
+        let config = RaftConfig::default();
+        let budget = LeaderlessBudget::from_config(&config);
+        let timing = config.timing();
+        let mut polls = 0u32;
+        let mut waited = Duration::ZERO;
+        loop {
+            let known =
+                (waited >= timing.election_timeout_max).then(|| "127.0.0.1:7848".to_string());
+            match discover_leader(polls, known, budget) {
+                LeaderDiscovery::Ready(_) => break,
+                LeaderDiscovery::Wait(next, delay) => {
+                    polls = next;
+                    waited += delay;
+                }
+                LeaderDiscovery::GiveUp => {
+                    panic!("gave up after {waited:?} although a leader appeared")
+                }
+            }
+        }
+        assert!(waited >= timing.election_timeout_max);
+        assert!(waited <= timing.leaderless_wait);
+    }
+
+    /// Startup must reject a timing combination that openraft would reject
+    /// anyway -- but do so before any directory or RocksDB handle is opened.
+    #[tokio::test]
+    async fn node_rejects_invalid_timing_before_opening_state() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let config = RaftConfig {
+            election_timeout_ms: 100,
+            heartbeat_interval_ms: 200,
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        // `RaftNode` is not `Debug`, so `Result::expect_err` cannot be used here.
+        let err = RaftNode::new(1, "127.0.0.1:7848".into(), config)
+            .await
+            .err()
+            .expect("invalid config must be rejected");
+        assert!(
+            err.to_string().contains("election_timeout_ms"),
+            "unexpected error: {err}"
+        );
+        assert!(!dir.path().join("log").exists());
+    }
+
+    #[test]
+    fn local_client_write_deadline_is_finite_and_derived() {
+        let production = RaftConfig {
+            election_timeout_ms: 1000,
+            heartbeat_interval_ms: 200,
+            ..Default::default()
+        };
+        for config in [RaftConfig::default(), production] {
+            let timing = config.timing();
+            // The Go SDK suite allows 10 minutes; an unbounded openraft
+            // client_write used to consume all of it on a single request.
+            assert!(timing.client_write > Duration::ZERO);
+            assert!(timing.client_write < Duration::from_secs(60));
+            assert!(timing.client_write > timing.leaderless_wait);
+        }
     }
 }

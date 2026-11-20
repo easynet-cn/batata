@@ -31,7 +31,7 @@ pub use raft::reader::RocksDbReader;
 pub use raft::state_machine::RocksStateMachine;
 
 // Re-export Raft node and config
-pub use raft::config::RaftConfig;
+pub use raft::config::{RaftConfig, RaftTiming};
 pub use raft::node::{RaftNode, RaftNodeBuilder};
 
 // Re-export plugin types

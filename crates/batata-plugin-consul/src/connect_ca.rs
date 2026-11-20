@@ -1209,54 +1209,68 @@ impl ConsulConnectCAService {
         self.intentions.get(id).map(|r| r.value().clone())
     }
 
+    /// Build the updated intention under the DashMap shard guard.
+    ///
+    /// This must stay a **synchronous** helper returning an owned value: the
+    /// shard guard is scoped to this function and therefore can never be alive
+    /// at an `.await` in `update_intention`. Holding it across
+    /// `raft.write(...).await` deadlocks the single-threaded actix runtime --
+    /// the Raft FSM apply hook runs on the same `main` thread and calls
+    /// `refresh_from_rocks()` -> `intentions.clear()`, which needs every shard
+    /// write lock. `peering.rs` already drops its guard explicitly for the
+    /// same reason; see `docs/raft-timing.md` §6.2 for the measured outage.
+    fn build_updated_intention(&self, id: &str, req: IntentionRequest) -> Option<Intention> {
+        let mut entry = self.intentions.get_mut(id)?;
+        let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        entry.description = req.description;
+        entry.source_ns = if req.source_ns.is_empty() {
+            "default".to_string()
+        } else {
+            req.source_ns
+        };
+        entry.source_name = req.source_name.clone();
+        entry.destination_ns = if req.destination_ns.is_empty() {
+            "default".to_string()
+        } else {
+            req.destination_ns
+        };
+        entry.destination_name = req.destination_name.clone();
+        entry.action = req.action;
+        entry.permissions = req.permissions;
+        entry.meta = req.meta;
+        entry.precedence = Self::compute_precedence(&req.source_name, &req.destination_name);
+        entry.updated_at = Utc::now().to_rfc3339();
+        entry.modify_index = index;
+        Some(entry.clone())
+    }
+
     /// The `update_intention` method.
     pub async fn update_intention(&self, id: &str, req: IntentionRequest) -> Option<Intention> {
-        if let Some(mut entry) = self.intentions.get_mut(id) {
-            let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            entry.description = req.description;
-            entry.source_ns = if req.source_ns.is_empty() {
-                "default".to_string()
-            } else {
-                req.source_ns
-            };
-            entry.source_name = req.source_name.clone();
-            entry.destination_ns = if req.destination_ns.is_empty() {
-                "default".to_string()
-            } else {
-                req.destination_ns
-            };
-            entry.destination_name = req.destination_name.clone();
-            entry.action = req.action;
-            entry.permissions = req.permissions;
-            entry.meta = req.meta;
-            entry.precedence = Self::compute_precedence(&req.source_name, &req.destination_name);
-            entry.updated_at = Utc::now().to_rfc3339();
-            entry.modify_index = index;
-            let updated = entry.clone();
-            if let Some(ref raft) = self.raft_node {
-                let intention_json = serde_json::to_string(&updated).unwrap_or_default();
-                match raft
-                    .write(ConsulRaftRequest::IntentionUpsert {
-                        id: id.to_string(),
-                        intention_json,
-                    })
-                    .await
-                {
-                    Ok(r) if !r.success => {
-                        error!("Raft IntentionUpsert rejected: {:?}", r.message);
-                    }
-                    Err(e) => {
-                        error!("Raft IntentionUpsert failed: {}", e);
-                    }
-                    _ => {}
+        // No DashMap guard is alive at any `.await` below: the mutation happens
+        // in a synchronous helper that returns an owned `Intention`.
+        let updated = self.build_updated_intention(id, req)?;
+        let id = id.to_string();
+        if let Some(ref raft) = self.raft_node {
+            let intention_json = serde_json::to_string(&updated).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::IntentionUpsert {
+                    id: id.clone(),
+                    intention_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft IntentionUpsert rejected: {:?}", r.message);
                 }
-            } else {
-                self.persist_intention_to_rocks(id, &updated);
+                Err(e) => {
+                    error!("Raft IntentionUpsert failed: {}", e);
+                }
+                _ => {}
             }
-            Some(updated)
         } else {
-            None
+            self.persist_intention_to_rocks(&id, &updated);
         }
+        Some(updated)
     }
 
     /// The `delete_intention` method.
@@ -2949,6 +2963,35 @@ mod tests {
         assert_eq!(u.destination_name, "backend");
         assert_eq!(u.action, IntentionAction::Deny);
         assert_eq!(u.id, intention.id); // ID preserved
+    }
+
+    /// A DashMap shard guard must never be held across the Raft write await.
+    /// `update_intention` runs on an actix arbiter while the FSM apply hook
+    /// runs on the single-threaded `main` runtime, where `on_ca_change` ->
+    /// `refresh_from_rocks()` -> `intentions.clear()` needs every shard lock.
+    /// Holding one guard there froze the whole node for 3 x 7s in T6 (219
+    /// AppendEntries RPC timeouts, 3 apply_wait_timeout events). The mutation
+    /// is deliberately confined to the synchronous `build_updated_intention`
+    /// helper so the compiler cannot let a guard survive into an `.await`.
+    #[test]
+    fn update_intention_has_no_shard_guard_across_await() {
+        let src = include_str!("connect_ca.rs");
+        let start = src
+            .find("pub async fn update_intention(&self")
+            .expect("update_intention must exist");
+        let rest = &src[start..];
+        let end = rest
+            .find("    /// The `delete_intention` method.")
+            .expect("the method following update_intention must exist");
+        let body = &rest[..end];
+        assert!(
+            !body.contains("get_mut("),
+            "update_intention must not hold a DashMap shard guard while awaiting the Raft write"
+        );
+        assert!(
+            body.contains(".await"),
+            "the Raft write must still be awaited"
+        );
     }
 
     #[tokio::test]

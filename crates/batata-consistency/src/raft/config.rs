@@ -1,6 +1,8 @@
 //! Raft configuration.
 //!
 //! Provides configuration settings for the Raft consensus implementation.
+//! Consensus timing is derived centrally by [`RaftTiming`]; the upstream
+//! comparison and the full derivation table live in `docs/raft-timing.md`.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -8,12 +10,18 @@ use std::time::Duration;
 /// Configuration for Raft consensus protocol
 #[derive(Clone, Debug)]
 pub struct RaftConfig {
-    /// Election timeout in milliseconds (default: 5000ms)
-    /// If a follower doesn't hear from leader within this time, it starts an election
+    /// Minimum election timeout in milliseconds (library default: 3000ms).
+    /// If a follower doesn't hear from leader within this time, it starts an election.
+    ///
+    /// `to_openraft_config` maps this to `election_timeout_min` and derives
+    /// `election_timeout_max` as `2 * this`. The server does NOT use the
+    /// library default: `batata-server-common`'s typed config supplies 1000ms
+    /// through `startup/persistence.rs`.
     pub election_timeout_ms: u64,
 
-    /// Heartbeat interval in milliseconds (default: 1000ms)
-    /// Leader sends heartbeats at this interval
+    /// Heartbeat interval in milliseconds (library default: 300ms).
+    /// Leader sends heartbeats at this interval. openraft requires it to be
+    /// strictly smaller than `election_timeout_min`.
     pub heartbeat_interval_ms: u64,
 
     /// Snapshot interval in seconds (default: 1800s = 30 minutes)
@@ -73,6 +81,30 @@ pub struct RaftConfig {
 
     /// HTTP/2 keep-alive timeout in seconds for Raft gRPC connections (default: 5s)
     pub grpc_http2_keepalive_timeout_secs: u64,
+}
+
+/// Deadlines for the write/forwarding path, all derived from one `RaftConfig`.
+///
+/// Previously these were unrelated constants in `node.rs` (15s / 5s / 5s),
+/// so changing the election timeout could leave a wait shorter than the
+/// election window it was meant to cover. One "election cycle" is one maximum
+/// election window plus one RPC round; it plays the same role as Consul's
+/// `rpc_hold_timeout` (7s for a 5s election window). See `docs/raft-timing.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RaftTiming {
+    /// `election_timeout_min` handed to openraft.
+    pub election_timeout_min: Duration,
+    /// `election_timeout_max` handed to openraft (`2 * min`).
+    pub election_timeout_max: Duration,
+    /// One maximum election window plus one RPC round.
+    pub election_cycle: Duration,
+    /// Bounded wait for a leader to be discovered during an election.
+    pub leaderless_wait: Duration,
+    /// Bounded wait for a follower to apply a forwarded write locally.
+    pub apply_wait: Duration,
+    /// Overall deadline for a local `client_write`; two cycles cover a
+    /// leadership change that happens while the write is in flight.
+    pub client_write: Duration,
 }
 
 /// Upper bound for a single Raft gRPC message, derived from a chunk size.
@@ -217,6 +249,81 @@ impl RaftConfig {
         snapshot_max_message_size_for(self.snapshot_chunk_size)
     }
 
+    /// Derive every consensus deadline from this configuration.
+    ///
+    /// Uses saturating arithmetic so a malformed config can never panic here;
+    /// call [`RaftConfig::validate`] first to reject malformed values.
+    pub fn timing(&self) -> RaftTiming {
+        let election_min = Duration::from_millis(self.election_timeout_ms);
+        let election_max = Duration::from_millis(self.election_timeout_ms.saturating_mul(2));
+        let election_cycle = election_max.saturating_add(self.rpc_timeout());
+        RaftTiming {
+            election_timeout_min: election_min,
+            election_timeout_max: election_max,
+            election_cycle,
+            leaderless_wait: election_cycle,
+            apply_wait: election_cycle,
+            client_write: election_cycle.saturating_mul(2),
+        }
+    }
+
+    /// Check the timing invariants openraft and the write path rely on.
+    ///
+    /// Pure: T1 only publishes this contract, it does not change start-up
+    /// behaviour. `RaftNode::new_with_full_options` calls it once the derived
+    /// deadlines are wired into `node.rs`.
+    pub fn validate(&self) -> Result<(), String> {
+        let election = self.election_timeout_ms;
+        let heartbeat = self.heartbeat_interval_ms;
+
+        if heartbeat == 0 {
+            return Err("heartbeat_interval_ms must be greater than zero".into());
+        }
+        // openraft 0.10 Config::validate rejects
+        // `election_timeout_min <= heartbeat_interval`; fail early with an
+        // actionable message instead of deep inside Raft::new.
+        if election <= heartbeat {
+            return Err(format!(
+                "election_timeout_ms ({election}) must be greater than heartbeat_interval_ms ({heartbeat})"
+            ));
+        }
+        if self.rpc_request_timeout_ms == 0 {
+            return Err("rpc_request_timeout_ms must be greater than zero".into());
+        }
+        let Some(election_max) = election.checked_mul(2) else {
+            return Err("election_timeout_ms overflows when doubled".into());
+        };
+        let Some(cycle) = election_max.checked_add(self.rpc_request_timeout_ms) else {
+            return Err("election cycle overflows when adding rpc_request_timeout_ms".into());
+        };
+        if cycle.checked_mul(2).is_none() {
+            return Err("client_write deadline overflows".into());
+        }
+        if self.snapshot_transfer_timeout_ms <= self.rpc_request_timeout_ms {
+            return Err(format!(
+                "snapshot_transfer_timeout_ms ({}) must exceed rpc_request_timeout_ms ({})",
+                self.snapshot_transfer_timeout_ms, self.rpc_request_timeout_ms
+            ));
+        }
+        if self.forward_max_retries > 0 && self.forward_initial_delay_ms == 0 {
+            return Err(
+                "forward_initial_delay_ms must be greater than zero when forwarding is enabled"
+                    .into(),
+            );
+        }
+
+        // Documented invariants of the derived budgets. A future formula that
+        // drops the election window from `leaderless_wait` must fail here.
+        let timing = self.timing();
+        if timing.leaderless_wait < timing.election_timeout_max {
+            return Err("leaderless_wait must cover at least one maximum election window".into());
+        }
+        if timing.client_write <= timing.leaderless_wait {
+            return Err("client_write deadline must exceed the leaderless wait".into());
+        }
+        Ok(())
+    }
+
     /// Convert to openraft Config
     pub fn to_openraft_config(&self) -> openraft::Config {
         openraft::Config {
@@ -224,6 +331,12 @@ impl RaftConfig {
             election_timeout_min: self.election_timeout_ms,
             election_timeout_max: self.election_timeout_ms * 2,
             heartbeat_interval: self.heartbeat_interval_ms,
+            // A follower that briefly loses heartbeats (for example while the
+            // process is busy on synchronous storage I/O) must not immediately
+            // raise its term and disrupt a healthy leader. openraft leaves this
+            // `Option` as `None`, and `get_enable_pre_vote()` treats `None` as
+            // `false`. See `docs/raft-timing.md` §6.1 for the measured failure.
+            enable_pre_vote: Some(true),
             snapshot_policy: openraft::SnapshotPolicy::LogsSinceLast(self.snapshot_threshold),
             max_payload_entries: self.max_payload_entries,
             ..Default::default()
@@ -348,6 +461,117 @@ mod tests {
         assert!(large.snapshot_max_message_size() > large.effective_snapshot_chunk_size());
     }
 
+    /// openraft itself validates the converted config. Both default sets --
+    /// the library default (3000/300) and the production typed default
+    /// (1000/200) -- must be accepted, otherwise Raft::new fails at startup.
+    #[test]
+    fn openraft_accepts_both_default_timing_sets() {
+        for (election, heartbeat) in [(3000, 300), (1000, 200)] {
+            let config = RaftConfig {
+                election_timeout_ms: election,
+                heartbeat_interval_ms: heartbeat,
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok(), "{election}/{heartbeat}");
+            assert!(
+                config.to_openraft_config().validate().is_ok(),
+                "{election}/{heartbeat}"
+            );
+        }
+    }
+
+    /// All deadlines are derived from the election window and the RPC round.
+    /// The old hardcoded 5s leaderless budget was shorter than the library
+    /// default's 6s election max -- the exact mismatch T3 removes.
+    #[test]
+    fn timing_is_derived_from_election_window_and_rpc_round() {
+        let timing = RaftConfig::default().timing();
+        assert_eq!(timing.election_timeout_min, Duration::from_millis(3000));
+        assert_eq!(timing.election_timeout_max, Duration::from_millis(6000));
+        assert_eq!(timing.election_cycle, Duration::from_millis(11000));
+        assert_eq!(timing.leaderless_wait, Duration::from_millis(11000));
+        assert_eq!(timing.apply_wait, Duration::from_millis(11000));
+        assert_eq!(timing.client_write, Duration::from_millis(22000));
+        assert!(timing.leaderless_wait > Duration::from_millis(6000));
+        assert!(timing.client_write > timing.leaderless_wait);
+    }
+
+    /// Production defaults: 1000ms election min -> 2000ms max, plus the
+    /// 5000ms RPC round gives a 7s election cycle (Consul's rpc_hold_timeout
+    /// is 7s for a 5s election window).
+    #[test]
+    fn production_timing_covers_the_election_window() {
+        let config = RaftConfig {
+            election_timeout_ms: 1000,
+            heartbeat_interval_ms: 200,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+        let timing = config.timing();
+        assert_eq!(timing.election_timeout_max, Duration::from_millis(2000));
+        assert_eq!(timing.election_cycle, Duration::from_millis(7000));
+        assert_eq!(timing.leaderless_wait, Duration::from_millis(7000));
+        assert!(timing.leaderless_wait >= timing.election_timeout_max);
+    }
+
+    /// Every invariant has a test, so removing a guard from `validate()`
+    /// turns at least one case green that must stay red.
+    #[test]
+    fn validate_rejects_invalid_timing_combinations() {
+        let cases: Vec<(RaftConfig, &str)> = vec![
+            (
+                RaftConfig {
+                    heartbeat_interval_ms: 0,
+                    ..Default::default()
+                },
+                "heartbeat_interval_ms",
+            ),
+            (
+                RaftConfig {
+                    election_timeout_ms: 200,
+                    heartbeat_interval_ms: 200,
+                    ..Default::default()
+                },
+                "election_timeout_ms",
+            ),
+            (
+                RaftConfig {
+                    rpc_request_timeout_ms: 0,
+                    ..Default::default()
+                },
+                "rpc_request_timeout_ms",
+            ),
+            (
+                RaftConfig {
+                    election_timeout_ms: u64::MAX,
+                    ..Default::default()
+                },
+                "overflow",
+            ),
+            (
+                RaftConfig {
+                    snapshot_transfer_timeout_ms: 100,
+                    rpc_request_timeout_ms: 100,
+                    ..Default::default()
+                },
+                "snapshot_transfer_timeout_ms",
+            ),
+            (
+                RaftConfig {
+                    forward_initial_delay_ms: 0,
+                    ..Default::default()
+                },
+                "forward_initial_delay_ms",
+            ),
+        ];
+        for (config, needle) in cases {
+            let err = config
+                .validate()
+                .expect_err("invalid timing combination must be rejected");
+            assert!(err.contains(needle), "expected {needle:?} in {err:?}");
+        }
+    }
+
     #[test]
     fn test_new_config() {
         let config = RaftConfig::new(3000, 500, 900, 5000, PathBuf::from("/data/raft"));
@@ -368,6 +592,9 @@ mod tests {
         assert_eq!(openraft_config.election_timeout_max, 6000);
         assert_eq!(openraft_config.heartbeat_interval, 300);
         assert_eq!(openraft_config.max_payload_entries, 300);
+        // `None` is treated as disabled by openraft; a transient stall would
+        // then turn into a term bump on every missed heartbeat.
+        assert_eq!(openraft_config.enable_pre_vote, Some(true));
     }
 
     /// The configured chunk size must reach the network layer, and the window

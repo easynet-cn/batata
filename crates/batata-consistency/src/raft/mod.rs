@@ -17,11 +17,12 @@ pub mod request;
 pub mod snapshot_file;
 pub mod snapshot_format;
 pub mod state_machine;
+pub mod telemetry;
 pub mod types;
 pub mod write_guard;
 
 // Re-export commonly used types
-pub use config::RaftConfig;
+pub use config::{RaftConfig, RaftTiming};
 pub use grpc_service::{RaftGrpcService, RaftManagementGrpcService};
 pub use naming_hook::{NamingApplyHook, SharedNamingHook, new_shared_naming_hook};
 pub use node::{RaftNode, RaftNodeBuilder};

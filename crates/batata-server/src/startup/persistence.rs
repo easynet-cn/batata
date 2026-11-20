@@ -270,6 +270,9 @@ async fn init_external_db_cluster(
     // Start the distributed lock expire scanner
     let _lock_expire_scanner =
         raft_node.start_lock_expire_scanner(std::time::Duration::from_secs(5));
+    // Publish Raft term/role/apply-lag gauges and election events. The task
+    // holds only a Weak ref, so dropping the context stops it.
+    let _health_telemetry = raft_node.start_health_telemetry();
 
     let core_config = configuration.to_core_config();
     let smm = Arc::new(ServerMemberManager::new(&core_config));
@@ -402,6 +405,7 @@ async fn init_embedded_cluster(
     // release held locks.
     let _lock_expire_scanner =
         raft_node.start_lock_expire_scanner(std::time::Duration::from_secs(5));
+    let _health_telemetry = raft_node.start_health_telemetry();
 
     let reader = batata_consistency::RocksDbReader::new(rdb.clone());
     let cache_ttl = configuration.config_read_cache_ttl_secs();
