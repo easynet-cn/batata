@@ -51,6 +51,8 @@ const-hex = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 criterion = { workspace = true }
+# Only the blocking-dispatch bench needs a multi-thread runtime for context.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [[bench]]
 name = "raft_serialization_bench"
@@ -58,4 +60,12 @@ harness = false
 
 [[bench]]
 name = "async_trait_overhead_bench"
+harness = false
+
+[[bench]]
+name = "plugin_registry_apply_hooks_bench"
+harness = false
+
+[[bench]]
+name = "blocking_apply_io_bench"
 harness = false

@@ -320,6 +320,31 @@ tests assert both the presence of the blocking hop and that it runs on a
 different thread; four mutants (helper, apply call site, read helper, read call
 site) were killed.
 
+P1 later completed the snapshot side of the isolation. Snapshot restore now
+accumulates bounded `WriteBatch` entries on the async reader side and flushes
+them through `blocking_snapshot_io()`; snapshot build moves the RocksDB CF
+iterator onto `spawn_blocking` and streams owned records back through a small
+bounded `mpsc` channel to the async `SnapshotWriter`; post-install naming
+reconciliation moves both the `CF_INSTANCES` iteration and the apply-back hook
+dispatch to the blocking pool. The snapshot file format, checksum, staging
+policy, CF ordering and restore semantics are unchanged. Architecture guard
+tests assert that no snapshot path still calls `self.db.write`,
+`self.db.cf_handle` or `self.db.iterator_cf` inline, and a current-thread
+runtime test with a deliberately slow naming hook asserts that a 10ms
+heartbeat keeps ticking during `install_snapshot`.
+
+P2 then removed the remaining per-entry clone and lock-lifetime footgun on the
+apply path. `plugin_registry` is now `SharedPluginRegistry =
+Arc<RwLock<Arc<PluginRegistry>>>`: `apply_hooks()` clones the inner `Arc` in
+O(1) instead of cloning the `BTreeMap`, and each read guard is confined to its
+own block so it is dropped before the next `.await`. Registration clones the
+registry once, registers the handler, and replaces the inner `Arc`; snapshots
+already handed to a blocking apply stay immutable. The Consul plugin's
+`apply_hook` slot is resolved with `try_read()`, the owned `Option<Arc<...>>`
+is cloned out, and the guard is dropped before hook dispatch. Architecture
+guards plus a runtime probe (a hook that acquires the slot's write lock from
+inside dispatch) assert the guard is no longer held.
+
 ### 6.3 Resource Correlation (Follow-up Round T6)
 
 The original observability request asked that abnormal latency, CPU or memory
@@ -415,11 +440,16 @@ explicitly disabled `enable_leader_restore`, and added the cross-node
   missing when the T1-T6 evidence had to be correlated by hand.
 - The `RocksLogStore` read path (`try_get_log_entries`, startup cache loading)
   and the SM `apply` path were the last synchronous RocksDB calls on the main
-  runtime; T2 moved them to `spawn_blocking` (see section 6.2). Snapshot build,
-  snapshot restore and post-install naming reconciliation still iterate RocksDB
-  inline, but those are not on the per-entry heartbeat/replication path. If
-  runtime stalls reappear under high write load, look for new inline DB work
-  first rather than increasing timeouts.
+  runtime; T2 moved them to `spawn_blocking` (see section 6.2). P1 then moved
+  the remaining snapshot-side RocksDB work as well: restore `WriteBatch`
+  flushes, snapshot-build CF iteration and post-install naming reconciliation
+  now run on the blocking pool, with a bounded channel preserving streaming
+  (section 6.2). P2 then made the per-apply registry handle an O(1) inner
+  `Arc` clone and dropped every `tokio::sync::RwLock` read guard before the
+  next await, including the Consul apply-hook slot. No known inline RocksDB
+  work or guard-across-await remains on the single-threaded main runtime in
+  the Raft state machine. If runtime stalls reappear under high write load,
+  look for new inline DB work first rather than increasing timeouts.
 - Resource correlation (section 6.3) is now automatic in the logs and in the
   Prometheus namespace, but it is still **correlation, not attribution**: the
   sample is up to one 15s reporter interval old, CPU is system-wide rather than

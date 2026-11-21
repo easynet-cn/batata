@@ -32,8 +32,15 @@
 # The matrix stage additionally asserts Raft health: zero steady-state
 # elections and zero apply/client-write timeouts (scripts/raft_health_check.py).
 # A missing telemetry liveness marker fails closed rather than passing silently.
-# The check stage runs both script gates' self-tests so the classifier and the
-# canonical SDK port list cannot silently drift.
+# The check stage runs three script gates' self-tests so the classifier, the
+# canonical SDK port list and the perf observability helpers cannot silently
+# drift.
+#
+# The perf stage is now attributable: host load/free-disk snapshots are recorded
+# before and after each case, every (case, variant, round, node) keeps its own
+# size-capped server log, and cluster perf records a Raft health summary as
+# diagnostic context (the matrix stage stays the authoritative health gate).
+# See perf_observability.py.
 #
 # Reports are written to reports/regression/<timestamp>/ (gitignored) with a
 # stable symlink at reports/regression/latest. Never /tmp: it gets cleaned.
@@ -55,6 +62,8 @@
 #   PERF_ROUNDS=3 PERF_DURATION=20s PERF_WARMUP=10s
 #   PERF_CONNECTIONS=20 PERF_THREADS=2 PERF_WORKERS=8
 #   PERF_TOLERANCE=0.08       minimum tolerance when cv_pct is small
+#   PERF_SERVER_LOG_MAX_BYTES=4194304
+#                             cap per server log (head + health signals + tail)
 #   PERF_BASELINE=<file>      baseline to read/write (for experiments)
 # =============================================================================
 
@@ -83,6 +92,9 @@ PERF_WARMUP="${PERF_WARMUP:-10s}"
 PERF_CONNECTIONS="${PERF_CONNECTIONS:-20}"
 PERF_THREADS="${PERF_THREADS:-2}"
 PERF_WORKERS="${PERF_WORKERS:-8}"
+# Bound each retained server log. The default INFO level emits two lines per
+# config write; an uncapped cluster node reached 66 MiB in one perf run.
+PERF_SERVER_LOG_MAX_BYTES="${PERF_SERVER_LOG_MAX_BYTES:-4194304}"
 PERF_MACHINE_ID="${PERF_MACHINE_ID:-}"
 PERF_CASES=(naming config)
 
@@ -289,11 +301,18 @@ stage_check() {
         record_failure check "raft_health_check self-test failed"
         guard_rc=1
     fi
-    # Guard the wiring itself: if a future edit drops the two invocations, the
-    # stage must not pass merely because nothing failed. Each self-test prints
-    # an explicit PASS marker, so a missing/empty artifact is a red gate.
+    if ! python3 "${SCRIPT_DIR}/perf_observability.py" --self-test \
+        > "$LOG_DIR/check-perf-observability.log" 2>&1; then
+        record_failure check "perf_observability self-test failed"
+        guard_rc=1
+    fi
+    # Guard the wiring itself: if a future edit drops one of the three
+    # invocations, the stage must not pass merely because nothing failed. Each
+    # self-test prints an explicit PASS marker, so a missing/empty artifact is
+    # a red gate. The perf helper also checks the perf-stage flags statically.
     if ! grep -q 'PASS' "$LOG_DIR/check-port-guard.log" 2>/dev/null \
-        || ! grep -q 'passed' "$LOG_DIR/check-raft-health.log" 2>/dev/null; then
+        || ! grep -q 'passed' "$LOG_DIR/check-raft-health.log" 2>/dev/null \
+        || ! grep -q 'SELF-TEST PASS' "$LOG_DIR/check-perf-observability.log" 2>/dev/null; then
         record_failure check "script self-test artifacts missing or incomplete"
         guard_rc=1
     fi
@@ -662,8 +681,15 @@ stage_perf() {
     fi
 
     local rc=0 case_name
+    local host_state_log="$LOG_DIR/perf-host-state.log"
     for case_name in "${PERF_CASES[@]}"; do
         local csv="$LOG_DIR/perf-${case_name}.csv"
+        local perf_log_dir="$LOG_DIR/perf-${case_name}"
+        mkdir -p "$perf_log_dir"
+        # Host context is what makes a slow run explainable after the fact.
+        python3 "${SCRIPT_DIR}/perf_observability.py" --snapshot \
+            "$host_state_log" "before-${case_name}-${PERF_MODE}" || \
+            { perf_fail "${case_name}: host state snapshot failed" || rc=1; }
         python3 "${SCRIPT_DIR}/bench_ab.py" \
             --case "$case_name" \
             --variant "cur=BATATA_NOOP=1" \
@@ -672,7 +698,41 @@ stage_perf() {
             --duration "$PERF_DURATION" --warmup "$PERF_WARMUP" \
             --connections "$PERF_CONNECTIONS" --threads "$PERF_THREADS" --workers "$PERF_WORKERS" \
             --mode "$PERF_MODE" --fresh-store \
+            --log-dir "$perf_log_dir" \
+            --host-state-log "$host_state_log" \
+            --server-log-max-bytes "$PERF_SERVER_LOG_MAX_BYTES" \
             --out "$csv" > "$LOG_DIR/perf-${case_name}.log" 2>&1
+        python3 "${SCRIPT_DIR}/perf_observability.py" --snapshot \
+            "$host_state_log" "after-${case_name}-${PERF_MODE}" || \
+            { perf_fail "${case_name}: host state snapshot failed" || rc=1; }
+
+        # Cluster perf node logs are run through the same Raft health
+        # classifier as the matrix stage, but the result is DIAGNOSTIC here:
+        # the driver SIGTERMs all three nodes between rounds, and a peer
+        # disappearing during shutdown can trigger an "election after a leader
+        # was known" WARN 16 ms before the shutdown marker. That is a shutdown
+        # artifact, not a measured-path anomaly. The matrix stage remains the
+        # authoritative Raft health gate. The marker still makes the
+        # classifier expect telemetry liveness, so truncated/empty logs show
+        # up as "telemetry liveness missing" instead of a false green.
+        if [ "$PERF_MODE" = "cluster" ]; then
+            local marker="$LOG_DIR/perf-${case_name}-cluster.marker"
+            local health_args=("$marker") f health_summary
+            printf '[MATRIX] [cluster-rock] perf case=%s mode=cluster\n' "$case_name" > "$marker"
+            for f in "$perf_log_dir"/*.node*.log; do
+                [ -f "$f" ] && health_args+=("$f")
+            done
+            if [ "${#health_args[@]}" -eq 1 ]; then
+                perf_fail "${case_name}: no node logs retained for Raft health check" || rc=1
+            else
+                python3 "${SCRIPT_DIR}/raft_health_check.py" "${health_args[@]}" \
+                    > "$LOG_DIR/perf-${case_name}-raft-health.log" 2>&1
+                health_summary=$(cat "$LOG_DIR/perf-${case_name}-raft-health.log")
+                PERF_ADVISORY+=("${case_name}: Raft health (diagnostic; shutdown-window elections included): ${health_summary}")
+                echo "    Raft health (diagnostic): ${health_summary}"
+            fi
+        fi
+
         [ -f "$csv" ] || { perf_fail "${case_name}: no results" || rc=1; continue; }
 
         # `# raw <variant> <case>: [v1, v2, v3]`

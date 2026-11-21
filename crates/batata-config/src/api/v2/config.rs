@@ -15,7 +15,11 @@ use batata_server_common::{
     model::{AppState, response::Result},
     secured,
 };
-use tracing::{info, warn};
+// Per-write success logs stay at debug: one config benchmark emitted ~173k
+// INFO lines (66 MiB on a single cluster node) from these four sites plus the
+// default trace subscriber. Failures remain warn!, and success is observable
+// again with `RUST_LOG=batata_config=debug`.
+use tracing::{debug, warn};
 
 use crate::model::config::ConfigBasicInfo;
 use crate::service::notifier::ConfigChangeNotifier;
@@ -366,7 +370,7 @@ pub async fn publish_config(
             .await
         {
             Ok(_) => {
-                info!(
+                debug!(
                     data_id = %form.data_id,
                     group = %group,
                     namespace_id = %namespace_id,
@@ -439,7 +443,7 @@ pub async fn publish_config(
             .await
         {
             Ok(_) => {
-                info!(
+                debug!(
                     data_id = %form.data_id,
                     group = %group,
                     namespace_id = %namespace_id,
@@ -500,7 +504,7 @@ pub async fn publish_config(
                 },
             );
 
-            info!(
+            debug!(
                 data_id = %form.data_id,
                 group = %group,
                 namespace_id = %namespace_id,
@@ -608,7 +612,7 @@ pub async fn delete_config(
                 },
             );
 
-            info!(
+            debug!(
                 data_id = %params.data_id,
                 group = %group,
                 namespace_id = %namespace_id,
@@ -760,5 +764,31 @@ mod tests {
             "configured character limit must reject longer content"
         );
         assert!(reason.unwrap().contains("configured limit"));
+    }
+
+    /// Architecture guard: reverting any per-write success log to `info!`
+    /// brings back the 66 MiB/cluster-node log volume that the perf stage
+    /// used to produce. The test module itself is excluded so its own
+    /// literals cannot mask a regression.
+    #[test]
+    fn per_write_success_logs_stay_at_debug() {
+        let src = include_str!("config.rs");
+        let tests_start = src
+            .find("#[cfg(test)]\nmod tests")
+            .expect("tests module must exist");
+        let production = &src[..tests_start];
+        assert!(
+            production.contains("use tracing::{debug, warn};"),
+            "the debug macro must stay imported"
+        );
+        assert!(
+            !production.contains("info!("),
+            "per-write success logs must not be INFO"
+        );
+        assert_eq!(
+            production.matches("debug!(").count(),
+            4,
+            "all four write-success logs (publish/beta/gray/delete) must be debug"
+        );
     }
 }

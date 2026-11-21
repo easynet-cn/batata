@@ -66,6 +66,14 @@ pub trait RaftPluginHandler: Send + Sync + 'static {
     fn install_snapshot(&self, db: &DB, data: &[u8]) -> Result<(), String>;
 }
 
+/// Legacy standalone registry slot (the P2 shape).
+///
+/// Production now keeps the registry inside the single atomic
+/// [`super::hooks::HookSet`], so applies clone just one `Arc` for *all* handles.
+/// This alias is retained for the historical micro-benchmark, which reproduces
+/// the pre-P1 per-slot shape.
+pub type SharedPluginRegistry = Arc<tokio::sync::RwLock<Arc<PluginRegistry>>>;
+
 /// Registry of plugin handlers, keyed by plugin_id.
 ///
 /// Handlers live in a `BTreeMap` so iteration is ordered by plugin id: the

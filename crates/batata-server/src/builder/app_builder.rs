@@ -150,7 +150,8 @@ impl AppBuilder {
             configuration.log_console_enabled(),
             configuration.log_file_enabled(),
             configuration.log_level(),
-        );
+        )
+        .with_env_overrides();
         let otel_config = OtelConfig::from_config(
             configuration.otel_enabled(),
             configuration.otel_endpoint(),

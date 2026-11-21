@@ -390,7 +390,13 @@ pub struct ConsulOperatorService {
     pub(crate) raft_node: Option<Arc<batata_consistency::RaftNode>>,
     autopilot_config: Arc<tokio::sync::RwLock<AutopilotConfiguration>>,
     keyring: Arc<DashMap<String, i32>>,
-    primary_key: Arc<tokio::sync::RwLock<Option<String>>>,
+    /// Synchronous lock on purpose: `list_keys` is called from both sync and
+    /// async callers, so it cannot await a `tokio::sync::RwLock`. The old
+    /// fail-open read silently returned an empty `primary_keys` map while
+    /// a writer held the slot, i.e. a wrong answer instead of a short wait.
+    /// Critical sections here are a single `Option<String>` read/write with
+    /// no `.await` inside, so a blocking lock is safe on the async runtime.
+    primary_key: Arc<std::sync::RwLock<Option<String>>>,
     index: Arc<AtomicU64>,
     pub(crate) datacenter: String,
 }
@@ -422,7 +428,7 @@ impl ConsulOperatorService {
             raft_node: None,
             autopilot_config: Arc::new(tokio::sync::RwLock::new(AutopilotConfiguration::default())),
             keyring,
-            primary_key: Arc::new(tokio::sync::RwLock::new(Some(default_key))),
+            primary_key: Arc::new(std::sync::RwLock::new(Some(default_key))),
             index: Arc::new(AtomicU64::new(1)),
             datacenter,
         }
@@ -589,7 +595,13 @@ impl ConsulOperatorService {
             .collect();
 
         // primary_keys contains only the currently active primary key.
-        let primary_key_guard = self.primary_key.try_read().ok().and_then(|g| g.clone());
+        let primary_key_guard = {
+            let guard = self
+                .primary_key
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (*guard).clone()
+        };
         let primary_keys: HashMap<String, i32> = primary_key_guard
             .iter()
             .filter_map(|pk| keys.get(pk).map(|&count| (pk.clone(), count)))
@@ -661,7 +673,10 @@ impl ConsulOperatorService {
         }
 
         // Set as the new primary key.
-        let mut primary = self.primary_key.write().await;
+        let mut primary = self
+            .primary_key
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *primary = Some(key.to_string());
         drop(primary);
 
@@ -680,7 +695,10 @@ impl ConsulOperatorService {
         }
 
         // Check it is not the primary key (cannot remove the currently used primary key).
-        let primary = self.primary_key.read().await;
+        let primary = self
+            .primary_key
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if primary.as_deref() == Some(key) {
             return Err("Cannot remove primary key".to_string());
         }
@@ -1496,6 +1514,59 @@ mod tests {
         let responses = service.list_keys(true);
         assert_eq!(responses.responses.len(), 1);
         assert!(!responses.responses[0].wan);
+    }
+
+    /// `list_keys` used to resolve the primary key with `try_read().ok()`,
+    /// which returned an empty `primary_keys` map whenever a writer held the
+    /// slot — a wrong answer instead of a short wait. Hold the write lock and
+    /// prove the reader blocks and then still reports the primary key.
+    #[test]
+    fn test_keyring_list_waits_for_a_contended_primary_key_slot() {
+        use std::time::Duration;
+
+        let service = test_service();
+        let write_guard = service
+            .primary_key
+            .write()
+            .expect("primary key slot uncontended before the test");
+
+        let responses = std::thread::scope(|scope| {
+            let reader = scope.spawn(|| service.list_keys(false));
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                !reader.is_finished(),
+                "list_keys must wait for the writer, not fail open on try_read"
+            );
+            drop(write_guard);
+            reader.join().expect("list_keys thread")
+        });
+        assert!(
+            !responses.responses[0].primary_keys.is_empty(),
+            "contention must not silently produce an answer without a primary key"
+        );
+    }
+
+    /// Architecture guard: reintroducing a fail-open read or an async lock
+    /// that a sync `list_keys` cannot await must turn this test red.
+    #[test]
+    fn test_primary_key_read_is_not_fail_open() {
+        let src = include_str!("operator.rs");
+        let tests_start = src
+            .find("#[cfg(test)]\nmod tests")
+            .expect("tests module must exist");
+        let production = &src[..tests_start];
+        assert!(
+            !production.contains("try_read().ok()"),
+            "a contended primary-key read must not silently return None"
+        );
+        assert!(
+            production.contains("primary_key: Arc<std::sync::RwLock<Option<String>>>"),
+            "the primary-key slot must stay synchronously readable from list_keys"
+        );
+        assert!(
+            production.contains("poisoned.into_inner()"),
+            "primary-key reads must be blocking and poison-tolerant"
+        );
     }
 
     #[test]

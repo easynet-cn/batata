@@ -1214,7 +1214,7 @@ impl ConsulPlugin {
                     .with_connect_ca(connect_ca.clone())
                     .with_lock_delay(lock_delay.clone()),
             );
-            *apply_hook_slot.write().await = Some(hook);
+            crate::raft::apply_hook::install_apply_hook(&apply_hook_slot, hook);
             tracing::info!("Consul apply-back hook installed (NamingStoreApplyHook)");
         }
 

@@ -123,6 +123,7 @@ scripts/
 ├── init-bench-user.sh              # Non-admin user for permission-path benchmarks
 ├── benchmark.sh                    # wrk/hey throughput benchmark (config / naming / consul)
 ├── bench_ab.py                     # A/B driver: alternating rounds, median aggregation
+├── perf_observability.py           # Host snapshots, per-round log paths, log capping
 ├── regression.sh                   # Unified regression gate (see "Regression Gate")
 ├── regression_whitelist.txt        # Known-failure baseline for the gate
 ├── regression_perf_baseline.txt    # Performance anchors for `regression.sh --perf`
@@ -380,7 +381,8 @@ Exit code is `0` only when nothing outside the whitelist failed.
 
 Written to `reports/regression/<timestamp>/report.md` (gitignored), with
 `reports/regression/latest` symlinked to the most recent run. Per-stage logs
-are under `reports/regression/<timestamp>/logs/`. Nothing is written to `/tmp`.
+are under `reports/regression/<timestamp>/logs/`. Gate artifacts never live in
+`/tmp`; only the temporary data stores of `bench_ab.py --fresh-store` do.
 
 ```
 ## Stages        | Stage | Status | Detail | Time |
@@ -441,6 +443,21 @@ below `anchor * (1 - tolerance)`, with `tolerance = max(anchor cv_pct,
 PERF_TOLERANCE)` and `PERF_TOLERANCE` defaulting to `0.08`. The stage is
 **advisory by default** - it is the only stage whose result depends on how busy
 the host is - and blocks only when `--perf-gate` is passed.
+
+`perf_observability.py` makes a slow run explainable afterwards: it appends
+JSON-lines host snapshots (load average, CPU count, free disk and memory) to
+`logs/perf-host-state.log` before/after each case and each measured round, gives
+every `(case, variant, round, node)` its own server log under
+`logs/perf-<case>/`, and caps each log at `PERF_SERVER_LOG_MAX_BYTES` (default
+4 MiB) while retaining the head, tail and all `raft_event`/WARN/ERROR lines.
+Cluster perf also runs those node logs through `raft_health_check.py` with a
+`[cluster-rock]` marker so a missing telemetry liveness signal is visible; the
+result lands in `logs/perf-<case>-raft-health.log` and in the report's advisory
+section. It is **diagnostic, not a gate**: the driver SIGTERMs all three nodes
+between rounds, and a peer disappearing during shutdown can emit a
+`steady_state_election` WARN just before the shutdown marker. The matrix stage
+remains the authoritative Raft health gate. The `check` stage runs `perf_observability.py --self-test`, which also verifies that the shell
+wiring in `stage_perf`/`stage_check` has not been dropped.
 
 It needs `target/release/batata-server`; without it the stage is skipped with a
 warning rather than failing (a release build can take several minutes and

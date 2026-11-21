@@ -58,6 +58,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# The driver is normally launched as `python3 scripts/bench_ab.py`, so the
+# script directory is already on sys.path. Add it explicitly as well so the
+# helpers still resolve when this module is imported from another directory.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from perf_observability import (  # noqa: E402
+    DEFAULT_MAX_BYTES,
+    cap_log_file,
+    capture_host_state,
+    server_log_paths,
+)
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BENCH = os.path.join(REPO_ROOT, "scripts", "benchmark.sh")
 SERVER_BIN = os.path.join(REPO_ROOT, "target", "release", "batata-server")
@@ -310,7 +321,7 @@ class Server:
         self,
         args: argparse.Namespace,
         variant_env: dict[str, str],
-        log_path: str,
+        log_paths: list[str],
         store_dir: str | None = None,
         variant_cli: list[str] | None = None,
     ):
@@ -319,7 +330,7 @@ class Server:
         self.env = dict(os.environ)
         self.env.update(variant_env)
         self.env["BATATA_SERVER_HTTP_WORKERS"] = str(args.workers)
-        self.log_path = log_path
+        self.log_paths = log_paths
         self.variant_cli = variant_cli or []
         self.procs: list[subprocess.Popen] = []
         self.nodes = self._build_nodes()
@@ -339,7 +350,7 @@ class Server:
                 cmd.append(f"--batata.sql.init.platform={cfg['platform']}")
                 cmd.append(f"--db-url={cfg['url']}")
                 print(f"  external store: {self.args.storage} ({cfg['url']})")
-            return [(cmd, self.args.port, self.log_path)]
+            return [(cmd, self.args.port, self.log_paths[0])]
 
         ports = [self.args.base_port + 10 * i for i in range(self.args.nodes)]
         member_list = ",".join(
@@ -369,7 +380,7 @@ class Server:
                 os.makedirs(node_dir, exist_ok=True)
                 cmd.append(f"--{DATA_DIR_KEY}={node_dir}")
 
-            nodes.append((cmd, port, f"{self.log_path}.node{index}"))
+            nodes.append((cmd, port, self.log_paths[index - 1]))
 
         if self.store_dir is not None:
             print(f"  fresh store: {self.store_dir} (one directory per node)")
@@ -568,6 +579,26 @@ def main() -> int:
         default="/tmp/bench_ab_stores",
         help="parent directory for --fresh-store data dirs (default: /tmp/bench_ab_stores)",
     )
+    parser.add_argument(
+        "--log-dir",
+        default="/tmp/bench_ab_logs",
+        help="directory for per-(case, variant, round, node) server logs "
+        "(default: /tmp/bench_ab_logs). The regression gate overrides this with "
+        "its report log dir so the logs survive the run.",
+    )
+    parser.add_argument(
+        "--host-state-log",
+        default=None,
+        help="JSON-lines file for before/after host load and disk snapshots "
+        "(default: <log-dir>/host-state.log)",
+    )
+    parser.add_argument(
+        "--server-log-max-bytes",
+        type=int,
+        default=DEFAULT_MAX_BYTES,
+        help="cap each server log after the process stops; head, tail and "
+        "health-signal lines are retained (default: 4 MiB)",
+    )
     parser.add_argument("--out", default="/tmp/bench_ab_results.csv")
     args = parser.parse_args()
 
@@ -605,6 +636,12 @@ def main() -> int:
 
     variants = parse_variants(args.variant)
     variant_cli_map = {name: cli for name, cli in parse_variant_cli(args.variant_cli)}
+
+    # Persist the context a perf number needs to be attributable: host load and
+    # free disk before/after each round, and one server log per round/node.
+    os.makedirs(args.log_dir, exist_ok=True)
+    host_state_log = args.host_state_log or os.path.join(args.log_dir, "host-state.log")
+    capture_host_state(host_state_log, f"start case={args.case} mode={args.mode}")
     if args.fresh_store and not args.init:
         # A fresh store contains no users, so the benchmark would run anonymously.
         args.init = True
@@ -649,10 +686,14 @@ def main() -> int:
             store_dir = None
             if args.fresh_store:
                 store_dir = os.path.join(args.store_root, f"{name}-r{round_index}")
+            paths = server_log_paths(
+                args.log_dir, args.case, name, round_index, args.nodes, args.mode
+            )
+            capture_host_state(host_state_log, f"before {name} r{round_index}")
             server = Server(
                 args,
                 env,
-                f"/tmp/bench_ab_{name}.log",
+                paths,
                 store_dir,
                 variant_cli=variant_cli_map.get(name, []),
             )
@@ -699,6 +740,11 @@ def main() -> int:
             finally:
                 # Always stop, otherwise a crash leaves a server holding the port.
                 server.stop()
+                capture_host_state(host_state_log, f"after {name} r{round_index}")
+                # The default INFO level emits two lines per config write; bound
+                # the artifacts without losing Raft health evidence.
+                for path in server.log_paths:
+                    cap_log_file(path, args.server_log_max_bytes)
             time.sleep(args.settle)
 
     print("\n" + "=" * 78)
@@ -764,7 +810,10 @@ def main() -> int:
                 print(f"  {item}")
             print("A variant that fails requests earlier can look faster; check these before quoting any delta.")
 
+    capture_host_state(host_state_log, f"end case={args.case} mode={args.mode}")
     print(f"\nCSV written to {args.out}")
+    print(f"Server logs: {args.log_dir}")
+    print(f"Host state:  {host_state_log}")
     return 0
 
 

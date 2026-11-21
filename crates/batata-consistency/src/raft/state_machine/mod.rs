@@ -20,9 +20,11 @@ use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use super::health_check_hook::{SharedHealthCheckHook, new_shared_health_check_hook};
-use super::naming_hook::{SharedNamingHook, new_shared_naming_hook};
-use super::plugin::{PluginRegistry, RaftPluginHandler};
+use super::hooks::{
+    HookSet, SharedHooks, install_naming_hook, new_shared_hooks, register_plugin_handler,
+};
+use super::naming_hook::NamingApplyHook;
+use super::plugin::RaftPluginHandler;
 use super::request::{RaftRequest, RaftResponse};
 use super::snapshot_file::SnapshotFile;
 use super::snapshot_format::{self, SnapshotReader, SnapshotWriter};
@@ -52,6 +54,84 @@ const SNAPSHOT_DATA_FILE: &str = "data";
 /// batches so memory stays flat no matter how large the snapshot is.
 const RESTORE_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
+/// Bounded number of snapshot records in flight between the blocking RocksDB
+/// iterator and the async snapshot writer.
+///
+/// A small capacity keeps peak memory flat while still allowing the blocking
+/// producer to run ahead of the file writer. Each record is length-capped by
+/// `snapshot_format::MAX_SNAPSHOT_RECORD_LEN`.
+const SNAPSHOT_CHANNEL_CAPACITY: usize = 8;
+
+/// One record produced by the blocking RocksDB iterator and consumed by the
+/// async snapshot writer.
+enum SnapshotRecord {
+    StartCf(String),
+    Entry(Vec<u8>, Vec<u8>),
+}
+
+/// Run synchronous snapshot RocksDB work on Tokio's blocking pool.
+///
+/// Snapshot build, restore and post-install naming reconciliation used to
+/// iterate or write RocksDB inline on the actix `current_thread` runtime. A
+/// large snapshot therefore froze `main`, the same thread that polls
+/// RaftCore, the heartbeat worker and the election deadline notifier. Awaiting
+/// the blocking task keeps the async thread free while preserving streaming
+/// and ordering.
+async fn blocking_snapshot_io<F, T>(f: F) -> Result<T, std::io::Error>
+where
+    F: FnOnce() -> Result<T, std::io::Error> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| io_error(format!("RocksDB snapshot task failed: {e}")))?
+}
+
+/// Apply one bounded batch of snapshot entries to RocksDB.
+///
+/// Synchronous by design: called from inside `blocking_snapshot_io`, so the
+/// `WriteBatch` never occupies the async runtime thread.
+fn flush_restore_batch(
+    db: Arc<DB>,
+    cf_name: String,
+    entries: Vec<(Vec<u8>, Vec<u8>)>,
+    include_range_delete: bool,
+) -> Result<(), std::io::Error> {
+    let cf = db
+        .cf_handle(&cf_name)
+        .ok_or_else(|| io_error("snapshot entry before any column family"))?;
+
+    let mut batch = rocksdb::WriteBatch::default();
+    if include_range_delete {
+        // Keys are UTF-8 strings, so 0xFF as exclusive end covers all keys.
+        batch.delete_range_cf(cf, vec![0u8], vec![0xFFu8, 0xFF, 0xFF, 0xFF]);
+    }
+    for (key, value) in entries {
+        batch.put_cf(cf, &key, &value);
+    }
+    db.write(batch).map_err(io_error)?;
+    Ok(())
+}
+
+/// Flush the accumulated entries for one column family on the blocking pool.
+async fn flush_restore_batch_async(
+    db: Arc<DB>,
+    cf_name: String,
+    pending: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    batch_bytes: &mut usize,
+    include_range_delete: bool,
+) -> Result<(), std::io::Error> {
+    if pending.is_empty() {
+        *batch_bytes = 0;
+        return Ok(());
+    }
+
+    let entries = std::mem::take(pending);
+    *batch_bytes = 0;
+    blocking_snapshot_io(move || flush_restore_batch(db, cf_name, entries, include_range_delete))
+        .await
+}
+
 /// What a snapshot restore applied.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RestoreStats {
@@ -69,7 +149,7 @@ pub struct RestoreStats {
 /// Plugin-owned CFs are *not* listed here — plugins declare them through
 /// [`RaftPluginHandler::snapshot_column_families`] and the builder appends
 /// them, so a plugin's data can never be silently omitted from snapshots.
-const CORE_SNAPSHOT_CF_NAMES: &[&str] = &[
+pub(super) const CORE_SNAPSHOT_CF_NAMES: &[&str] = &[
     CF_CONFIG,
     CF_CONFIG_HISTORY,
     CF_CONFIG_GRAY,
@@ -144,14 +224,11 @@ fn sync_write_options() -> rocksdb::WriteOptions {
 ///
 /// `apply_request` runs on Tokio's blocking pool, where a
 /// `tokio::sync::RwLock` cannot be awaited (and blocking on it could deadlock
-/// against the single-threaded async worker). Resolve them once per entry on
-/// the async side instead, preserving the original "read the current hook for
-/// every entry" semantics without holding any lock across the blocking hop.
-struct ApplyHooks {
-    naming: Option<Arc<dyn super::naming_hook::NamingApplyHook>>,
-    health_check: Option<Arc<dyn super::health_check_hook::HealthCheckApplyHook>>,
-    plugins: Arc<PluginRegistry>,
-}
+/// against the single-threaded async worker). Resolve the whole handle set
+/// once per entry on the async side instead. The set is a single immutable
+/// `Arc`, so one read lock yields an atomically consistent generation and
+/// nothing is held across the blocking hop.
+type ApplyHooks = Arc<HookSet>;
 
 /// Run synchronous state-machine work on Tokio's blocking pool.
 ///
@@ -287,18 +364,11 @@ pub struct StateMachineInner {
     last_applied: RwLock<Option<LogId>>,
     /// Last membership configuration
     last_membership: RwLock<StoredMembership>,
-    /// Registry of plugin handlers for PluginWrite operations.
-    /// Wrapped in Arc so the registry can be shared with RaftNode for
-    /// post-initialization plugin registration (after state_machine is moved into Raft).
-    plugin_registry: Arc<RwLock<PluginRegistry>>,
-    /// Apply-back hook for persistent naming instances. Registered after
-    /// construction (see `RaftNode::register_naming_hook`). Invoked after
-    /// `apply_instance_*` succeeds to keep `NamingService` DashMap in sync.
-    naming_hook: SharedNamingHook,
-    /// Apply-back hook for replicated health-check status. Registered after
-    /// both `RaftNode` and `InstanceCheckRegistry` exist. Mirror of
-    /// `naming_hook`. See `project_health_status_raft_sync_plan.md`.
-    health_check_hook: SharedHealthCheckHook,
+    /// Every handle an apply may dispatch to: plugin handlers, the naming
+    /// apply-back hook and the health-check apply-back hook. Registration
+    /// replaces the inner `Arc<HookSet>` atomically, so the apply path takes
+    /// one read and clones one `Arc` per entry. See `raft/hooks.rs`.
+    hooks: SharedHooks,
     /// Pre-configured WriteOptions for state-machine writes (sync, WAL settings).
     pub(super) write_opts: rocksdb::WriteOptions,
     /// Directory snapshots are persisted to, using JRaft's `LocalSnapshotStorage`
@@ -444,7 +514,9 @@ impl RocksStateMachine {
     /// Each column family is cleared with a range delete the first time it
     /// appears, then filled from the snapshot. Batches are flushed once they
     /// reach [`RESTORE_BATCH_BYTES`], so peak memory is bounded by that
-    /// threshold rather than by the size of the snapshot.
+    /// threshold rather than by the size of the snapshot. All RocksDB writes
+    /// run on the blocking pool through `blocking_snapshot_io`; only the async
+    /// file reader stays on the runtime thread.
     async fn restore_from_file(&self, path: &Path) -> Result<RestoreStats, std::io::Error> {
         let file = tokio::fs::File::open(path).await.map_err(io_error)?;
 
@@ -466,12 +538,11 @@ impl RocksStateMachine {
         let mut key = Vec::new();
         let mut value = Vec::new();
 
-        let mut batch = rocksdb::WriteBatch::default();
-        let mut batch_bytes = 0usize;
-        // Column family currently being filled, plus whether its range delete
-        // has already been queued in a batch that is still pending.
-        let mut current = None;
+        let db = self.db.clone();
+        let mut current_cf: Option<String> = None;
         let mut cleared = false;
+        let mut pending: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut batch_bytes = 0usize;
 
         while let Some(kind) = reader
             .next_record(&mut cf_name, &mut key, &mut value)
@@ -481,38 +552,43 @@ impl RocksStateMachine {
             match kind {
                 snapshot_format::RecordKind::ColumnFamily => {
                     // Flush any pending writes for the previous CF first.
-                    if batch_bytes > 0 {
-                        self.db
-                            .write(std::mem::take(&mut batch))
-                            .map_err(io_error)?;
-                        batch_bytes = 0;
+                    if let Some(cf) = current_cf.clone() {
+                        flush_restore_batch_async(
+                            db.clone(),
+                            cf,
+                            &mut pending,
+                            &mut batch_bytes,
+                            !cleared,
+                        )
+                        .await?;
                     }
-                    current = self.db.cf_handle(&cf_name);
+                    current_cf = Some(cf_name.clone());
                     cleared = false;
                     stats.column_families += 1;
                 }
                 snapshot_format::RecordKind::Entry => {
-                    let Some(cf) = current.as_ref() else {
-                        return Err(io_error(std::io::Error::other(
-                            "snapshot entry before any column family",
-                        )));
-                    };
-                    if !cleared {
-                        // Keys are UTF-8 strings, so 0xFF as exclusive end
-                        // covers all keys.
-                        batch.delete_range_cf(cf, vec![0u8], vec![0xFFu8, 0xFF, 0xFF, 0xFF]);
-                        cleared = true;
+                    if current_cf.is_none() {
+                        return Err(io_error("snapshot entry before any column family"));
                     }
-                    batch.put_cf(cf, &key, &value);
-                    batch_bytes += key.len() + value.len();
+
+                    let len = key.len() + value.len();
+                    // `next_record` reuses its buffers; take ownership of the
+                    // current pair so the bounded batch stays intact.
+                    pending.push((std::mem::take(&mut key), std::mem::take(&mut value)));
+                    batch_bytes += len;
                     stats.entries += 1;
-                    stats.bytes += (key.len() + value.len()) as u64;
+                    stats.bytes += len as u64;
 
                     if batch_bytes >= RESTORE_BATCH_BYTES {
-                        self.db
-                            .write(std::mem::take(&mut batch))
-                            .map_err(io_error)?;
-                        batch_bytes = 0;
+                        let cf = current_cf.clone().expect("checked above");
+                        flush_restore_batch_async(
+                            db.clone(),
+                            cf,
+                            &mut pending,
+                            &mut batch_bytes,
+                            !cleared,
+                        )
+                        .await?;
                         // The range delete is already durable, do not repeat it.
                         cleared = true;
                     }
@@ -521,8 +597,9 @@ impl RocksStateMachine {
             }
         }
 
-        if batch_bytes > 0 {
-            self.db.write(batch).map_err(io_error)?;
+        if let Some(cf) = current_cf.clone() {
+            flush_restore_batch_async(db.clone(), cf, &mut pending, &mut batch_bytes, !cleared)
+                .await?;
         }
 
         Ok(stats)
@@ -597,38 +674,49 @@ impl RocksStateMachine {
     /// can compute the difference itself.
     async fn reconcile_naming_view(&self) {
         let hook = {
-            let guard = self.naming_hook.read().await;
-            match guard.as_ref() {
-                Some(hook) => hook.clone(),
-                None => return,
-            }
+            let guard = self.hooks.read().await;
+            guard.naming.clone()
         };
-
-        let Some(cf) = self.db.cf_handle(CF_INSTANCES) else {
+        let Some(hook) = hook else {
             return;
         };
 
-        let mut instances = Vec::new();
-        let mut malformed = 0usize;
-        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
-            match item {
-                Ok((_key, value)) => match bincode::deserialize::<StoredInstance>(&value) {
-                    Ok(stored) => instances.push(stored),
-                    Err(e) => {
-                        malformed += 1;
-                        warn!("Undecodable instance after snapshot install: {}", e);
-                    }
-                },
-                Err(e) => warn!("Unreadable instance after snapshot install: {}", e),
-            }
-        }
+        let db = self.db.clone();
+        // Both the RocksDB iteration and the hook dispatch are synchronous.
+        // Run them on the blocking pool so a large instance set cannot freeze
+        // the single-threaded async runtime during snapshot install.
+        if let Err(e) = blocking_snapshot_io(move || {
+            let Some(cf) = db.cf_handle(CF_INSTANCES) else {
+                return Ok(());
+            };
 
-        info!(
-            "Reconciling {} persistent instances after snapshot install ({} undecodable)",
-            instances.len(),
-            malformed
-        );
-        hook.on_snapshot_loaded(instances);
+            let mut instances = Vec::new();
+            let mut malformed = 0usize;
+            for item in db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+                match item {
+                    Ok((_key, value)) => match bincode::deserialize::<StoredInstance>(&value) {
+                        Ok(stored) => instances.push(stored),
+                        Err(e) => {
+                            malformed += 1;
+                            warn!("Undecodable instance after snapshot install: {}", e);
+                        }
+                    },
+                    Err(e) => warn!("Unreadable instance after snapshot install: {}", e),
+                }
+            }
+
+            info!(
+                "Reconciling {} persistent instances after snapshot install ({} undecodable)",
+                instances.len(),
+                malformed
+            );
+            hook.on_snapshot_loaded(instances);
+            Ok(())
+        })
+        .await
+        {
+            warn!("Snapshot naming reconciliation task failed: {}", e);
+        }
     }
 
     /// Enable on-disk snapshot persistence under `dir`.
@@ -650,27 +738,21 @@ impl RocksStateMachine {
         self.db.clone()
     }
 
-    /// Get a shared reference to the plugin registry.
+    /// Get a shared handle to the atomic hook set.
     ///
-    /// This allows `RaftNode` to hold a handle to the registry so plugins
-    /// can be registered after the state machine has been moved into OpenRaft.
-    pub fn plugin_registry(&self) -> Arc<RwLock<PluginRegistry>> {
-        self.plugin_registry.clone()
+    /// `RaftNode` holds the same handle so plugins and apply-back hooks can
+    /// be installed after the state machine has been moved into OpenRaft.
+    pub fn hooks(&self) -> SharedHooks {
+        self.hooks.clone()
     }
 
-    /// Get a shared handle to the naming apply hook slot.
+    /// Install the naming apply-back hook through the atomic set.
     ///
-    /// Registration happens after both `RaftNode` and `NamingService` are
-    /// constructed at server startup. Mirrors `plugin_registry` pattern.
-    pub fn naming_hook(&self) -> SharedNamingHook {
-        self.naming_hook.clone()
-    }
-
-    /// Get a shared handle to the health-check apply hook slot. Registration
-    /// happens after both `RaftNode` and `InstanceCheckRegistry` are
-    /// constructed at server startup. Mirror of `naming_hook`.
-    pub fn health_check_hook(&self) -> SharedHealthCheckHook {
-        self.health_check_hook.clone()
+    /// Convenience entry point for tests and snapshot-install setups that do
+    /// not go through `RaftNode`; production uses
+    /// `RaftNode::register_naming_hook` on the very same shared handle.
+    pub async fn install_naming_hook(&self, hook: Arc<dyn NamingApplyHook>) {
+        install_naming_hook(&self.hooks, hook).await;
     }
 
     /// Register a plugin handler for processing PluginWrite operations.
@@ -690,7 +772,7 @@ impl RocksStateMachine {
                 ));
             }
         }
-        self.plugin_registry.write().await.register(handler)
+        register_plugin_handler(&self.hooks, handler).await
     }
 
     /// Create a new RocksDB state machine with default configuration
@@ -844,9 +926,7 @@ impl RocksStateMachine {
                 db: Arc::new(db),
                 last_applied: RwLock::new(None),
                 last_membership: RwLock::new(StoredMembership::default()),
-                plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
-                naming_hook: new_shared_naming_hook(),
-                health_check_hook: new_shared_health_check_hook(),
+                hooks: new_shared_hooks(),
                 write_opts: custom_write_opts.unwrap_or_default(),
                 snapshot_dir: None,
                 transient_snapshot_path: transient_snapshot_path(&db_path),
@@ -963,15 +1043,14 @@ impl RocksStateMachine {
 
     /// Resolve the shared handles one apply may dispatch to.
     ///
-    /// Called on the async thread before `spawn_blocking`; the returned value
-    /// owns everything the blocking closure needs.
+    /// Called on the async thread before `spawn_blocking`; the returned
+    /// `Arc<HookSet>` owns everything the blocking closure needs. One read
+    /// lock yields one immutable generation of all three handles, and the
+    /// guard is dropped before the next `.await`, so no
+    /// `tokio::sync::RwLock` guard is ever held across an await point.
     async fn apply_hooks(&self) -> ApplyHooks {
-        let registry = self.plugin_registry.read().await;
-        ApplyHooks {
-            naming: self.naming_hook.read().await.clone(),
-            health_check: self.health_check_hook.read().await.clone(),
-            plugins: Arc::new(PluginRegistry::clone(&registry)),
-        }
+        let guard = self.hooks.read().await;
+        Arc::clone(&guard)
     }
 
     /// Apply a single request to the state machine.
@@ -1919,29 +1998,15 @@ impl RocksStateMachine {
     /// Column families to stream into a snapshot, in the order they are
     /// written.
     ///
-    /// Core CFs first, then the CFs each registered plugin declares. The core
-    /// does not know which plugins exist, so listing plugin CFs here would
-    /// mean every new plugin has to remember to edit this crate — and
-    /// forgetting it silently drops that plugin's data from snapshots, which
-    /// only shows up when a follower falls far enough behind to need one.
-    ///
-    /// Duplicates are dropped and the order is stable (plugins are iterated by
-    /// id), so every replica writes the same CF sequence and produces
-    /// byte-identical snapshot bodies for the same state.
-    async fn snapshot_cf_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = CORE_SNAPSHOT_CF_NAMES
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect();
-        let mut seen: std::collections::HashSet<String> = names.iter().cloned().collect();
-
-        let registry = self.plugin_registry.read().await;
-        for name in registry.all_snapshot_column_families() {
-            if seen.insert(name.clone()) {
-                names.push(name);
-            }
-        }
-        names
+    /// The ordered, de-duplicated list is computed once per registration and
+    /// stored inside the immutable `HookSet`, so enumerating it here is a
+    /// single `Arc` clone. Core CFs come first, then the CFs each registered
+    /// plugin declares (plugins are iterated by id), which keeps every
+    /// replica's snapshot byte-identical for the same state. The list and the
+    /// registry it describes are replaced atomically together.
+    async fn snapshot_cf_names(&self) -> Arc<Vec<String>> {
+        let guard = self.hooks.read().await;
+        Arc::clone(&guard.snapshot_cf_names)
     }
 }
 
@@ -1982,26 +2047,72 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
         let mut entries = 0usize;
         let mut bytes = 0u64;
 
-        for cf_name in &cf_names {
-            let Some(cf) = self.db.cf_handle(cf_name) else {
-                continue;
-            };
-            writer
-                .start_column_family(cf_name)
-                .await
-                .map_err(io_error)?;
+        // The RocksDB iterator is synchronous and used to run on the actix
+        // current_thread runtime. Move it to the blocking pool and stream
+        // bounded owned records back to the async writer through a small
+        // channel, so neither the iterator nor a full CF ever occupies `main`
+        // or has to be materialised in memory.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<SnapshotRecord>(SNAPSHOT_CHANNEL_CAPACITY);
+        let producer_db = self.db.clone();
+        let producer_cf_names = cf_names;
+        let producer = tokio::task::spawn_blocking(move || -> Result<(), std::io::Error> {
+            for cf_name in producer_cf_names.iter() {
+                let Some(cf) = producer_db.cf_handle(cf_name) else {
+                    continue;
+                };
+                if tx
+                    .blocking_send(SnapshotRecord::StartCf(cf_name.clone()))
+                    .is_err()
+                {
+                    // The async writer stopped; its own error is returned.
+                    return Ok(());
+                }
 
-            // Iterate explicitly and propagate RocksDB errors: `.flatten()` on
-            // the iterator would silently drop a read error and yield an
-            // incomplete column family that still gets a valid checksum.
-            let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            for item in iter {
-                let (key, value) = item.map_err(io_error)?;
-                writer.write_entry(&key, &value).await.map_err(io_error)?;
-                entries += 1;
-                bytes += (key.len() + value.len()) as u64;
+                let iter = producer_db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for item in iter {
+                    let (key, value) = item.map_err(io_error)?;
+                    if tx
+                        .blocking_send(SnapshotRecord::Entry(key.to_vec(), value.to_vec()))
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let mut write_error: Option<std::io::Error> = None;
+        while let Some(record) = rx.recv().await {
+            let result = match record {
+                SnapshotRecord::StartCf(name) => {
+                    writer.start_column_family(&name).await.map_err(io_error)
+                }
+                SnapshotRecord::Entry(key, value) => {
+                    let len = (key.len() + value.len()) as u64;
+                    let result = writer.write_entry(&key, &value).await.map_err(io_error);
+                    if result.is_ok() {
+                        entries += 1;
+                        bytes += len;
+                    }
+                    result
+                }
+            };
+            if let Err(e) = result {
+                write_error = Some(e);
+                break;
             }
         }
+
+        // Dropping the receiver wakes a producer blocked on a full channel.
+        drop(rx);
+        let producer_result = producer
+            .await
+            .map_err(|e| io_error(format!("snapshot build task failed: {e}")))?;
+        if let Some(e) = write_error {
+            return Err(e);
+        }
+        producer_result?;
 
         writer.finish().await.map_err(io_error)?;
         writer
@@ -2143,15 +2254,13 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
                 db: self.db.clone(),
                 last_applied: RwLock::new(*self.last_applied.read().await),
                 last_membership: RwLock::new(self.last_membership.read().await.clone()),
-                // Clone the LIVE registry, not a fresh empty one. The snapshot
-                // builder's `snapshot_cf_names()` reads this registry to enumerate
-                // plugin column families (Consul/Apollo/visibility etc.). Building
-                // from an empty registry would silently drop every plugin CF from
-                // the snapshot, so a follower restored from it would lose all
-                // plugin data.
-                plugin_registry: self.plugin_registry.clone(),
-                naming_hook: self.naming_hook.clone(),
-                health_check_hook: self.health_check_hook.clone(),
+                // Clone the LIVE hook set, not a fresh empty one. The snapshot
+                // builder's `snapshot_cf_names()` reads the plugin registry in
+                // this set to enumerate plugin column families
+                // (Consul/Apollo/visibility etc.). Building from an empty set
+                // would silently drop every plugin CF from the snapshot, so a
+                // follower restored from it would lose all plugin data.
+                hooks: self.hooks.clone(),
                 write_opts: rocksdb::WriteOptions::default(),
                 snapshot_dir: self.snapshot_dir.clone(),
                 transient_snapshot_path: self.transient_snapshot_path.clone(),
@@ -2271,6 +2380,131 @@ mod tests {
         );
     }
 
+    /// Snapshot RocksDB work must not run on the async worker either.
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_snapshot_io_runs_off_the_async_worker_thread() {
+        let async_thread = std::thread::current().id();
+        let blocking_thread =
+            blocking_snapshot_io(|| Ok::<_, std::io::Error>(std::thread::current().id()))
+                .await
+                .expect("blocking snapshot task must succeed");
+        assert_ne!(
+            async_thread, blocking_thread,
+            "snapshot RocksDB work must not occupy the async worker thread"
+        );
+    }
+
+    #[tokio::test]
+    async fn blocking_snapshot_io_propagates_io_errors() {
+        let err = blocking_snapshot_io(|| Err::<(), _>(io_error("snapshot io failed")))
+            .await
+            .expect_err("snapshot IO failure must be propagated");
+        assert!(err.to_string().contains("snapshot io failed"));
+    }
+
+    /// `spawn_blocking` must be able to feed the bounded snapshot channel.
+    /// This guards the producer/consumer wiring used by `build_snapshot`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn snapshot_record_channel_works_from_the_blocking_pool() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<SnapshotRecord>(1);
+        let producer = tokio::task::spawn_blocking(move || {
+            tx.blocking_send(SnapshotRecord::StartCf("cf_config".to_string()))
+                .expect("receiver must be alive");
+        });
+        assert!(matches!(
+            rx.recv().await,
+            Some(SnapshotRecord::StartCf(name)) if name == "cf_config"
+        ));
+        producer.await.expect("blocking producer must finish");
+    }
+
+    /// Architecture guard: reverting any snapshot path to inline RocksDB work
+    /// must turn this test red.
+    #[test]
+    fn snapshot_paths_use_the_blocking_pool() {
+        let src = include_str!("mod.rs");
+        let tests_start = src
+            .find("#[cfg(test)]\nmod tests")
+            .expect("tests module must exist");
+        let production = &src[..tests_start];
+
+        let restore = production
+            .find("async fn restore_from_file")
+            .expect("restore_from_file must exist");
+        let restore_end = production
+            .find("async fn prune_snapshots")
+            .expect("prune_snapshots must exist");
+        let restore_body = &production[restore..restore_end];
+        assert!(
+            restore_body.contains("flush_restore_batch_async("),
+            "restore must dispatch WriteBatch writes through the blocking pool"
+        );
+        assert!(
+            !restore_body.contains("self.db.write("),
+            "restore must not write RocksDB inline"
+        );
+        assert!(
+            !restore_body.contains("self.db.cf_handle("),
+            "restore must not look up column families inline"
+        );
+
+        let flush = production
+            .find("async fn flush_restore_batch_async")
+            .expect("restore flush helper must exist");
+        assert!(
+            production[flush..flush + 600].contains("blocking_snapshot_io("),
+            "the restore flush helper must use the blocking pool"
+        );
+
+        let reconcile = production
+            .find("async fn reconcile_naming_view")
+            .expect("reconcile_naming_view must exist");
+        let reconcile_end = production
+            .find("/// Enable on-disk snapshot persistence")
+            .expect("with_snapshot_dir doc must exist");
+        let reconcile_body = &production[reconcile..reconcile_end];
+        assert!(
+            reconcile_body.contains("blocking_snapshot_io("),
+            "naming reconciliation must run RocksDB work on the blocking pool"
+        );
+        assert!(
+            !reconcile_body.contains("self.db.iterator_cf("),
+            "naming reconciliation must not iterate RocksDB inline"
+        );
+
+        let build = production
+            .find("async fn build_snapshot")
+            .expect("build_snapshot must exist");
+        let build_end = production
+            .find("async fn applied_state")
+            .expect("applied_state must exist");
+        let build_body = &production[build..build_end];
+        assert!(
+            build_body.contains("spawn_blocking("),
+            "snapshot build must iterate RocksDB on the blocking pool"
+        );
+        assert!(
+            build_body.contains("mpsc::channel"),
+            "snapshot build must stream records through a bounded channel"
+        );
+        assert!(
+            !build_body.contains("self.db.iterator_cf("),
+            "snapshot build must not iterate RocksDB inline"
+        );
+        assert!(
+            !build_body.contains("self.db.cf_handle("),
+            "snapshot build must not look up column families inline"
+        );
+
+        let helper = production
+            .find("async fn blocking_snapshot_io")
+            .expect("blocking snapshot helper must exist");
+        assert!(
+            production[helper..helper + 700].contains("spawn_blocking"),
+            "the helper must actually use spawn_blocking"
+        );
+    }
+
     /// Success path: the migrated durable marker still reaches RocksDB and
     /// updates the in-memory view.
     #[tokio::test]
@@ -2314,6 +2548,149 @@ mod tests {
         assert!(hooks.naming.is_none());
         assert!(hooks.health_check.is_none());
         assert!(hooks.plugins.get("missing").is_none());
+    }
+
+    struct NoopPluginHandler;
+
+    impl RaftPluginHandler for NoopPluginHandler {
+        fn plugin_id(&self) -> &str {
+            "noop"
+        }
+
+        fn column_families(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn apply(
+            &self,
+            _db: &DB,
+            _op_type: &str,
+            _payload: &[u8],
+            _log_index: u64,
+        ) -> RaftResponse {
+            RaftResponse::success()
+        }
+
+        fn build_snapshot(&self, _db: &DB) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+
+        fn install_snapshot(&self, _db: &DB, _data: &[u8]) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// The per-apply handle set is one O(1) `Arc` clone, and registration
+    /// replaces the inner `Arc` without mutating a snapshot already handed to
+    /// a blocking apply.
+    #[tokio::test]
+    async fn apply_hooks_clones_the_inner_hook_set_arc() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+        let shared = sm.hooks();
+        let before = Arc::clone(&*shared.read().await);
+        let hooks = sm.apply_hooks().await;
+        assert!(
+            Arc::ptr_eq(&before, &hooks),
+            "apply_hooks must clone the inner Arc<HookSet>, not rebuild it"
+        );
+
+        sm.register_plugin(Arc::new(NoopPluginHandler))
+            .await
+            .expect("register plugin");
+        let after = Arc::clone(&*shared.read().await);
+        assert!(
+            !Arc::ptr_eq(&before, &after),
+            "registration must replace the inner Arc so subsequent applies see it"
+        );
+        assert!(after.plugins.get("noop").is_some());
+        assert!(
+            before.plugins.get("noop").is_none(),
+            "a previous apply snapshot must stay immutable"
+        );
+        assert!(sm.apply_hooks().await.plugins.get("noop").is_some());
+    }
+
+    /// Architecture guard: reverting to three independent hook slots, cloning
+    /// the registry `BTreeMap` per apply, or giving the snapshot builder a
+    /// fresh empty set must all turn this test red.
+    #[test]
+    fn apply_hooks_uses_one_atomic_shared_hook_set() {
+        let src = include_str!("mod.rs");
+        let tests_start = src
+            .find("#[cfg(test)]\nmod tests")
+            .expect("tests module must exist");
+        let production = &src[..tests_start];
+
+        let start = production
+            .find("async fn apply_hooks(&self) -> ApplyHooks")
+            .expect("apply_hooks must exist");
+        let end = production[start..]
+            .find("    fn apply_request(")
+            .expect("apply_request must exist");
+        let body = &production[start..start + end];
+        assert_eq!(
+            body.matches("read().await").count(),
+            1,
+            "apply_hooks must take exactly one read lock"
+        );
+        assert!(
+            body.contains("self.hooks.read().await") && body.contains("Arc::clone(&guard)"),
+            "apply_hooks must clone the single inner Arc<HookSet>"
+        );
+        assert!(
+            !body.contains("PluginRegistry::clone("),
+            "apply_hooks must never clone the registry BTreeMap"
+        );
+        assert!(
+            !body.contains("self.naming_hook") && !body.contains("self.health_check_hook"),
+            "no per-slot hook lock may remain on the apply path"
+        );
+
+        assert!(
+            production.contains("hooks: SharedHooks"),
+            "the state machine must hold exactly one shared hook set"
+        );
+        assert!(
+            !production.contains("plugin_registry: SharedPluginRegistry")
+                && !production.contains("naming_hook: SharedNamingHook")
+                && !production.contains("health_check_hook: SharedHealthCheckHook"),
+            "the three legacy slots must not come back"
+        );
+
+        let snap = production
+            .find("async fn snapshot_cf_names")
+            .expect("snapshot_cf_names must exist");
+        let snap_body = &production[snap..snap + 500];
+        assert!(
+            snap_body.contains("Arc::clone(&guard.snapshot_cf_names)"),
+            "snapshot CF enumeration must read the cached list"
+        );
+        assert!(
+            !snap_body.contains("all_snapshot_column_families()"),
+            "snapshot CF enumeration must not recompute the list per snapshot"
+        );
+
+        let builder = production
+            .find("async fn get_snapshot_builder")
+            .expect("get_snapshot_builder must exist");
+        assert!(
+            production[builder..builder + 1200].contains("hooks: self.hooks.clone()"),
+            "the snapshot builder must share the LIVE hook set"
+        );
+
+        let reg = production
+            .find("pub async fn register_plugin")
+            .expect("register_plugin must exist");
+        let reg_end = production
+            .find("/// Create a new RocksDB state machine with default configuration")
+            .expect("new doc must exist");
+        assert!(
+            production[reg..reg_end].contains("register_plugin_handler(&self.hooks, handler)"),
+            "registration must go through the atomic shared installer"
+        );
     }
 
     /// Publish the same config entry on two independent replicas and compare

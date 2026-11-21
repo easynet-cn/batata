@@ -16,7 +16,7 @@ use batata_consistency::raft::request::{RaftRequest, RaftResponse};
 use rocksdb::{DB, WriteBatch};
 use tracing::{debug, error, info, warn};
 
-use super::apply_hook::{SharedConsulApplyHook, new_shared_hook};
+use super::apply_hook::{SharedConsulApplyHook, current_apply_hook, new_shared_hook};
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use crate::constants::{
     CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CATALOG, CF_CONSUL_CONFIG_ENTRIES,
@@ -216,14 +216,22 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
 
         let consul_resp = apply_consul_request(db, &self.table_index, request, log_index);
 
-        // Fire the apply-back hook only on success. Uses `try_read` to
-        // avoid blocking the apply path when the hook slot is being
-        // installed; a missed notification is preferable to a stall, and
-        // cold-start recovery refreshes the view anyway.
+        // Fire the apply-back hook only on success. `current_apply_hook`
+        // takes a blocking read (this runs on Tokio's blocking pool), clones
+        // the owned `Arc` out and drops the guard *before* dispatching. A
+        // fail-open read here would silently drop a committed notification
+        // whenever a startup writer held the slot; reads are never held across
+        // hook calls, so a hook that installs or replaces the slot cannot
+        // deadlock against its own write lock.
+        let hook = if consul_resp.success && hook_dispatch.is_some() {
+            current_apply_hook(&self.apply_hook)
+        } else {
+            None
+        };
+
         if consul_resp.success
             && let Some(dispatch) = hook_dispatch
-            && let Ok(guard) = self.apply_hook.try_read()
-            && let Some(hook) = guard.as_ref()
+            && let Some(hook) = hook
         {
             match &dispatch {
                 HookDispatch::CatalogRegister {
@@ -1556,10 +1564,179 @@ impl ConsulRaftWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::raft::apply_hook::ConsulApplyHook;
 
     use serde_json::{Value, json};
 
     use crate::kv::{KVTxnOp, TxnOp, TxnResult, open_temp_consul_db};
+
+    /// A hook that tries to take the slot's write lock from inside dispatch.
+    /// It can only succeed if the `try_read` guard was dropped first.
+    struct GuardProbeHook {
+        slot: SharedConsulApplyHook,
+        observed: Arc<std::sync::Mutex<bool>>,
+    }
+
+    impl ConsulApplyHook for GuardProbeHook {
+        fn on_acl_change(&self) {
+            *self.observed.lock().unwrap() = self.slot.try_write().is_ok();
+        }
+    }
+
+    #[test]
+    fn apply_hook_guard_is_dropped_before_dispatch() {
+        let (db, _dir) = open_temp_consul_db();
+        let handler = ConsulRaftPluginHandler::new(ConsulTableIndex::new());
+        let slot = handler.apply_hook();
+        let observed = Arc::new(std::sync::Mutex::new(false));
+        let hook = Arc::new(GuardProbeHook {
+            slot: slot.clone(),
+            observed: observed.clone(),
+        });
+        *slot
+            .try_write()
+            .unwrap_or_else(|_| panic!("hook slot must be free")) = Some(hook);
+
+        let request = ConsulRaftRequest::ACLPolicySet {
+            id: "probe-policy".to_string(),
+            policy_json: "{}".to_string(),
+        };
+        let payload = serde_json::to_vec(&request).expect("serialize request");
+        let response = handler.apply(&db, "ACLPolicySet", &payload, 1);
+        assert!(response.success, "ACLPolicySet must succeed");
+        assert!(
+            *observed.lock().unwrap(),
+            "hook dispatch must not hold the slot read guard"
+        );
+    }
+
+    #[test]
+    fn apply_hook_guard_is_not_held_across_dispatch() {
+        let src = include_str!("plugin_handler.rs");
+        let hook_src = include_str!("apply_hook.rs");
+        let tests_start = src
+            .find("#[cfg(test)]\nmod tests")
+            .expect("tests module must exist");
+        let production = &src[..tests_start];
+        let apply = production
+            .find("fn apply(&self, db: &DB")
+            .expect("RaftPluginHandler::apply must exist");
+        let apply_end = production
+            .find("fn build_snapshot(&self, db: &DB")
+            .expect("build_snapshot must exist");
+        let body = &production[apply..apply_end];
+        assert!(
+            body.contains("current_apply_hook(&self.apply_hook)"),
+            "hook resolution must go through the blocking, fail-closed resolver"
+        );
+        assert!(
+            !body.contains("try_read") && !body.contains("try_read().ok()"),
+            "a contended slot must never silently drop a committed notification"
+        );
+        assert!(
+            body.contains("let hook = if consul_resp.success && hook_dispatch.is_some()"),
+            "hook resolution must stay gated on success and dispatch"
+        );
+        assert!(
+            hook_src.contains("Arc<std::sync::RwLock<Option<Arc<dyn ConsulApplyHook>>>>"),
+            "the slot must stay a synchronous lock (apply runs on the blocking pool)"
+        );
+        assert!(
+            hook_src.contains("pub fn current_apply_hook(") && hook_src.contains("guard.clone()"),
+            "the resolver must clone the owned Arc out before the guard is dropped"
+        );
+    }
+
+    /// Reverting to `try_read().ok()` (or any other fail-open read) drops the
+    /// committed notification whenever a startup writer holds the slot. This
+    /// test holds the write lock and proves the reader *waits* and then sees
+    /// the installed hook instead of returning `None`.
+    #[test]
+    fn contended_slot_read_waits_for_the_writer() {
+        use super::super::apply_hook::{current_apply_hook, install_apply_hook};
+        use std::time::Duration;
+
+        let slot = new_shared_hook();
+        install_apply_hook(
+            &slot,
+            Arc::new(GuardProbeHook {
+                slot: slot.clone(),
+                observed: Arc::new(std::sync::Mutex::new(false)),
+            }),
+        );
+
+        let write_guard = slot.write().expect("slot uncontended before the test");
+        let reader_slot = slot.clone();
+        let resolved = std::thread::scope(|scope| {
+            let reader = scope.spawn(move || current_apply_hook(&reader_slot));
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                !reader.is_finished(),
+                "a blocking read must wait for the writer, not fail fast"
+            );
+            drop(write_guard);
+            reader.join().expect("reader thread")
+        });
+        assert!(
+            resolved.is_some(),
+            "contention must not silently drop the installed hook"
+        );
+    }
+
+    /// The helper-level test above only proves the resolver blocks. This one
+    /// goes through `RaftPluginHandler::apply`, so reverting the resolution to
+    /// a fail-open read is caught exactly where a committed notification is
+    /// produced and could be lost.
+    #[test]
+    fn committed_notification_survives_a_contended_slot() {
+        use super::super::apply_hook::install_apply_hook;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        struct FlagHook {
+            called: Arc<AtomicBool>,
+        }
+
+        impl ConsulApplyHook for FlagHook {
+            fn on_acl_change(&self) {
+                self.called.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let (db, _dir) = open_temp_consul_db();
+        let handler = ConsulRaftPluginHandler::new(ConsulTableIndex::new());
+        let slot = handler.apply_hook();
+        let called = Arc::new(AtomicBool::new(false));
+        install_apply_hook(
+            &slot,
+            Arc::new(FlagHook {
+                called: called.clone(),
+            }),
+        );
+
+        let request = ConsulRaftRequest::ACLPolicySet {
+            id: "contended-policy".to_string(),
+            policy_json: "{}".to_string(),
+        };
+        let payload = serde_json::to_vec(&request).expect("serialize request");
+
+        let write_guard = slot.write().expect("slot uncontended before the test");
+        let response = std::thread::scope(|scope| {
+            let reader = scope.spawn(|| handler.apply(&db, "ACLPolicySet", &payload, 1));
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                !reader.is_finished(),
+                "apply must wait for the writer, not fail open on a contended slot"
+            );
+            drop(write_guard);
+            reader.join().expect("apply thread")
+        });
+        assert!(response.success, "ACLPolicySet must succeed");
+        assert!(
+            called.load(Ordering::SeqCst),
+            "a committed ACL change must still notify the hook under contention"
+        );
+    }
 
     fn stored_json(session: Option<&str>, lock_index: u64, create_index: u64) -> String {
         let mut pair = json!({

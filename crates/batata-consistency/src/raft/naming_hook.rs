@@ -76,12 +76,14 @@ pub trait NamingApplyHook: Send + Sync {
     fn on_snapshot_loaded(&self, _instances: Vec<StoredInstance>) {}
 }
 
-/// Shared slot holding the optional hook. Registration happens after both
-/// `RaftNode` and `NamingService` are constructed (same pattern as
-/// `PluginRegistry`).
+/// Legacy standalone hook slot.
+///
+/// Production installs the hook through the single atomic
+/// [`super::hooks::HookSet`] instead; this alias is retained for the
+/// historical micro-benchmark, which reproduces the pre-P1 per-slot shape.
 pub type SharedNamingHook = Arc<tokio::sync::RwLock<Option<Arc<dyn NamingApplyHook>>>>;
 
-/// Create a new, initially-empty shared naming apply hook slot.
+/// Create a new, initially-empty legacy hook slot (bench/test helper).
 pub fn new_shared_naming_hook() -> SharedNamingHook {
     Arc::new(tokio::sync::RwLock::new(None))
 }

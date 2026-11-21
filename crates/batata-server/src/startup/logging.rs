@@ -215,43 +215,16 @@ impl Default for LoggingConfig {
 
 impl LoggingConfig {
     /// Create from environment variables.
+    ///
+    /// The startup path calls [`Self::from_config`] and then
+    /// [`Self::with_env_overrides`]; this constructor is kept for callers that
+    /// want the same result without a `Configuration` object.
     pub fn from_env() -> Self {
-        let log_dir = std::env::var("BATATA_LOG_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                PathBuf::from(format!("{}/batata/logs", home))
-            });
-
-        let console_output = std::env::var("BATATA_LOG_CONSOLE")
-            .map(|v| v.to_lowercase() != "false" && v != "0")
-            .unwrap_or(true);
-
-        let file_logging = std::env::var("BATATA_LOG_FILE")
-            .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(true);
-
-        let console_level = std::env::var("BATATA_LOG_LEVEL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(Level::INFO);
-
-        let file_level = std::env::var("BATATA_LOG_FILE_LEVEL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(console_level);
-
-        Self {
-            log_dir,
-            console_output,
-            console_level,
-            file_logging,
-            file_level,
-            rotation: LogRotation::Daily,
-        }
+        Self::from_config(None, true, true, "info".to_string()).with_env_overrides()
     }
 
-    /// Create from application configuration.
+    /// Create from application configuration. Pure: no environment lookups, so
+    /// tests and callers get exactly the values they passed.
     pub fn from_config(
         log_dir: Option<String>,
         console_output: bool,
@@ -273,6 +246,44 @@ impl LoggingConfig {
             file_level: level,
             rotation: LogRotation::Daily,
         }
+    }
+
+    /// Apply the `BATATA_LOG_*` overrides documented in `conf/application.yml`
+    /// and used by the compose deployments.
+    ///
+    /// These used to live only in `from_env()`, which no production caller
+    /// invokes: startup always used `from_config()`, so `BATATA_LOG_LEVEL` (and
+    /// its siblings) were silently ignored. Applying them here makes the
+    /// documented knobs effective without changing `from_config`'s purity.
+    /// `RUST_LOG` still wins at the `EnvFilter` layer for fine-grained control.
+    pub fn with_env_overrides(self) -> Self {
+        self.apply_env_overrides_with(|key| std::env::var(key).ok())
+    }
+
+    /// Separated from the process environment so the precedence rules can be
+    /// unit-tested without mutating global state.
+    fn apply_env_overrides_with(mut self, lookup: impl Fn(&str) -> Option<String>) -> Self {
+        if let Some(dir) = lookup("BATATA_LOG_DIR") {
+            self.log_dir = PathBuf::from(dir);
+        }
+        if let Some(value) = lookup("BATATA_LOG_CONSOLE") {
+            self.console_output = value.to_lowercase() != "false" && value != "0";
+        }
+        if let Some(value) = lookup("BATATA_LOG_FILE") {
+            self.file_logging = value.to_lowercase() == "true" || value == "1";
+        }
+        if let Some(value) = lookup("BATATA_LOG_LEVEL") {
+            if let Ok(level) = value.parse::<Level>() {
+                self.console_level = level;
+                self.file_level = level;
+            }
+        }
+        if let Some(value) = lookup("BATATA_LOG_FILE_LEVEL") {
+            if let Ok(level) = value.parse::<Level>() {
+                self.file_level = level;
+            }
+        }
+        self
     }
 }
 
@@ -586,5 +597,79 @@ mod tests {
     fn test_component_log_count() {
         // We should have 10 component log files (matching Nacos log categories)
         assert_eq!(COMPONENT_LOGS.len(), 10);
+    }
+
+    fn overrides(entries: &[(&str, &str)]) -> LoggingConfig {
+        let base = LoggingConfig::from_config(
+            Some("/tmp/base-logs".to_string()),
+            true,
+            true,
+            "debug".to_string(),
+        );
+        let owned: Vec<(String, String)> = entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        base.apply_env_overrides_with(|key| {
+            owned.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+        })
+    }
+
+    #[test]
+    fn no_env_overrides_leave_config_values_intact() {
+        let config = overrides(&[]);
+        assert_eq!(config.log_dir, PathBuf::from("/tmp/base-logs"));
+        assert!(config.console_output);
+        assert!(config.file_logging);
+        assert_eq!(config.console_level, Level::DEBUG);
+        assert_eq!(config.file_level, Level::DEBUG);
+    }
+
+    #[test]
+    fn log_level_env_override_reaches_both_layers() {
+        let config = overrides(&[("BATATA_LOG_LEVEL", "warn")]);
+        assert_eq!(config.console_level, Level::WARN);
+        assert_eq!(config.file_level, Level::WARN);
+    }
+
+    #[test]
+    fn file_level_env_override_is_independent_and_invalid_values_are_ignored() {
+        let config = overrides(&[
+            ("BATATA_LOG_LEVEL", "error"),
+            ("BATATA_LOG_FILE_LEVEL", "trace"),
+        ]);
+        assert_eq!(config.console_level, Level::ERROR);
+        assert_eq!(config.file_level, Level::TRACE);
+
+        let config = overrides(&[("BATATA_LOG_LEVEL", "not-a-level")]);
+        assert_eq!(config.console_level, Level::DEBUG);
+        assert_eq!(config.file_level, Level::DEBUG);
+    }
+
+    #[test]
+    fn dir_and_toggle_env_overrides_follow_documented_values() {
+        let config = overrides(&[
+            ("BATATA_LOG_DIR", "/tmp/env-logs"),
+            ("BATATA_LOG_CONSOLE", "false"),
+            ("BATATA_LOG_FILE", "0"),
+        ]);
+        assert_eq!(config.log_dir, PathBuf::from("/tmp/env-logs"));
+        assert!(!config.console_output);
+        assert!(!config.file_logging);
+
+        let config = overrides(&[("BATATA_LOG_CONSOLE", "1"), ("BATATA_LOG_FILE", "true")]);
+        assert!(config.console_output);
+        assert!(config.file_logging);
+    }
+
+    /// Guard the wiring: if startup stops applying the env overrides, the
+    /// documented `BATATA_LOG_*` knobs silently stop working again.
+    #[test]
+    fn startup_applies_env_overrides() {
+        let src = include_str!("../builder/app_builder.rs");
+        assert!(
+            src.contains(".with_env_overrides()"),
+            "the startup path must apply the documented BATATA_LOG_* overrides"
+        );
     }
 }

@@ -149,7 +149,7 @@ impl ConsulCluster {
         handler
             .apply_hook()
             .try_write()
-            .expect("apply hook slot uncontended at construction")
+            .unwrap_or_else(|_| panic!("apply hook slot uncontended at construction"))
             .replace(hook);
 
         ConsulNode {
@@ -348,7 +348,7 @@ impl ConsulCluster {
         node.handler
             .apply_hook()
             .try_write()
-            .expect("apply hook slot uncontended")
+            .unwrap_or_else(|_| panic!("apply hook slot uncontended"))
             .replace(hook);
 
         let db = node.db.clone();

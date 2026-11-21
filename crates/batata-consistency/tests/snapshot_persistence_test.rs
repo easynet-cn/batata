@@ -347,7 +347,7 @@ async fn install_hands_restored_instances_to_the_naming_hook() {
         calls: Mutex::new(Vec::new()),
     });
     let mut target = open_sm(dir.path(), "target", &snapshots).await;
-    *target.naming_hook().write().await = Some(hook.clone());
+    target.install_naming_hook(hook.clone()).await;
 
     target
         .install_snapshot(&meta_at(7), SnapshotFile::open(&body).await.unwrap())
@@ -375,4 +375,153 @@ async fn install_without_a_naming_hook_still_succeeds() {
 
     let mut reopened = open_sm(dir.path(), "target2", &snapshots).await;
     assert!(reopened.get_current_snapshot().await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn install_clears_stale_keys_before_applying_snapshot() {
+    let dir = tempdir().unwrap();
+    let snapshots = dir.path().join("snapshots");
+
+    let mut source = open_sm(dir.path(), "source", &dir.path().join("source_snaps")).await;
+    let source_db = source.db();
+    let source_cf = source_db.cf_handle(CF_CONFIG).unwrap();
+    source_db.put_cf(&source_cf, b"cfg:kept", b"new").unwrap();
+    let snapshot = source.build_snapshot().await.unwrap();
+    let body = snapshot.snapshot.path().to_path_buf();
+
+    let mut target = open_sm(dir.path(), "target", &snapshots).await;
+    let target_db = target.db();
+    let target_cf = target_db.cf_handle(CF_CONFIG).unwrap();
+    target_db.put_cf(&target_cf, b"cfg:stale", b"old").unwrap();
+
+    target
+        .install_snapshot(&meta_at(6), SnapshotFile::open(&body).await.unwrap())
+        .await
+        .unwrap();
+
+    assert!(
+        target_db
+            .get_cf(&target_cf, b"cfg:stale")
+            .unwrap()
+            .is_none(),
+        "the first restore batch must still clear the target column family"
+    );
+    assert_eq!(
+        target_db
+            .get_cf(&target_cf, b"cfg:kept")
+            .unwrap()
+            .as_deref(),
+        Some(b"new".as_slice()),
+        "snapshot entries must still be applied after the range delete"
+    );
+}
+
+/// A naming hook that deliberately blocks inside `on_snapshot_loaded`. If
+/// snapshot install ever runs this callback inline on the runtime thread, the
+/// heartbeat test below observes a large scheduling gap.
+struct SlowRecordingHook {
+    called: Arc<Mutex<bool>>,
+    delay: std::time::Duration,
+}
+
+impl NamingApplyHook for SlowRecordingHook {
+    fn on_register(
+        &self,
+        _namespace_id: &str,
+        _group_name: &str,
+        _service_name: &str,
+        _instance_id: &str,
+        _ip: &str,
+        _port: u16,
+        _weight: f64,
+        _healthy: bool,
+        _enabled: bool,
+        _metadata: &str,
+        _cluster_name: &str,
+    ) {
+    }
+
+    fn on_deregister(
+        &self,
+        _namespace_id: &str,
+        _group_name: &str,
+        _service_name: &str,
+        _instance_id: &str,
+    ) {
+    }
+
+    fn on_update(
+        &self,
+        _namespace_id: &str,
+        _group_name: &str,
+        _service_name: &str,
+        _instance_id: &str,
+        _ip: Option<&str>,
+        _port: Option<u16>,
+        _weight: Option<f64>,
+        _healthy: Option<bool>,
+        _enabled: Option<bool>,
+        _metadata: Option<&str>,
+    ) {
+    }
+
+    fn on_snapshot_loaded(&self, _instances: Vec<StoredInstance>) {
+        std::thread::sleep(self.delay);
+        *self.called.lock().unwrap() = true;
+    }
+}
+
+/// Targeted responsiveness test: a slow post-install reconciliation must not
+/// stall the single-threaded Raft runtime. A heartbeat task keeps ticking on
+/// the same current-thread runtime while `install_snapshot` is awaited.
+#[tokio::test(flavor = "current_thread")]
+async fn snapshot_install_keeps_the_runtime_responsive() {
+    use std::time::Duration;
+    use tokio::time::{Instant, interval};
+
+    let dir = tempdir().unwrap();
+    let snapshots = dir.path().join("snapshots");
+    let mut target = open_sm(dir.path(), "target", &snapshots).await;
+
+    let called = Arc::new(Mutex::new(false));
+    let hook = Arc::new(SlowRecordingHook {
+        called: called.clone(),
+        delay: Duration::from_millis(600),
+    });
+    target
+        .install_naming_hook(hook as Arc<dyn NamingApplyHook>)
+        .await;
+
+    let max_gap = Arc::new(Mutex::new(Duration::ZERO));
+    let heartbeat_max = max_gap.clone();
+    let heartbeat = tokio::spawn(async move {
+        let mut ticker = interval(Duration::from_millis(10));
+        let mut last = Instant::now();
+        // Skip the immediate first tick.
+        ticker.tick().await;
+        for _ in 0..120 {
+            ticker.tick().await;
+            let now = Instant::now();
+            let gap = now.duration_since(last);
+            last = now;
+            let mut guard = heartbeat_max.lock().unwrap();
+            if gap > *guard {
+                *guard = gap;
+            }
+        }
+    });
+
+    let empty = empty_snapshot(dir.path(), "empty").await;
+    target.install_snapshot(&meta_at(1), empty).await.unwrap();
+
+    heartbeat.await.unwrap();
+    assert!(
+        *called.lock().unwrap(),
+        "naming hook must run during snapshot install"
+    );
+    let observed = *max_gap.lock().unwrap();
+    assert!(
+        observed < Duration::from_millis(400),
+        "snapshot install stalled the runtime for {observed:?}"
+    );
 }

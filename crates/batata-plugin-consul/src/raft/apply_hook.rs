@@ -63,9 +63,36 @@ pub trait ConsulApplyHook: Send + Sync {
 
 /// Shared slot holding the optional hook. Registered once at plugin
 /// construction and consulted on every apply.
-pub type SharedConsulApplyHook = Arc<tokio::sync::RwLock<Option<Arc<dyn ConsulApplyHook>>>>;
+///
+/// This is a **synchronous** lock on purpose. `ConsulRaftPluginHandler::apply`
+/// runs on Tokio's blocking pool, so it cannot await an async lock; the old
+/// `tokio::sync::RwLock` forced a `try_read()` there, which silently dropped a
+/// committed notification whenever a writer held the slot. A blocking read is
+/// safe because writes are startup-only and never hold the guard across an
+/// await or a hook dispatch.
+pub type SharedConsulApplyHook = Arc<std::sync::RwLock<Option<Arc<dyn ConsulApplyHook>>>>;
 
-/// The `new_shared_hook` function.
+/// Create a new, initially-empty hook slot.
 pub fn new_shared_hook() -> SharedConsulApplyHook {
-    Arc::new(tokio::sync::RwLock::new(None))
+    Arc::new(std::sync::RwLock::new(None))
+}
+
+/// Resolve the installed hook for one committed apply.
+///
+/// Clones the owned `Arc` out and drops the guard before returning, so a hook
+/// that installs or replaces the slot cannot deadlock against its own read.
+/// Poison is recovered rather than propagated: a panicking startup writer must
+/// not permanently disable every later notification on this node.
+pub fn current_apply_hook(slot: &SharedConsulApplyHook) -> Option<Arc<dyn ConsulApplyHook>> {
+    let guard = slot.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.clone()
+}
+
+/// Install (or replace) the hook. Poison-tolerant for the same reason as
+/// [`current_apply_hook`].
+pub fn install_apply_hook(slot: &SharedConsulApplyHook, hook: Arc<dyn ConsulApplyHook>) {
+    let mut guard = slot
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(hook);
 }

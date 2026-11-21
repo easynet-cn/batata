@@ -12,12 +12,10 @@ use openraft::async_runtime::watch::WatchReceiver;
 use rocksdb::Options;
 use tracing::{debug, info};
 
-use tokio::sync::RwLock;
-
 use super::config::RaftConfig;
+use super::hooks::{self, SharedHooks};
 use super::log_store::RocksLogStore;
 use super::network::BatataRaftNetworkFactory;
-use super::plugin::PluginRegistry;
 use super::request::{RaftRequest, RaftResponse};
 use super::state_machine::RocksStateMachine;
 use super::telemetry::{
@@ -188,19 +186,10 @@ pub struct RaftNode {
     /// Shared RocksDB handle (same instance used by the state machine)
     db: Arc<rocksdb::DB>,
 
-    /// Shared plugin registry (same instance used by the state machine)
-    plugin_registry: Arc<RwLock<PluginRegistry>>,
-
-    /// Shared naming apply hook slot (same instance used by the state machine).
-    /// Registered post-construction so `NamingService` DashMap stays in sync
-    /// with RocksDB `CF_INSTANCES` after every persistent instance apply.
-    naming_hook: super::naming_hook::SharedNamingHook,
-
-    /// Shared health-check apply hook slot. Registered post-construction by
-    /// the consul plugin (or any reactor owner). When the leader writes a
-    /// `HealthCheckStatusUpdate` Raft entry, every node's apply path calls
-    /// this hook to update its `InstanceCheckRegistry` in lock-step.
-    health_check_hook: super::health_check_hook::SharedHealthCheckHook,
+    /// The single shared handle set (same instance used by the state machine).
+    /// Holds the plugin registry plus both apply-back hooks; registration
+    /// replaces the inner `Arc<HookSet>` atomically. See `raft/hooks.rs`.
+    hooks: SharedHooks,
 
     /// Optional leader-side pre-commit guard. Consulted only when this node
     /// is the leader, so wall-clock plugin state never reaches the FSM.
@@ -320,9 +309,7 @@ impl RaftNode {
         .await?
         .with_snapshot_dir(config.snapshot_dir());
         let db = state_machine.db();
-        let plugin_registry = state_machine.plugin_registry();
-        let naming_hook = state_machine.naming_hook();
-        let health_check_hook = state_machine.health_check_hook();
+        let hooks = state_machine.hooks();
         // Snapshot the persisted membership before Raft::new consumes the state
         // machine. This is the authoritative identity generation of the data
         // directory and is available synchronously, unlike the metrics watcher.
@@ -354,9 +341,7 @@ impl RaftNode {
                 raft,
                 config,
                 db: db.clone(),
-                plugin_registry,
-                naming_hook,
-                health_check_hook,
+                hooks,
                 write_guard: super::write_guard::new_shared_write_guard(),
                 leader_channel: tokio::sync::Mutex::new(None),
                 stored_voter_ids,
@@ -394,19 +379,20 @@ impl RaftNode {
 
     /// Register a plugin handler for processing PluginWrite operations.
     ///
-    /// Safe to call after Raft startup — the registry is shared between
+    /// Safe to call after Raft startup — the hook set is shared between
     /// this node and the state machine via `Arc`.
     pub async fn register_plugin(&self, handler: Arc<dyn RaftPluginHandler>) -> Result<(), String> {
-        self.plugin_registry.write().await.register(handler)
+        hooks::register_plugin_handler(&self.hooks, handler).await
     }
 
     /// Register the naming apply hook so `PersistentInstance*` applies flow
     /// back into the in-memory `NamingService` DashMap.
     ///
-    /// Safe to call after Raft startup — the hook slot is shared with the
-    /// state machine via `Arc<RwLock<_>>` and consulted on every apply.
+    /// Safe to call after Raft startup — the hook set is shared with the
+    /// state machine via `Arc<RwLock<Arc<HookSet>>>` and consulted on every
+    /// apply. A second registration replaces the first.
     pub async fn register_naming_hook(&self, hook: Arc<dyn super::naming_hook::NamingApplyHook>) {
-        *self.naming_hook.write().await = Some(hook);
+        hooks::install_naming_hook(&self.hooks, hook).await;
     }
 
     /// Register the health-check apply hook so `HealthCheckStatusUpdate` /
@@ -422,7 +408,7 @@ impl RaftNode {
         &self,
         hook: Arc<dyn super::health_check_hook::HealthCheckApplyHook>,
     ) {
-        super::health_check_hook::install_health_check_hook(&self.health_check_hook, hook).await;
+        hooks::install_health_check_hook(&self.hooks, hook).await;
     }
 
     /// Install a leader-side pre-commit guard. The slot is single-owner; a
@@ -437,8 +423,11 @@ impl RaftNode {
     /// so `NamingService` reflects the committed state without waiting for
     /// new Raft applies.
     pub async fn replay_persistent_instances(&self) -> Result<usize, String> {
-        let hook_guard = self.naming_hook.read().await;
-        let Some(hook) = hook_guard.as_ref() else {
+        let hook = {
+            let guard = self.hooks.read().await;
+            guard.naming.clone()
+        };
+        let Some(hook) = hook else {
             return Ok(0);
         };
 
