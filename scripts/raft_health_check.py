@@ -147,6 +147,16 @@ def self_test() -> int:
             0,
         ),
         (
+            # T6 resource correlation emits this extra WARN beside an anomaly.
+            # It is diagnostic context, not a fifth blocker.
+            "resource pressure alert alone is not a Raft anomaly",
+            clean_matrix
+            + "WARN batata_raft_health: raft_event=resource_pressure "
+            "anomaly_event=apply_wait_timeout cpu_pct=91.5\n",
+            clean_nodes,
+            0,
+        ),
+        (
             "standalone-only run needs no telemetry",
             standalone_matrix,
             "no telemetry here\n",

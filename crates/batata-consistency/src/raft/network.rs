@@ -27,6 +27,11 @@ use super::types::{CommittedLeaderId, Entry, LogId, NodeId, Snapshot, TypeConfig
 #[derive(Clone, Debug)]
 pub struct RaftNetworkConfig {
     /// Timeout for regular RPCs (AppendEntries, Vote)
+    ///
+    /// Channel-level ceiling, NOT the per-request deadline: openraft 0.10.1
+    /// supplies `RPCOption` for each RPC and the transport must enforce
+    /// `soft_ttl()`. This value is also the fallback when openraft supplies a
+    /// zero TTL. See `rpc_deadline` and `docs/raft-timing.md`.
     pub rpc_timeout: Duration,
     /// Timeout for snapshot transfer (larger due to data volume)
     pub snapshot_timeout: Duration,
@@ -359,15 +364,39 @@ fn append_result_from_wire(
     Ok(wire_response.into_append_result(prev_log_id, last_log_id))
 }
 
+/// Derive the transport deadline for one request-response Raft RPC.
+///
+/// openraft 0.10.1 requires the network implementation to enforce
+/// `RPCOption::soft_ttl()`, not `hard_ttl()`: the framework may cancel an
+/// in-flight RPC at the hard limit, so the transport must return a timeout
+/// error before that. For heartbeat and streaming replication the hard TTL is
+/// `heartbeat_interval` (`core/heartbeat/worker.rs:106`,
+/// `replication/mod.rs:334`), therefore `rpc_request_timeout_ms` does NOT bound
+/// those RPCs. It remains the channel-level ceiling and the fallback used only
+/// when openraft supplies a zero TTL.
+fn rpc_deadline(option: &RPCOption, fallback: Duration) -> Duration {
+    let hard = option.hard_ttl();
+    if hard.is_zero() {
+        return fallback;
+    }
+
+    // `soft_ttl()` is currently `hard * 3 / 4`, but that ratio is explicitly
+    // not part of the API contract. Clamp to `hard` so a future upstream
+    // change can never make the transport wait past openraft's cancellation
+    // point, and keep the deadline positive for sub-millisecond hard TTLs
+    // where integer division rounds `soft_ttl()` down to zero.
+    option
+        .soft_ttl()
+        .min(hard)
+        .max(Duration::from_nanos(1))
+        .min(hard)
+}
+
 impl RaftNetworkConnection {
-    /// Get the effective timeout for an RPC, using RPCOption's hard_ttl.
+    /// Effective per-RPC deadline. The configured `rpc_timeout` is only a
+    /// fallback/ceiling; the authority for an individual RPC is `RPCOption`.
     fn effective_timeout(&self, option: &RPCOption) -> Duration {
-        let ttl = option.hard_ttl();
-        if ttl.is_zero() {
-            self.network_config.rpc_timeout
-        } else {
-            ttl
-        }
+        rpc_deadline(option, self.network_config.rpc_timeout)
     }
 }
 
@@ -757,6 +786,55 @@ mod tests {
         match result {
             Err(openraft::raft::AppendError::HigherVote(v)) => assert_eq!(v, vote),
             other => panic!("expected HigherVote, got {other:?}"),
+        }
+    }
+
+    /// openraft 0.10.1 requires the transport to enforce `soft_ttl()`. Using
+    /// `hard_ttl()` used to make every heartbeat/replication RPC wait until
+    /// openraft's own cancellation point, hiding the real timeout error.
+    #[test]
+    fn rpc_deadline_uses_soft_ttl_not_hard_ttl() {
+        let fallback = Duration::from_secs(5);
+        let option = RPCOption::new(Duration::from_millis(200));
+        let deadline = rpc_deadline(&option, fallback);
+        assert_eq!(option.hard_ttl(), Duration::from_millis(200));
+        assert_eq!(deadline, Duration::from_millis(150));
+        assert!(deadline < option.hard_ttl());
+    }
+
+    /// The config-level RPC timeout is only used when openraft gives no TTL.
+    /// A non-zero TTL must win, otherwise `rpc_request_timeout_ms` would
+    /// silently override the framework's per-RPC budget.
+    #[test]
+    fn rpc_deadline_falls_back_only_for_zero_hard_ttl() {
+        let fallback = Duration::from_secs(5);
+        assert_eq!(
+            rpc_deadline(&RPCOption::new(Duration::ZERO), fallback),
+            fallback
+        );
+        let deadline = rpc_deadline(&RPCOption::new(Duration::from_millis(200)), fallback);
+        assert!(deadline < fallback);
+    }
+
+    /// The deadline may never outlive the hard TTL, including the sub-ms case
+    /// where `soft_ttl()` rounds down to zero.
+    #[test]
+    fn rpc_deadline_never_outlives_hard_ttl() {
+        let fallback = Duration::from_secs(5);
+        let hard_values = [
+            Duration::from_nanos(1),
+            Duration::from_millis(1),
+            Duration::from_millis(200),
+            Duration::from_secs(30),
+        ];
+        for hard in hard_values {
+            let option = RPCOption::new(hard);
+            let deadline = rpc_deadline(&option, fallback);
+            assert!(
+                !deadline.is_zero(),
+                "hard={hard:?} produced a zero deadline"
+            );
+            assert!(deadline <= hard, "hard={hard:?}, deadline={deadline:?}");
         }
     }
 }

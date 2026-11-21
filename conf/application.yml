@@ -515,7 +515,12 @@ batata.config.encryption.reload.interval.ms: 0
 # Heartbeat interval (ms). Leader sends heartbeats at this rate.
 #batata.raft.heartbeat_interval_ms: 200
 
-# RPC request timeout (ms) for individual Raft RPCs (AppendEntries, Vote).
+# RPC request timeout (ms). Channel-level ceiling for Raft gRPC calls, the
+# fallback when openraft supplies no per-RPC TTL, and the `R` term used to
+# derive write/election deadlines. It does NOT bound individual AppendEntries
+# or Vote RPCs: openraft sets RPCOption::hard_ttl() from heartbeat_interval_ms
+# and the transport enforces soft_ttl() (3/4 of it). Must exceed the heartbeat.
+# See docs/raft-timing.md for the full derivation.
 #batata.raft.rpc_timeout_ms: 5000
 
 # Snapshot threshold -- number of log entries before triggering a snapshot.

@@ -310,10 +310,12 @@ cmd_sdk_quick() {
         done
         pkill -9 -f batata-server 2>/dev/null || true
         sleep 1
-        for port in 8848 8858 8868 8081 8500 8510 8520 8080 18080 18090 18100 \
-                    9848 9858 9868 9849 9859 9869 7848 7858 7868; do
-            lsof -ti:"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
-        done
+        # Single source of truth: SDK_PORT_LIST in sdk_port_guard.sh already
+        # owns every listener the SDK matrix can bind, including 8502 (Consul
+        # Connect xDS), 8082 and 8083. The hardcoded copy that used to live
+        # here drifted and left a stale xDS listener alive, so a fresh batata
+        # bind failed with "Address already in use".
+        sdk_ports_clear
         sleep 1
         if [ "${MODE}" = "standalone" ]; then
             echo -e "${BOLD}Starting standalone node ($(basename $BINARY)) with consul+apollo...${NC}"

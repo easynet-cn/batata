@@ -75,12 +75,65 @@ where
         .map_err(|e| io_error(format!("RocksDB write task failed: {e}")))?
 }
 
+/// Run a synchronous RocksDB read on Tokio's blocking pool.
+///
+/// Reads are cheaper than fsyncs but still hit the disk, iterate memtables and
+/// decompress blocks. On the actix `current_thread` runtime the log reader is
+/// polled on the same `main` thread as the heartbeat worker and the election
+/// deadline notifier, so a slow `try_get_log_entries` (for example while a
+/// follower is catching up after a compaction stall) stalls all of them.
+async fn blocking_read<F, T>(f: F) -> Result<T, std::io::Error>
+where
+    F: FnOnce() -> Result<T, std::io::Error> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| io_error(format!("RocksDB read task failed: {e}")))?
+}
+
 /// Look up a column family inside a blocking task, where `self` is not
 /// available. Both CFs are created in `with_options`, so a missing one is a
 /// corrupted database rather than a recoverable condition.
 fn required_cf<'a>(db: &'a DB, name: &str) -> Result<&'a ColumnFamily, std::io::Error> {
     db.cf_handle(name)
         .ok_or_else(|| io_error(format!("{name} column family missing")))
+}
+
+/// Read the persisted vote; callable from a blocking task with only `&DB`.
+fn load_vote_from(db: &DB) -> Result<Option<Vote>, std::io::Error> {
+    let cf = required_cf(db, CF_STATE)?;
+    match db.get_cf(cf, KEY_VOTE) {
+        Ok(Some(bytes)) => Ok(Some(bincode::deserialize(&bytes).map_err(io_error)?)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(io_error(e)),
+    }
+}
+
+/// Read the persisted last-purged log id from a blocking task.
+fn load_last_purged_from(db: &DB) -> Result<Option<LogId>, std::io::Error> {
+    let cf = required_cf(db, CF_STATE)?;
+    match db.get_cf(cf, KEY_LAST_PURGED) {
+        Ok(Some(bytes)) => Ok(Some(bincode::deserialize(&bytes).map_err(io_error)?)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(io_error(e)),
+    }
+}
+
+/// Find the last stored log entry by seeking to the last key in the log CF.
+fn last_log_id_from(db: &DB) -> Result<Option<LogId>, std::io::Error> {
+    let cf = required_cf(db, CF_LOGS)?;
+    let mut iter = db.raw_iterator_cf(cf);
+    iter.seek_to_last();
+
+    if iter.valid()
+        && let Some(value) = iter.value()
+    {
+        let entry: Entry = bincode::deserialize(value).map_err(io_error)?;
+        return Ok(Some(entry.log_id));
+    }
+
+    Ok(None)
 }
 
 /// RocksDB-based log store for Raft
@@ -153,37 +206,26 @@ impl RocksLogStore {
         Ok(store)
     }
 
-    /// Load cached values from storage
+    /// Load cached values from storage on the blocking pool.
+    ///
+    /// All three reads share one task: startup is not latency critical, and
+    /// doing them inline used to block the single-threaded runtime before the
+    /// node had even joined the cluster.
     async fn load_cached_values(&self) -> Result<(), std::io::Error> {
-        // Load vote
-        let vote = self.load_vote_internal()?;
+        let db = self.db.clone();
+        let (vote, last_purged, last_log_id) = blocking_read(move || {
+            Ok((
+                load_vote_from(&db)?,
+                load_last_purged_from(&db)?,
+                last_log_id_from(&db)?,
+            ))
+        })
+        .await?;
+
         *self.vote.write().await = vote;
-
-        // Load last purged
-        let last_purged = self.load_last_purged_internal()?;
         *self.last_purged.write().await = last_purged;
-
-        // Calculate last log ID
-        let last_log_id = self.calculate_last_log_id()?;
         *self.last_log_id.write().await = last_log_id;
-
         Ok(())
-    }
-
-    /// Get column family handle for logs
-    /// Panics are acceptable here since column families are created during DB initialization.
-    /// If they don't exist, it indicates a severe DB corruption that cannot be recovered.
-    fn cf_logs(&self) -> &ColumnFamily {
-        self.db
-            .cf_handle(CF_LOGS)
-            .expect("CF_LOGS must exist - database may be corrupted")
-    }
-
-    /// Get column family handle for state
-    fn cf_state(&self) -> &ColumnFamily {
-        self.db
-            .cf_handle(CF_STATE)
-            .expect("CF_STATE must exist - database may be corrupted")
     }
 
     /// Encode log index to bytes (big-endian for proper ordering)
@@ -216,45 +258,6 @@ impl RocksLogStore {
     fn deserialize_entry(bytes: &[u8]) -> Result<Entry, std::io::Error> {
         bincode::deserialize(bytes).map_err(io_error)
     }
-
-    /// Load vote from storage
-    fn load_vote_internal(&self) -> Result<Option<Vote>, std::io::Error> {
-        match self.db.get_cf(self.cf_state(), KEY_VOTE) {
-            Ok(Some(bytes)) => {
-                let vote: Vote = bincode::deserialize(&bytes).map_err(io_error)?;
-                Ok(Some(vote))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => Err(io_error(e)),
-        }
-    }
-
-    /// Load last purged log ID
-    fn load_last_purged_internal(&self) -> Result<Option<LogId>, std::io::Error> {
-        match self.db.get_cf(self.cf_state(), KEY_LAST_PURGED) {
-            Ok(Some(bytes)) => {
-                let log_id: LogId = bincode::deserialize(&bytes).map_err(io_error)?;
-                Ok(Some(log_id))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => Err(io_error(e)),
-        }
-    }
-
-    /// Calculate the last log ID by scanning the log store
-    fn calculate_last_log_id(&self) -> Result<Option<LogId>, std::io::Error> {
-        let mut iter = self.db.raw_iterator_cf(self.cf_logs());
-        iter.seek_to_last();
-
-        if iter.valid()
-            && let Some(value) = iter.value()
-        {
-            let entry = Self::deserialize_entry(value)?;
-            return Ok(Some(entry.log_id));
-        }
-
-        Ok(None)
-    }
 }
 
 impl RaftLogReader<TypeConfig> for RocksLogStore {
@@ -274,25 +277,34 @@ impl RaftLogReader<TypeConfig> for RocksLogStore {
             std::ops::Bound::Unbounded => u64::MAX,
         };
 
-        let mut entries = Vec::new();
-        let start_key = Self::encode_log_index(start);
-        let end_key = Self::encode_log_index(end);
+        let db = self.db.clone();
+        let entries = blocking_read(move || {
+            let cf = required_cf(&db, CF_LOGS)?;
+            let start_key = RocksLogStore::encode_log_index(start);
+            let end_key = RocksLogStore::encode_log_index(end);
 
-        let mut iter = self.db.raw_iterator_cf(self.cf_logs());
-        iter.seek(&start_key);
-
-        while iter.valid() {
-            if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
-                if key >= end_key.as_slice() {
-                    break;
+            let mut entries = Vec::new();
+            let mut iter = db.raw_iterator_cf(cf);
+            iter.seek(&start_key);
+            while iter.valid() {
+                if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
+                    if key >= end_key.as_slice() {
+                        break;
+                    }
+                    entries.push(RocksLogStore::deserialize_entry(value)?);
                 }
-                let entry = Self::deserialize_entry(value)?;
-                entries.push(entry);
+                iter.next();
             }
-            iter.next();
-        }
+            Ok(entries)
+        })
+        .await?;
 
-        debug!("Read {} log entries from range {:?}", entries.len(), range);
+        debug!(
+            "Read {} log entries from range {}..{}",
+            entries.len(),
+            start,
+            end
+        );
         Ok(entries)
     }
 
@@ -508,5 +520,69 @@ mod tests {
             .await
             .expect_err("write failure must be propagated");
         assert!(err.to_string().contains("fsync failed"));
+    }
+
+    /// Reads must not occupy the async worker either: a follower catching up
+    /// can iterate thousands of log entries while heartbeats need that same
+    /// single-threaded runtime.
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_read_runs_off_the_async_worker_thread() {
+        let async_thread = std::thread::current().id();
+        let blocking_thread =
+            blocking_read(move || Ok::<_, std::io::Error>(std::thread::current().id()))
+                .await
+                .expect("blocking read must succeed");
+        assert_ne!(
+            async_thread, blocking_thread,
+            "RocksDB reads must not occupy the async worker thread"
+        );
+    }
+
+    #[tokio::test]
+    async fn blocking_read_propagates_io_errors() {
+        let err = blocking_read(|| Err::<(), _>(io_error("read failed")))
+            .await
+            .expect_err("read failure must be propagated");
+        assert!(err.to_string().contains("read failed"));
+    }
+
+    /// Architecture guard: removing the blocking-pool hop from either read
+    /// path must turn this test red, even if the helper itself still exists.
+    #[test]
+    fn log_store_read_paths_use_the_blocking_pool() {
+        let src = include_str!("log_store.rs");
+
+        let entries = src
+            .find("async fn try_get_log_entries")
+            .expect("try_get_log_entries must exist");
+        let entries_body = &src[entries..entries + 2200];
+        assert!(
+            entries_body.contains("blocking_read("),
+            "try_get_log_entries must run its RocksDB iteration on the blocking pool"
+        );
+
+        let cached = src
+            .find("async fn load_cached_values")
+            .expect("load_cached_values must exist");
+        let cached_body = &src[cached..cached + 1200];
+        assert!(
+            cached_body.contains("blocking_read("),
+            "startup cache loading must also use the blocking pool"
+        );
+    }
+
+    /// Success path for the migrated reader: opening an empty store and
+    /// reading a range must still work from inside `spawn_blocking`.
+    #[tokio::test]
+    async fn empty_log_store_reads_return_an_empty_range() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = RocksLogStore::new(dir.path())
+            .await
+            .expect("open log store");
+        let entries =
+            <RocksLogStore as RaftLogReader<TypeConfig>>::try_get_log_entries(&mut store, 0u64..10)
+                .await
+                .expect("read log range");
+        assert!(entries.is_empty());
     }
 }

@@ -1,241 +1,437 @@
-# Raft 超时基线、推导与可观测性
+# Raft Timeout Baseline, Derivation, and Observability
 
-> 本文回答三个问题：超时到底是多少、依据是什么、异常时怎么判别。
-> 对应任务 T1（基线审计）/ T2（指标）/ T3（联动改造）/ T4（根因）/ T5（门禁）。
-> 所有数字均以源码为准；上游结论附可核验锚点，未取得官方锚点的一律标注为「参考」。
+> This document answers three questions: what the timeouts actually are, what they are
+> based on, and how to tell whether the system is healthy.
+> It covers tasks T1 (baseline audit), T2 (metrics), T3 (linked timeouts),
+> T4 (root cause), T5 (gate), and T6 (root-cause fix).
+> Every number is taken from source code. Upstream conclusions carry verifiable
+> anchors; anything without an official anchor is explicitly marked "reference only".
 
-## 1. 结论先行
+## 1. Bottom Line First
 
-1. **上一轮口径需要纠正**：此前把 batata 的选举窗口说成 `3000–6000ms`，那只是
-   `RaftConfig::default()`（库默认，仅单测与 `RaftNodeBuilder` 使用）。生产路径
-   `Configuration -> typed_config -> startup/persistence.rs` 用的是 **1000ms min /
-   2000ms max / 200ms 心跳**。因此「leaderless 等待 5s < 选举窗口 6s」这一量纲错位
-   **只在库默认路径成立**；生产里 5s 反而大于 2s。
-2. 但问题性质没有变：三层默认值互不一致、所有等待量是互不相关的硬编码常量、
-   没有任何不等式校验、Raft 核心路径零指标。这正是「偶发异常无法判别」的根因。
-3. 现在的做法（T3 已落地）：所有等待由 `RaftConfig::timing()` 从选举窗口与 RPC
-   超时推导，并在 `RaftConfig::validate()` 里校验不变式；节点启动即 fail-fast。
+1. **The previous description was wrong.** Batata's election window used to be
+   described as `3000-6000ms`, but that is only `RaftConfig::default()` (the library
+   default, used by unit tests and `RaftNodeBuilder`). The production path
+   `Configuration -> typed_config -> startup/persistence.rs` uses
+   **1000ms min / 2000ms max / 200ms heartbeat**. The dimensional mismatch
+   "leaderless wait 5s < election window 6s" therefore **only holds on the library
+   default path**; in production 5s is actually larger than 2s.
+2. The nature of the problem is unchanged, though: three layers of defaults
+   disagreed with each other, every wait was an unrelated hard-coded constant,
+   no inequality was validated anywhere, and the Raft core paths exported zero
+   metrics. That is exactly why an occasional anomaly could not be diagnosed.
+3. The current approach (T3, implemented): every wait is derived by
+   `RaftConfig::timing()` from the election window and the RPC timeout, and
+   `RaftConfig::validate()` checks the invariants. A node fails fast at startup.
 
-## 2. 三层默认值与实际生效值
+## 2. Three Layers of Defaults and the Effective Values
 
-| 层 | 位置 | election min | election max | heartbeat | 说明 |
+| Layer | Location | election min | election max | heartbeat | Notes |
 |---|---|---|---|---|---|
-| 库默认 | `crates/batata-consistency/src/raft/config.rs` `RaftConfig::default()` | 3000ms | 6000ms（`to_openraft_config` 取 `2×min`） | 300ms | 单测、`RaftNodeBuilder` 用 |
-| **生产默认** | `crates/batata-server-common/src/model/typed_config.rs:338-346` | **1000ms** | **2000ms** | **200ms** | `startup/persistence.rs:348` 注入 `RaftConfig` |
-| 配置文件注释 | `conf/application.yml` | 1000ms | 未写（由代码 ×2） | 200ms | 仅文档，键被注释掉 |
+| Library default | `crates/batata-consistency/src/raft/config.rs` `RaftConfig::default()` | 3000ms | 6000ms (`to_openraft_config` uses `2 x min`) | 300ms | Unit tests, `RaftNodeBuilder` |
+| **Production default** | `crates/batata-server-common/src/model/typed_config.rs:338-346` | **1000ms** | **2000ms** | **200ms** | Injected into `RaftConfig` at `startup/persistence.rs:348` |
+| Config-file comment | `conf/application.yml` | 1000ms | not stated (computed as x2 in code) | 200ms | Documentation only; the keys are commented out |
 
-另有 `crates/batata-server-common/src/model/config.rs` 的 getter 文档曾写
-「default 5000 / 1000」，与真实值不符，T1 已修正。
+The getter docs in `crates/batata-server-common/src/model/config.rs` previously
+claimed "default 5000 / 1000", which did not match reality; T1 corrected them.
 
-其它生产值：`rpc_request_timeout_ms = 5000`、`snapshot_transfer_timeout_ms = 30000`、
-`forward.max_retries = 3`、`forward.initial_delay_ms = 200`。
+Other production values: `rpc_request_timeout_ms = 5000`,
+`snapshot_transfer_timeout_ms = 30000`, `forward.max_retries = 3`,
+`forward.initial_delay_ms = 200`.
 
-## 3. 改造前的调用点清单（T1 审计结果）
+`rpc_request_timeout_ms` is a **channel-level** setting, not a per-RPC
+deadline. Its real scope is: the tonic channel ceiling, the fallback when
+openraft supplies a zero `RPCOption` TTL, the floor that
+`snapshot_transfer_timeout_ms` must exceed, and the `R` term in the
+election-cycle derivation. openraft 0.10.1 passes `heartbeat_interval` as
+`RPCOption::hard_ttl()` for heartbeat/streaming replication, so an individual
+AppendEntries or Vote RPC is bounded by `soft_ttl()` instead (see section 4).
 
-| 位置 | 原值 | 性质 | 问题 |
+## 3. Pre-Change Call-Site Inventory (T1 Audit)
+
+| Location | Old value | Kind | Problem |
 |---|---|---|---|
-| `node.rs` `CLIENT_WRITE_TIMEOUT` | 15s | 硬编码 | 与选举窗口无推导关系 |
-| `node.rs` `LEADERLESS_MAX_POLLS × LEADERLESS_POLL_INTERVAL` | 25 × 200ms = 5s | 硬编码 | 库默认 6s 选举窗口下会提前放弃；生产 2s 下又过长且无依据 |
-| `node.rs` `wait_for_applied(..., 5s)` | 5s | 调用点硬编码 | 与 leaderless 预算同值但无关联 |
-| `config.rs` `election_timeout_ms * 2` | ×2 | 唯一有推导关系的值 | 无注释、无校验 |
-| `config.rs` 字段注释 | 5000ms / 1000ms | 文档 | 与真实默认值失真 |
-| `model/config.rs` getter 注释 | 5000ms / 1000ms | 文档 | 与 typed 默认值失真 |
+| `node.rs` `CLIENT_WRITE_TIMEOUT` | 15s | hard-coded | No derivation from the election window |
+| `node.rs` `LEADERLESS_MAX_POLLS x LEADERLESS_POLL_INTERVAL` | 25 x 200ms = 5s | hard-coded | Gives up too early under the library default 6s window; unjustifiably long under the production 2s window |
+| `node.rs` `wait_for_applied(..., 5s)` | 5s | hard-coded at call site | Same value as the leaderless budget but unrelated to it |
+| `config.rs` `election_timeout_ms * 2` | x2 | the only derived value | No comment, no validation |
+| `config.rs` field comments | 5000ms / 1000ms | documentation | Drifted from the real defaults |
+| `model/config.rs` getter comments | 5000ms / 1000ms | documentation | Drifted from the typed defaults |
 
-## 4. 上游 / 框架对照（带锚点）
+## 4. Upstream / Framework Comparison (with Anchors)
 
-| 来源 | heartbeat | election | 写/RPC 超时 | 依据 |
+| Source | heartbeat | election | write / RPC timeout | Evidence |
 |---|---|---|---|---|
-| openraft 0.10.1（本项目框架） | 50ms | 150–300ms | 无整体 deadline | `~/.cargo/registry/.../openraft-0.10.1/src/config/config.rs:59-84` `DEFAULTS` |
-| openraft 官方建议 | `≈ election/3` | `≈ 10–20× RTT` | — | docs.rs `openraft/0.10.1/struct.Config.html` §Timing Constraints 原文 |
-| openraft 硬约束 | `election_timeout_min > heartbeat_interval` | `min < max` | — | 同文件 `Config::validate()`（:901-935） |
-| hashicorp/raft `DefaultConfig()` | 1000ms | 1000ms | Commit 50ms、LeaderLease 500ms | `github.com/hashicorp/raft/config.go` `DefaultConfig()` |
-| hashicorp/raft `ValidateConfig` | `lease ≤ heartbeat ≤ election` | | | 同文件，原文：`LeaderLeaseTimeout ... cannot be larger than heartbeat timeout`、`ElectionTimeout ... must be equal or greater than Heartbeat Timeout` |
-| Consul 默认（multiplier=5） | 5000ms | 5000ms | `rpc_hold_timeout = 7s` | Consul 官方 [General parameters](https://developer.hashicorp.com/consul/docs/reference/agent/configuration-file/general) 与 [Server Performance](https://developer.hashicorp.com/consul/docs/v1.18.x/reference/architecture/server) |
-| etcd（参考，未取官方锚点） | 100ms | 1000–2000ms | — | 社区资料 `ElectionTick=10 / HeartbeatTick=1 / TickMs=100`；PreVote 默认说法互相矛盾，**不作为推导依据** |
-| **batata 生产（改造前）** | **200ms** | **1000–2000ms** | **15s / 5s / 5s** | 无联动、无校验、无指标 |
+| openraft 0.10.1 (this project's framework) | 50ms | 150-300ms | no overall deadline | `~/.cargo/registry/.../openraft-0.10.1/src/config/config.rs:59-84` `DEFAULTS` |
+| openraft official guidance | `approx. election/3` | `approx. 10-20x RTT` | - | docs.rs `openraft/0.10.1/struct.Config.html`, section "Timing Constraints" |
+| openraft hard constraint | `election_timeout_min > heartbeat_interval` | `min < max` | - | Same file, `Config::validate()` (`:901-935`) |
+| hashicorp/raft `DefaultConfig()` | 1000ms | 1000ms | Commit 50ms, LeaderLease 500ms | `github.com/hashicorp/raft/config.go` `DefaultConfig()` |
+| hashicorp/raft `ValidateConfig` | `lease <= heartbeat <= election` | | | Same file, verbatim: `LeaderLeaseTimeout ... cannot be larger than heartbeat timeout`, `ElectionTimeout ... must be equal or greater than Heartbeat Timeout` |
+| Consul default (multiplier=5) | 5000ms | 5000ms | `rpc_hold_timeout = 7s` | Consul official [General parameters](https://developer.hashicorp.com/consul/docs/reference/agent/configuration-file/general) and [Server Performance](https://developer.hashicorp.com/consul/docs/v1.18.x/reference/architecture/server) |
+| etcd (reference only, no official anchor) | 100ms | 1000-2000ms | - | Community material: `ElectionTick=10 / HeartbeatTick=1 / TickMs=100`. Claims about the PreVote default contradict each other, so **this is not used as a derivation basis**. |
+| **batata production (before the change)** | **200ms** | **1000-2000ms** | **15s / 5s / 5s** | No linkage, no validation, no metrics |
 
-Consul 官方对 `rpc_hold_timeout` 的定义：*"A duration that a client or server will
-retry internal RPC requests during leader elections. Under normal circumstances,
-this can prevent clients from experiencing 'no leader' errors. Defaults to 7s."*
-batata 的 leaderless 等待在语义上就是它：**选举窗口 + 一次 RPC 重试预算**。
-Consul 用同一个 `raft_multiplier` 推导全部时序；batata 之前各写各的常量。
+Consul's official definition of `rpc_hold_timeout`: *"A duration that a client or
+server will retry internal RPC requests during leader elections. Under normal
+circumstances, this can prevent clients from experiencing 'no leader' errors.
+Defaults to 7s."* Batata's leaderless wait is semantically exactly that:
+**an election window plus one RPC retry budget**. Consul derives all of its timing
+from a single `raft_multiplier`; batata previously hard-coded each constant.
 
-Consul 官方还明确点名了本项目的可疑现象：*"Spurious leader elections can be
-caused by networking issues between the servers or insufficient CPU resources"*，
-并建议用 `consul.raft.leader.lastContact` 观测。这是 T2/T4 的动机。
+Consul's documentation also names the suspicious behavior seen in this project:
+*"Spurious leader elections can be caused by networking issues between the servers
+or insufficient CPU resources"*, and recommends observing
+`consul.raft.leader.lastContact`. This motivated T2/T4.
 
-### openraft 的两个默认行为（T4 关键线索，T6 已处置）
+### RPCOption Timeout Semantics (openraft 0.10.1)
 
-- `enable_pre_vote: Option<bool>` 默认 `None`，docs.rs 原文：*"None (the default)
-  leaves the choice to Openraft, which currently treats it as disabled."*
-  改造前 batata `to_openraft_config()` 用 `..Default::default()` 未设置该字段 ⇒
-  **PreVote 关闭**；T6 已显式设为 `Some(true)`（见 §6.2）。
-- `enable_leader_restore` 默认开启：*"A node whose saved vote identifies it as the
-  former leader starts an election in a higher term"*，且不等选举超时。
-  regression 矩阵会在六个组合间反复重启节点，重启的前 leader 会立即发起选举，
-  可能加剧 term 膨胀；本项保持上游默认，未改动。
-- 这两条曾被用来解释「稳态出现多次选举」；T6-a 实测后确认真正的触发源是跨
-  `.await` 持锁（§6.1 第 3 点 / §6.2），PreVote 关闭只是放大了停顿的后果。
+`RPCOption::hard_ttl()` is the point at which openraft may cancel an in-flight
+RPC. Its source documentation says network implementations "should use
+`RPCOption::soft_ttl` to configure their transport timeout, deadline, or
+equivalent mechanism", and `soft_ttl()` is `hard_ttl * 3 / 4` (the ratio is
+explicitly not part of the contract). openraft sets the hard TTL from
+`heartbeat_interval` in `src/core/heartbeat/worker.rs:106` and
+`src/replication/mod.rs:334`; `src/core/heartbeat/worker.rs:118` additionally
+wraps the call in `C::timeout(heartbeat_interval)`. Batata's transport
+therefore enforces `soft_ttl()` (150ms with the production 200ms heartbeat),
+clamped so it can never outlive the hard TTL, and falls back to
+`rpc_request_timeout_ms` only when the hard TTL is zero. `RaftConfig::validate()`
+rejects `rpc_request_timeout_ms <= heartbeat_interval_ms`, because a channel
+timeout at or below the heartbeat would preempt the soft TTL and make healthy
+heartbeats look like network failures.
 
-## 5. 推导公式与不变式（T3 落地）
+### Two openraft Defaults (Key Clue for T4, Handled in T6)
 
-记 `E = election_timeout_ms`、`E_max = 2E`、`H = heartbeat_interval_ms`、
-`R = rpc_request_timeout_ms`，`C = E_max + R` 为「一个选举周期」：
+- `enable_pre_vote: Option<bool>` defaults to `None`. docs.rs, verbatim: *"None
+  (the default) leaves the choice to Openraft, which currently treats it as
+  disabled."* Before the change, batata's `to_openraft_config()` used
+  `..Default::default()` and did not set this field, so **PreVote was off**;
+  T6 set it explicitly to `Some(true)` (see section 6.2).
+- `enable_leader_restore` is enabled by default: `Config::enable_leader_restore()`
+  is `unwrap_or(true)`, and `engine_impl.rs:211` calls `elect()` immediately at
+  startup when a restarted node was the former leader. The regression matrix
+  restarts nodes between its six combinations, so this can amplify term
+  inflation. T3 sets it explicitly to `Some(false)`. The upstream rationale for
+  the default is to avoid reusing a log id when the old leader replicated an
+  entry before its local flush; `RocksLogStore::append` fsyncs every batch
+  before returning and signals `IOFlushed` only after that, so the window does
+  not exist in batata. With PreVote enabled, the restarted node follows the
+  normal pre-elect / election timing instead.
+- Both were initially used to explain "multiple elections in steady state".
+  After the T6-a measurement, the real trigger was confirmed to be a synchronous
+  lock held across `.await` (section 6.1 point 3 / section 6.2); having PreVote
+  off merely amplified the consequence of the stall.
 
-| 派生量 | 公式 | 生产值 | 库默认值 | 语义 |
+## 5. Derivation Formulas and Invariants (T3, Implemented)
+
+Let `E = election_timeout_ms`, `E_max = 2E`, `H = heartbeat_interval_ms`,
+`R = rpc_request_timeout_ms`, and let `C = E_max + R` be "one election cycle".
+`R` is the configured RPC round used to size that cycle and the channel
+ceiling; it is deliberately not a per-RPC deadline (see section 4):
+
+| Derived value | Formula | Production | Library default | Meaning |
 |---|---|---|---|---|
-| `election_timeout_min/max` | `E` / `2E` | 1000 / 2000ms | 3000 / 6000ms | openraft 窗口 |
-| `election_cycle` | `C = E_max + R` | 7000ms | 11000ms | 对齐 Consul `rpc_hold_timeout`（5s 选举 → 7s） |
-| `leaderless_wait` | `C` | 7000ms | 11000ms | follower 等 leader 出现 |
-| `apply_wait` | `C` | 7000ms | 11000ms | follower 等本机 FSM 追平 |
-| `client_write` | `2C` | 14000ms | 22000ms | 覆盖写入期间的一次 leadership change |
-| leaderless 采样 | `H/2`，夹在 `[10ms, 200ms]` | 100ms × 70 次 | 150ms × 73 次 | 采样快于选举，不会漏掉 Candidate 态 |
+| `election_timeout_min/max` | `E` / `2E` | 1000 / 2000ms | 3000 / 6000ms | openraft election window |
+| `election_cycle` | `C = E_max + R` | 7000ms | 11000ms | Aligned with Consul `rpc_hold_timeout` (5s election -> 7s) |
+| `leaderless_wait` | `C` | 7000ms | 11000ms | Follower waits for a leader to appear |
+| `apply_wait` | `C` | 7000ms | 11000ms | Follower waits for its local FSM to catch up |
+| `client_write` | `2C` | 14000ms | 22000ms | Covers one leadership change during a write |
+| leaderless polling | `H/2`, clamped to `[10ms, 200ms]` | 100ms x 70 polls | 150ms x 73 polls | Faster than an election, so a Candidate state cannot be missed |
 
-`RaftConfig::validate()` 强制：
+`RaftConfig::validate()` enforces:
 
-- `H > 0`、`E > H`（openraft 硬约束）、`R > 0`；
-- `snapshot_transfer_timeout_ms > R`（原注释要求，之前没有代码保证）；
-- `forward_initial_delay_ms > 0`（当 `forward_max_retries > 0`）；
-- 溢出检查（`2E`、`E_max + R`、`2C`）；
-- `leaderless_wait ≥ E_max`（**正是消除 5s < 6s 错位的断言**）、`client_write > leaderless_wait`。
+- `H > 0`, `E > H` (openraft hard constraint), `R > 0`;
+- `snapshot_transfer_timeout_ms > R` (previously required only by a comment, with
+  no code guarantee);
+- `forward_initial_delay_ms > 0` (when `forward_max_retries > 0`);
+- overflow checks (`2E`, `E_max + R`, `2C`);
+- `leaderless_wait >= E_max` (**the assertion that removes the 5s < 6s
+  mismatch**) and `client_write > leaderless_wait`.
 
-节点创建时 `RaftNode::new_with_full_options` 调用 `validate()`，在任何目录/RocksDB
-打开之前 fail-fast，并把派生结果打进启动日志，便于现场核对。
+`RaftNode::new_with_full_options` calls `validate()` at node creation, before any
+directory or RocksDB instance is opened, so it fails fast, and logs the derived
+values at startup for on-site verification.
 
-## 6. 可判别规则（T2 指标 + T5 门禁）
+## 6. Diagnosability Rules (T2 Metrics + T5 Gate)
 
-T2 新增 `crates/batata-consistency/src/raft/telemetry.rs`，订阅 openraft 的
-metrics watch 通道（不是定时轮询：实测 100ms 轮询会漏掉 leader 上仅持续几十毫秒的
-Candidate 态），导出 Prometheus 指标与 `batata_raft_health` 结构化日志（命名对齐
-Consul telemetry，加 `batata_` 前缀）：
+T2 added `crates/batata-consistency/src/raft/telemetry.rs`, which subscribes to
+openraft's metrics watch channel (not periodic polling: a measured 100ms poll
+missed a Candidate state on the leader that lasted only a few tens of
+milliseconds). It exports Prometheus metrics and structured logs under the
+`batata_raft_health` target (naming aligned with Consul telemetry, prefixed with
+`batata_`):
 
-| 类型 | 指标 | 用途 |
+| Type | Metric | Purpose |
 |---|---|---|
-| Gauge | `batata_raft_term/role/leader_id/last_log_index/last_applied_index/apply_lag/steady_state_elections` | 状态与滞后 |
-| Counter | `batata_raft_elections_total`、`steady_state_elections_total`、`leader_changes_total`、`term_changes_total`、`client_write_timeouts_total`、`apply_wait_timeouts_total`、`forwarded_writes_total`、`forward_failures_total`、`leaderless_give_ups_total` | 异常次数 |
-| Histogram | `batata_raft_election_duration_seconds`、`client_write_duration_seconds`、`apply_wait_duration_seconds`、`forward_duration_seconds` | 耗时分布 |
+| Gauge | `batata_raft_term/role/leader_id/last_log_index/last_applied_index/apply_lag/local_committed_index/cluster_committed_index/commit_lag/steady_state_elections` | State and lag |
+| Gauge | `batata_raft_resource_cpu_percent`, `batata_raft_resource_process_memory_mb` | Latest resource sample in the Raft namespace (one scrape is self-contained) |
+| Gauge | `batata_raft_anomaly_cpu_percent`, `batata_raft_anomaly_process_memory_mb` (labelled by `event`) | Resources captured at the instant of an anomaly |
+| Counter | `batata_raft_elections_total`, `steady_state_elections_total`, `leader_changes_total`, `term_changes_total`, `client_write_timeouts_total`, `apply_wait_timeouts_total`, `forwarded_writes_total`, `forward_failures_total`, `leaderless_give_ups_total` | Anomaly counts |
+| Counter | `batata_raft_anomalies_with_resource_context_total`, `batata_raft_high_cpu_anomalies_total` (labelled by `event`) | Correlation counts |
+| Histogram | `batata_raft_election_duration_seconds`, `client_write_duration_seconds`, `apply_wait_duration_seconds`, `forward_duration_seconds` | Latency distributions |
 
-判别口径：
+Decision rules:
 
-- **稳态**（已见过 leader 后）出现 Candidate ⇒ 记 `steady_state_election` 并打 WARN；
-  冷启动的第一次选举不算异常（对应 Consul `candidate == 0 while leader exists`）。
-- 门禁只把 `steady_state_election` / `apply_wait_timeout` /
-  `client_write_timeout` / `leaderless_give_up` 计为 blocker，要求全部为 0；
-  冷启动选举只记录、不计数（INFO），cluster 组合缺少 `telemetry_started`
-  则 fail-closed，防止「遥测根本没起来」被误判为健康。
-- 关联判别：选举时刻 CPU 打满 ⇒ runtime 饥饿；CPU 正常但 AppendEntries/forward
-  失败 ⇒ 网络/端口串扰；`apply_lag` 或 `apply_wait` 尖峰 ⇒ RocksDB/FSM 阻塞。
-- 资源侧沿用现有 `system_cpu_usage_percent` / `process_memory_bytes` 周期采样，
-  不在本轮重复造指标栈。
+- **Steady state** (after a leader has already been seen) showing Candidate =>
+  record `steady_state_election` and emit WARN; the first election of a cold start
+  is not an anomaly (corresponding to Consul's `candidate == 0 while leader
+  exists`).
+- The gate counts only `steady_state_election` / `apply_wait_timeout` /
+  `client_write_timeout` / `leaderless_give_up` as blockers and requires all of
+  them to be 0. A cold-start election is only recorded (INFO), not counted. If a
+  cluster combination is missing `telemetry_started`, the gate fails closed, so
+  "telemetry never started" cannot be misread as healthy.
+- Correlation rules: CPU saturated at election time => runtime starvation; CPU
+  normal but AppendEntries/forward failing => network or port cross-talk;
+  `apply_lag` or `apply_wait` spike => RocksDB/FSM blocking. T4 added
+  `commit_lag` (cluster-committed minus local-committed) to separate "entries
+  have not reached this node" (replication/network) from "entries arrived but
+  were not applied" (FSM blocking), which `apply_lag` alone cannot distinguish.
+- The resource side reuses the existing periodic `system_cpu_usage_percent` /
+  `process_memory_bytes` sampling; no second metrics stack was added. Follow-up
+  T6 made that sampling available to Raft anomaly logging through a provider,
+  so CPU and memory no longer have to be aligned by hand (section 6.3).
 
-### 6.1 T4 稳态选举根因（实测证据）
+### 6.1 T4 Steady-State Election Root Cause (Measured Evidence)
 
-证据目录 `/tmp/batata-raft-health-1795179141/`：全新 release 二进制、3 节点冷启动，
-Go Consul SDK 与 `batata-consul-client` 两套用例均 `rc=0`，但 T2 指标抓到：
+Evidence directory `/tmp/batata-raft-health-1795179141/`: fresh release binary,
+3-node cold start. Both the Go Consul SDK suite and the `batata-consul-client`
+suite returned `rc=0`, but the T2 metrics captured:
 
-| 现象 | 实测 |
+| Symptom | Measurement |
 |---|---|
-| node1 稳态选举 / apply 超时 | 3 次 / 3 次；term 最终 7、leader 变更 7 次 |
-| node2 | 稳定（0 次稳态选举） |
-| node3 | term 变更 7 次，跟随 node1 的 term 抬升 |
-| 结束时 `apply_lag` | 0（不是「落后但能追上」，是选举期间整段停摆） |
-| CPU / 内存 | `system_cpu_usage_percent` 4.29–11.27%，进程 171–206MB |
+| node1 steady-state elections / apply timeouts | 3 / 3; final term 7, 7 leader changes |
+| node2 | stable (0 steady-state elections) |
+| node3 | 7 term changes, following node1's term increases |
+| `apply_lag` at the end | 0 (not "behind but catching up", but a complete stall during the elections) |
+| CPU / memory | `system_cpu_usage_percent` 4.29-11.27%, process 171-206MB |
 
-三次选举的 openraft deadline 全部**迟到约 3.6–3.7s** 才被处理：
+All three openraft election deadlines were handled **about 3.6-3.7s late**:
 
-| `lease_expires_at` | 实际触发 | 延迟 |
+| `lease_expires_at` | Actually fired | Delay |
 |---|---|---|
 | 12:53:08.950191 | 12:53:12.639813 | 3.690s |
 | 12:53:17.221654 | 12:53:20.795244 | 3.574s |
 | 12:53:26.320849 | 12:53:29.891071 | 3.570s |
 
-每次触发前 node1 还有约 **7s 的全进程日志静默**（12:53:05.33→12:53:12.64 等）。
-日志里三条 deadline 均为 `pre_vote_retry_at: None`，直接证实 PreVote 关闭。
+Before each firing, node1 also showed about **7s of process-wide log silence**
+(e.g. 12:53:05.33 -> 12:53:12.64). All three deadline lines in the log showed
+`pre_vote_retry_at: None`, directly confirming that PreVote was disabled.
 
-源码侧的解释链（T6-a 复核后修正；最终根因见 §6.2）：
+Source-level explanation chain (revised after the T6-a review; the final root
+cause is in section 6.2):
 
-1. `crates/batata-server/src/main.rs` 用 `#[actix_web::main]`；`Cargo.lock` 的
-   `actix-rt 2.16.0` 在 `runtime.rs:23` 用 `Builder::new_current_thread()`，
-   `openraft-rt-tokio` 的 `C::spawn` 就是 `tokio::spawn`。RaftCore、SM worker、
-   Raft gRPC server、xDS 快照发布全落在同一个 `main` 线程。
-2. `network.rs::effective_timeout()` 在 `RPCOption::hard_ttl()` 非零时直接采用它；
-   openraft 0.10.1 的 `heartbeat/worker.rs:105` 与 `replication/mod.rs:333` 把 TTL
-   设为 `heartbeat_interval`，`heartbeat/worker.rs:118` 还自行包了一层
-   `C::timeout(200ms)`。因此**生产配置里的 `rpc_request_timeout_ms=5000` 对
-   AppendEntries / Vote 完全不生效，实际硬超时只有 200ms**（leader 实测 24s 内
-   217 次 `AppendEntries RPC timed out after 200ms`）。
-3. **真正的触发源是跨 `.await` 持有同步锁**（§6.2）：`connect_ca.rs::update_intention()`
-   把 DashMap 分片写守卫一路握到 `raft.write(...).await`，而 FSM apply hook 在
-   `main` 上要 `intentions.clear()`，于是单线程执行器被冻住约 7s（正好一次
-   `apply_wait`），期间心跳 / AppendEntries 全部 200ms 超时。
-4. PreVote 关闭（`to_openraft_config` 用 `..Default::default()`，openraft
-   `get_enable_pre_vote()` = `unwrap_or(false)`；日志 `pre_vote_retry_at: None`）
-   ⇒ 漏心跳直接抬 term 打断 leader ⇒ 在途写丢失 ⇒ `wait_for_applied` 7s 超时。
+1. `crates/batata-server/src/main.rs` uses `#[actix_web::main]`; `actix-rt 2.16.0`
+   from `Cargo.lock` uses `Builder::new_current_thread()` at `runtime.rs:23`, and
+   `openraft-rt-tokio`'s `C::spawn` is simply `tokio::spawn`. RaftCore, the SM
+   worker, the Raft gRPC server, and xDS snapshot publication all end up on the
+   same `main` thread.
+2. `network.rs::effective_timeout()` directly adopts `RPCOption::hard_ttl()` when
+   it is non-zero. openraft 0.10.1's `heartbeat/worker.rs:105` and
+   `replication/mod.rs:333` set the TTL to `heartbeat_interval`, and
+   `heartbeat/worker.rs:118` wraps it in another `C::timeout(200ms)`. Therefore
+   **`rpc_request_timeout_ms=5000` in the production config has no effect at all
+   on AppendEntries / Vote; the effective hard timeout is only 200ms** (the
+   leader measured 217 `AppendEntries RPC timed out after 200ms` events in 24s).
+   This describes the pre-T1 implementation. T1 later changed
+   `effective_timeout()` to `soft_ttl()` as openraft requires (section 4), so
+   the per-RPC budget became 150ms. The measurement is kept as the historical
+   evidence that `rpc_request_timeout_ms` never governed these RPCs.
+3. **The real trigger is a synchronous lock held across `.await`** (section 6.2):
+   `connect_ca.rs::update_intention()` held a DashMap shard write guard all the
+   way through `raft.write(...).await`, while the FSM apply hook on `main` needed
+   `intentions.clear()`. The single-threaded executor was frozen for about 7s
+   (exactly one `apply_wait`), during which every heartbeat / AppendEntries timed
+   out at 200ms.
+4. With PreVote off (`to_openraft_config` used `..Default::default()`, openraft's
+   `get_enable_pre_vote()` is `unwrap_or(false)`; the log showed
+   `pre_vote_retry_at: None`), a missed heartbeat immediately raised the term and
+   disrupted the leader => in-flight writes were lost => `wait_for_applied` timed
+   out after 7s.
 
-因此 **`apply_wait_timeout` 是下游症状，不是独立缺陷**；T3 把超时联动做严密并不能
-消除触发源。CPU 只有 4–11% 也排除了「CPU 打满导致 spurious election」这一常见解释，
-指向的是**单线程运行时上的同步阻塞 / 跨 await 持锁**，而不是参数本身太小。
+So **`apply_wait_timeout` is a downstream symptom, not an independent defect**;
+making the timeouts internally consistent in T3 cannot remove the trigger. CPU
+at only 4-11% also rules out the common explanation "CPU saturation caused a
+spurious election" and points instead to **synchronous blocking on a
+single-threaded runtime / a lock held across await**, not to parameters that are
+too small.
 
-`enable_leader_restore`（前 leader 重启立即以更高 term 竞选）在矩阵跨组合重启节点时
-仍可能加剧 term 膨胀，但本轮定向验证没有节点重启，它不是这 3 次选举的触发源。
+`enable_leader_restore` (a restarted former leader immediately campaigns in a
+higher term) may still amplify term inflation when the matrix restarts nodes
+between combinations, but this targeted validation involved no node restarts, so
+it was not the trigger for these three elections. T3 subsequently disabled
+`enable_leader_restore` explicitly (section 4); this paragraph is kept as the
+historical classification of the measured run.
 
-### 6.2 T6 根因修复（PreVote + 同步 I/O 隔离 + 跨 await 持锁修复）
+### 6.2 T6 Root-Cause Fix (PreVote + Sync I/O Isolation + Cross-Await Lock Fix)
 
-**(1) 最终根因：跨 `.await` 持有 DashMap 分片写守卫。**
+**(1) Final root cause: a DashMap shard write guard held across `.await`.**
 
-`crates/batata-plugin-consul/src/connect_ca.rs::update_intention()` 原先写成
-`if let Some(mut entry) = self.intentions.get_mut(id) { ... raft.write(...).await ... }`：
-HTTP handler 在 actix arbiter 线程上持有 `intentions` 的同步分片写锁，一直握到转发写
-结束。与此同时 Raft FSM apply 在 `main` 线程上提交 `IntentionUpsert` 后派发
-`HookDispatch::CaChange`（`raft/plugin_handler.rs:213/242`）→ `plugin.rs:139
-on_ca_change()` → `refresh_from_rocks()` → `intentions.clear()` + 逐条 insert
-（`connect_ca.rs:1674`），需要同一张表的**全部分片写锁**。单线程运行时上这直接把
-`main`（RaftCore / Raft gRPC server / heartbeat / deadline notifier）冻结，直到
-arbiter 上的 `wait_for_applied` 在 7s 后超时并释放守卫 —— 正好解释三次 7s 停顿、
-`main` 在超时瞬间复活、以及期间每 200ms 一次的 AppendEntries 超时。
-`peering.rs` 的同类写法早已显式 `drop(peering)`，只有这里漏了。
+`crates/batata-plugin-consul/src/connect_ca.rs::update_intention()` was written as
+`if let Some(mut entry) = self.intentions.get_mut(id) { ... raft.write(...).await ... }`:
+the HTTP handler, on an actix arbiter thread, held the synchronous shard write
+lock of `intentions` until the forwarded write completed. At the same time, Raft
+FSM apply on the `main` thread committed `IntentionUpsert` and dispatched
+`HookDispatch::CaChange` (`raft/plugin_handler.rs:213/242`) -> `plugin.rs:139
+on_ca_change()` -> `refresh_from_rocks()` -> `intentions.clear()` plus one insert
+per entry (`connect_ca.rs:1674`), which needs **all shard write locks** of the
+same map. On a single-threaded runtime this froze `main` (RaftCore / Raft gRPC
+server / heartbeat / deadline notifier) until `wait_for_applied` on the arbiter
+timed out after 7s and released the guard. That explains the three 7s stalls,
+`main` reviving at the exact moment of the timeout, and one AppendEntries timeout
+every 200ms in between. The equivalent code in `peering.rs` already called
+`drop(peering)` explicitly; only this site missed it.
 
-修复：把变更收敛到**同步**私有 helper `build_updated_intention()`，它返回 owned
-`Intention`；编译器因此保证守卫不可能活到 `update_intention` 的任何 `.await`。
-`update_intention_has_no_shard_guard_across_await` 是架构守卫测试，把 `get_mut(`
-放回异步函数体会立即变红（mutant 已验）。
+Fix: move the mutation into a **synchronous** private helper
+`build_updated_intention()` that returns an owned `Intention`. The compiler then
+guarantees the guard cannot survive into any `.await` of `update_intention`.
+`update_intention_has_no_shard_guard_across_await` is an architecture guard test:
+putting `get_mut(` back into the async function body turns it red immediately
+(mutant verified).
 
-**(2) 协议级兜底：启用 PreVote。**
+**(2) Protocol-level fallback: enable PreVote.**
 
-`to_openraft_config()` 显式设置 `enable_pre_vote: Some(true)`。openraft 0.10.1 的
-`pre_elect()`（`engine_impl.rs:335-375`）明确「neither updates `vote` nor changes the
-server state: the node stays a Follower until a quorum would grant the vote」，且
-leader lease 未过期时直接跳过 pre-elect。因此一次瞬时停顿不会再变成真实 term 抬升。
+`to_openraft_config()` explicitly sets `enable_pre_vote: Some(true)`. openraft
+0.10.1's `pre_elect()` (`engine_impl.rs:335-375`) states that it "neither updates
+`vote` nor changes the server state: the node stays a Follower until a quorum
+would grant the vote", and it skips pre-elect entirely while the leader lease is
+still valid. A transient stall therefore no longer becomes a real term increase.
 
-**(3) 同步 I/O 隔离（不是根因，但消除同类 head-of-line 风险）。**
+**(3) Sync I/O isolation (not the root cause, but removes the same head-of-line risk).**
 
-`RocksLogStore` 的 `save_vote` / `append` / `truncate_after` / `purge` 原本用
-`set_sync(true)` 在 RaftCore 所在线程上同步 fsync；现统一经 `blocking_write()` 交给
-`spawn_blocking`。持久性不变（`IOFlushed` 仍在 fsync 完成后才回调），写入顺序不变
-（RaftCore 逐个 await），但磁盘忙时运行时线程不再被独占。
+`RocksLogStore`'s `save_vote` / `append` / `truncate_after` / `purge` used
+`set_sync(true)` to fsync synchronously on the RaftCore thread; they now all go
+through `blocking_write()` onto `spawn_blocking`. Durability is unchanged
+(`IOFlushed` still fires only after fsync completes) and ordering is unchanged
+(RaftCore awaits each call in sequence), but a busy disk no longer monopolizes
+the runtime thread.
 
-## 7. 遗留与边界
+T2 completed the isolation. `RocksLogStore` reads (`try_get_log_entries` and
+startup cache loading) now go through `blocking_read()` on the blocking pool,
+and `RocksStateMachine` was wrapped as `Arc<StateMachineInner>` plus `Deref` so
+`apply()` can dispatch `apply_request` and the durable last-applied/membership
+markers through `spawn_blocking`. Shared handles are resolved once per entry on
+the async side (`ApplyHooks`: naming hook, health-check hook, plugin registry
+snapshot) and moved into the closure as owned `Arc`s, so no
+`tokio::sync::RwLock` is ever awaited from a blocking thread. Apply stays
+strictly serialised: `apply()` awaits each join before pulling the next entry,
+so log order, responder timing and durability are unchanged. Architecture guard
+tests assert both the presence of the blocking hop and that it runs on a
+different thread; four mutants (helper, apply call site, read helper, read call
+site) were killed.
 
-- 本轮**不改** `E/H/R` 的默认值（属于行为变更），只把等待量联动起来；是否把
-  生产 `rpc_request_timeout_ms`（5000ms，比 `E_max` 大 2.5 倍）收紧，需单独评估。
-  T6-a 另发现该配置对 AppendEntries / Vote **实际不生效**（§6.1 第 2 点）：openraft
-  用 `heartbeat_interval` 作为 `RPCOption::hard_ttl`，并在 heartbeat worker 里自行
-  `C::timeout(200ms)`，所以调 `rpc_request_timeout_ms` 不会改变复制 RPC 的 200ms
-  预算；真要放宽只能同步上调 `heartbeat_interval` 与选举窗口，需独立评估。
-- 根因已按 §6.2 修复，T5 的阻断语义保持不变：`regression.sh --full` 的 matrix
-  阶段继续把 `steady_state_election` / `apply_wait_timeout` /
-  `client_write_timeout` / `leaderless_give_up` 视作 blocker，cluster 组合缺少
-  `telemetry_started` 则 fail-closed。红灯不是门禁误报，是不让偶发被复跑掩盖。
-- `apply_lag` 用 `last_log_index - last_applied`，是本机视角；跨节点 commit 差异
-  由 `cluster_committed` 提供，本轮未纳入。
-- `RocksLogStore` 的读路径（`try_get_log_entries`）与 SM `apply` 的同步 RocksDB
-  调用仍在主运行时上；T6 只把四处 fsync 写移出。若后续在高写入负载下再出现运行时
-  停顿，优先考虑隔离 SM apply 路径，而不是调大超时。
+### 6.3 Resource Correlation (Follow-up Round T6)
 
-## 参考
+The original observability request asked that abnormal latency, CPU or memory
+be diagnosable from logs and metrics. The T1-T6 round reached "diagnosable" but
+left the two sides disconnected: resource gauges were refreshed every 15s while
+Raft anomalies were emitted at the moment of failure, so correlating them was a
+manual timestamp exercise.
 
-- openraft 0.10.1 `Config` 文档：https://docs.rs/openraft/0.10.1/openraft/struct.Config.html
-- openraft 0.10.1 源码 `src/config/config.rs`（本地 cargo registry）
-- Consul General parameters：https://developer.hashicorp.com/consul/docs/reference/agent/configuration-file/general
-- Consul Server Performance：https://developer.hashicorp.com/consul/docs/v1.18.x/reference/architecture/server
-- hashicorp/raft `config.go`：https://github.com/hashicorp/raft/blob/main/config.go
+`telemetry.rs` now defines a `ResourceSnapshot` (`cpu_pct`,
+`process_memory_mb`) and a process-wide `ResourceSnapshotProvider`. The
+consensus crate deliberately does not depend on `sysinfo`: `batata-server`
+installs the provider in `init_metrics()` and
+`start_system_stats_reporter()` pushes each sample into the shared slot. The
+provider is a short mutex read, never I/O, because it is called from Raft write
+paths and from the metrics watcher. When system stats reporting is disabled no
+sample exists and the fields log the numeric sentinel `-1`, which is distinct
+from a real 0% reading.
+
+Every one of the four gate-blocking anomaly WARNs
+(`steady_state_election`, `client_write_timeout`, `apply_wait_timeout`,
+`leaderless_give_up`) builds one `AnomalyContext` at the moment of the anomaly
+and therefore attaches the same sample to:
+
+- the structured log, as `cpu_pct`, `process_memory_mb` and
+  `resource_pressure`;
+- the Prometheus correlation gauges/counters listed in section 6, labelled by
+  `event`, so a single scrape can join cause and effect;
+- `record_health()`, which also publishes the latest sample as
+  `batata_raft_resource_*` gauges alongside the Raft state.
+
+When CPU is at or above `HIGH_CPU_PCT` (85%), an additional
+`raft_event=resource_pressure` warning names the anomaly it accompanied and
+points at runtime starvation rather than timeout tuning. This event is
+**diagnostic, not a fifth blocker**: `scripts/raft_health_check.py` still counts
+only the four anomaly names, and its self-test asserts that a resource-pressure
+line alone leaves a cluster run green. The threshold never changes Raft
+behaviour or any timeout.
+
+Boundary: the sample is at most one reporter interval old (15s by default), and
+the existing reporter measures system-wide CPU averaged across cores, not
+per-thread CPU. So this closes the "manual alignment" gap, not the "automatic
+root-cause attribution" gap: a high-CPU anomaly is a strong hint to inspect
+runtime starvation, not proof of it. An architecture guard in `telemetry.rs`
+asserts that all four anomaly sites sample, publish, log and alert; the
+`batata-server` metrics module has a companion wiring guard. Fourteen mutants
+covering thresholds, unit conversion, provider wiring, per-site fields and the
+gate classifier were killed.
+
+Two smaller items from the same follow-up round are worth recording here for
+traceability. T5 removed the duplicated SDK port list in `scripts/test.sh`: the
+quick path now calls `sdk_ports_clear` from `scripts/sdk_port_guard.sh`, whose
+`SDK_PORT_LIST` is the single source of truth and already contains 8502 (Consul
+Connect xDS), 8082 and 8083. `sdk_port_guard.sh self-test` fails if a hardcoded
+numeric sweep, an inline `lsof | xargs kill`, a missing `source` line, a missing
+delegation, or a missing critical port reappears; seven mutants were killed.
+Both script gates are now gated, not merely available: `regression.sh`'s `check`
+stage runs `sdk_port_guard.sh self-test` and `raft_health_check.py --self-test`,
+records a blocker when either fails, and also fails when the self-test
+artifacts are missing (so dropping the wiring is a red gate). Five mutants
+covering port-list drift, a weakened anomaly classifier, both dropped
+invocations and a broken artifact check were killed.
+T1-T4 of this round also closed the `RPCOption::soft_ttl()` mismatch, moved the
+remaining synchronous RocksDB reads and SM `apply` to the blocking pool,
+explicitly disabled `enable_leader_restore`, and added the cross-node
+`commit_lag` view; those changes are described in sections 4-7.
+
+## 7. Remaining Gaps and Boundaries
+
+- The T1-T6 round **does not change** the `E/H/R` defaults (that would be a
+  behavior change); it only links the derived waits. Whether to tighten the
+  production `rpc_request_timeout_ms` (5000ms, 2.5x `E_max`) still needs a
+  separate evaluation. T6-a found that this setting **does not bound**
+  AppendEntries / Vote (section 6.1 point 2), and T1 fixed the resulting
+  semantic mismatch: the transport now enforces `RPCOption::soft_ttl()` instead
+  of `hard_ttl()`, `rpc_request_timeout_ms` is documented as the channel
+  ceiling / fallback / derivation term, and `RaftConfig::validate()` also
+  requires `R > H` so the channel timeout cannot preempt the soft TTL. Truly
+  relaxing the per-RPC budget still requires raising `heartbeat_interval` and
+  the election window together; that is a behavioral decision and has not been
+  taken.
+- The root cause has been fixed as described in section 6.2. T5's blocking
+  semantics are unchanged: the matrix stage of `regression.sh --full` continues
+  to treat `steady_state_election` / `apply_wait_timeout` /
+  `client_write_timeout` / `leaderless_give_up` as blockers, and a cluster
+  combination missing `telemetry_started` fails closed. A red result is not a
+  false positive from the gate; it prevents an occasional anomaly from being
+  hidden by a re-run.
+- `apply_lag` is `last_log_index - last_applied`, a local view. T4 added the
+  cross-node view from openraft 0.10 `RaftMetrics`:
+  `local_committed_index`, `cluster_committed_index`, and
+  `commit_lag = cluster - local` (saturating, because a leader change can move
+  `cluster_committed` backwards on a follower). This is the view that was
+  missing when the T1-T6 evidence had to be correlated by hand.
+- The `RocksLogStore` read path (`try_get_log_entries`, startup cache loading)
+  and the SM `apply` path were the last synchronous RocksDB calls on the main
+  runtime; T2 moved them to `spawn_blocking` (see section 6.2). Snapshot build,
+  snapshot restore and post-install naming reconciliation still iterate RocksDB
+  inline, but those are not on the per-entry heartbeat/replication path. If
+  runtime stalls reappear under high write load, look for new inline DB work
+  first rather than increasing timeouts.
+- Resource correlation (section 6.3) is now automatic in the logs and in the
+  Prometheus namespace, but it is still **correlation, not attribution**: the
+  sample is up to one 15s reporter interval old, CPU is system-wide rather than
+  per-thread, and no code path decides a root cause. Automatic attribution
+  (per-thread CPU, per-apply duration breakdown, or causal tracing) remains a
+  non-goal. The performance baseline is still the advisory 11-15
+  `mac1714-18t` capture; a perf health check does not refresh it.
+
+## References
+
+- openraft 0.10.1 `Config` documentation: https://docs.rs/openraft/0.10.1/openraft/struct.Config.html
+- openraft 0.10.1 source `src/config/config.rs` (local cargo registry)
+- Consul General parameters: https://developer.hashicorp.com/consul/docs/reference/agent/configuration-file/general
+- Consul Server Performance: https://developer.hashicorp.com/consul/docs/v1.18.x/reference/architecture/server
+- hashicorp/raft `config.go`: https://github.com/hashicorp/raft/blob/main/config.go

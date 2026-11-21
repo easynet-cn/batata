@@ -32,6 +32,8 @@
 # The matrix stage additionally asserts Raft health: zero steady-state
 # elections and zero apply/client-write timeouts (scripts/raft_health_check.py).
 # A missing telemetry liveness marker fails closed rather than passing silently.
+# The check stage runs both script gates' self-tests so the classifier and the
+# canonical SDK port list cannot silently drift.
 #
 # Reports are written to reports/regression/<timestamp>/ (gitignored) with a
 # stable symlink at reports/regression/latest. Never /tmp: it gets cleaned.
@@ -272,6 +274,31 @@ stage_check() {
     [ "$sdk_rc" -ne 0 ] && rc=1
     detail="${errors} errors, ${warnings} warnings"
     [ "$sdk_rc" -ne 0 ] && detail="${detail}; sdk-tests failed to compile"
+
+    # Script-level gates must be self-validating. A drifted SDK port list or a
+    # weakened Raft anomaly classifier would otherwise stay invisible until a
+    # full matrix run (or forever, if the matrix log happens to be clean).
+    local guard_rc=0
+    if ! bash "${SCRIPT_DIR}/sdk_port_guard.sh" self-test \
+        > "$LOG_DIR/check-port-guard.log" 2>&1; then
+        record_failure check "sdk_port_guard self-test failed"
+        guard_rc=1
+    fi
+    if ! python3 "${SCRIPT_DIR}/raft_health_check.py" --self-test \
+        > "$LOG_DIR/check-raft-health.log" 2>&1; then
+        record_failure check "raft_health_check self-test failed"
+        guard_rc=1
+    fi
+    # Guard the wiring itself: if a future edit drops the two invocations, the
+    # stage must not pass merely because nothing failed. Each self-test prints
+    # an explicit PASS marker, so a missing/empty artifact is a red gate.
+    if ! grep -q 'PASS' "$LOG_DIR/check-port-guard.log" 2>/dev/null \
+        || ! grep -q 'passed' "$LOG_DIR/check-raft-health.log" 2>/dev/null; then
+        record_failure check "script self-test artifacts missing or incomplete"
+        guard_rc=1
+    fi
+    [ "$guard_rc" -ne 0 ] && rc=1
+    [ "$guard_rc" -ne 0 ] && detail="${detail}; script self-tests failed"
     stage_end check $rc "$detail"
 }
 

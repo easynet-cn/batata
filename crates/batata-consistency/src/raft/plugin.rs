@@ -74,6 +74,11 @@ pub trait RaftPluginHandler: Send + Sync + 'static {
 ///
 /// Thread-safe: handlers are stored behind `Arc` and the registry itself is
 /// wrapped in `Arc` when shared across the state machine.
+///
+/// `Clone` gives the Raft apply path an owned snapshot of the registry: the
+/// apply runs on a blocking thread where the live `tokio::sync::RwLock`
+/// cannot be awaited safely.
+#[derive(Clone)]
 pub struct PluginRegistry {
     handlers: BTreeMap<String, Arc<dyn RaftPluginHandler>>,
 }

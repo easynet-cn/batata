@@ -140,6 +140,36 @@ fn sync_write_options() -> rocksdb::WriteOptions {
     opts
 }
 
+/// Owned snapshot of the shared handles an apply may dispatch to.
+///
+/// `apply_request` runs on Tokio's blocking pool, where a
+/// `tokio::sync::RwLock` cannot be awaited (and blocking on it could deadlock
+/// against the single-threaded async worker). Resolve them once per entry on
+/// the async side instead, preserving the original "read the current hook for
+/// every entry" semantics without holding any lock across the blocking hop.
+struct ApplyHooks {
+    naming: Option<Arc<dyn super::naming_hook::NamingApplyHook>>,
+    health_check: Option<Arc<dyn super::health_check_hook::HealthCheckApplyHook>>,
+    plugins: Arc<PluginRegistry>,
+}
+
+/// Run synchronous state-machine work on Tokio's blocking pool.
+///
+/// `apply_request` performs RocksDB reads and writes inline; on the actix
+/// `current_thread` runtime those used to occupy `main`, the same thread that
+/// polls RaftCore, the Raft gRPC server and the election deadline notifier.
+/// Awaiting the blocking task keeps apply strictly serialised (one entry at a
+/// time, in log order) while the runtime thread stays free.
+async fn blocking_apply_io<F, T>(f: F) -> Result<T, std::io::Error>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| io_error(format!("RocksDB state-machine task failed: {e}")))
+}
+
 // Column family names for state machine
 /// RocksDB column family holding published configuration entries.
 pub const CF_CONFIG: &str = "batata_config";
@@ -243,12 +273,15 @@ pub const CF_APOLLO_AUDIT_LOG_DATA_INFLUENCE: &str = "apollo_audit_log_data_infl
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
 const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
 
-/// RocksDB-based state machine for Raft.
+/// Shared state behind [`RocksStateMachine`].
 ///
-/// Fields are `pub(super)` so apply-handler submodules (`apply_config`,
-/// `apply_lock`, …) can touch DB + write options without going through an
-/// accessor that clones `Arc<DB>` on every call.
-pub struct RocksStateMachine {
+/// openraft's `apply()` is polled on the actix `current_thread` runtime, the
+/// same `main` thread that runs RaftCore, the heartbeat worker and the
+/// election deadline notifier. Moving the synchronous RocksDB work into
+/// `spawn_blocking` requires an owned `'static` handle to this state, so it
+/// lives behind an `Arc`. `Deref` keeps every existing `self.field` and
+/// `self.method()` expression unchanged.
+pub struct StateMachineInner {
     pub(super) db: Arc<DB>,
     /// Last applied log ID
     last_applied: RwLock<Option<LogId>>,
@@ -274,6 +307,32 @@ pub struct RocksStateMachine {
 
     /// Scratch file used when no snapshot directory is configured.
     transient_snapshot_path: PathBuf,
+}
+
+/// RocksDB-based state machine for Raft.
+///
+/// A thin `Arc` wrapper: the state itself is in [`StateMachineInner`] so the
+/// apply path can hand an owned handle to a blocking task. Fields are exposed
+/// to the apply-handler submodules through `Deref`.
+pub struct RocksStateMachine {
+    inner: Arc<StateMachineInner>,
+}
+
+impl std::ops::Deref for RocksStateMachine {
+    type Target = StateMachineInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl RocksStateMachine {
+    /// Build a cheap owned handle to the same state for `spawn_blocking`.
+    fn handle(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 /// Serialize a JSON value directly to bytes, avoiding intermediate String allocation.
@@ -578,7 +637,11 @@ impl RocksStateMachine {
     /// purged cannot rebuild its state machine after a restart. The on-disk
     /// layout mirrors JRaft's `LocalSnapshotStorage`.
     pub fn with_snapshot_dir(mut self, dir: PathBuf) -> Self {
-        self.snapshot_dir = Some(dir);
+        // Called once during startup, before any handle is cloned for the
+        // blocking pool, so the Arc is still uniquely owned.
+        Arc::get_mut(&mut self.inner)
+            .expect("snapshot dir must be set before the state machine is shared")
+            .snapshot_dir = Some(dir);
         self
     }
 
@@ -777,15 +840,17 @@ impl RocksStateMachine {
         let db = DB::open_cf_descriptors(&db_opts, path, cfs).map_err(io_error)?;
 
         let sm = Self {
-            db: Arc::new(db),
-            last_applied: RwLock::new(None),
-            last_membership: RwLock::new(StoredMembership::default()),
-            plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
-            naming_hook: new_shared_naming_hook(),
-            health_check_hook: new_shared_health_check_hook(),
-            write_opts: custom_write_opts.unwrap_or_default(),
-            snapshot_dir: None,
-            transient_snapshot_path: transient_snapshot_path(&db_path),
+            inner: Arc::new(StateMachineInner {
+                db: Arc::new(db),
+                last_applied: RwLock::new(None),
+                last_membership: RwLock::new(StoredMembership::default()),
+                plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
+                naming_hook: new_shared_naming_hook(),
+                health_check_hook: new_shared_health_check_hook(),
+                write_opts: custom_write_opts.unwrap_or_default(),
+                snapshot_dir: None,
+                transient_snapshot_path: transient_snapshot_path(&db_path),
+            }),
         };
 
         // Load cached values asynchronously
@@ -896,8 +961,29 @@ impl RocksStateMachine {
             .expect("CF_META must exist - database may be corrupted")
     }
 
-    /// Apply a single request to the state machine
-    async fn apply_request(&self, request: RaftRequest, log_index: u64) -> RaftResponse {
+    /// Resolve the shared handles one apply may dispatch to.
+    ///
+    /// Called on the async thread before `spawn_blocking`; the returned value
+    /// owns everything the blocking closure needs.
+    async fn apply_hooks(&self) -> ApplyHooks {
+        let registry = self.plugin_registry.read().await;
+        ApplyHooks {
+            naming: self.naming_hook.read().await.clone(),
+            health_check: self.health_check_hook.read().await.clone(),
+            plugins: Arc::new(PluginRegistry::clone(&registry)),
+        }
+    }
+
+    /// Apply a single request to the state machine.
+    ///
+    /// Synchronous by design: `apply()` runs it inside `spawn_blocking`, so
+    /// every RocksDB read/write below stays off the single-threaded runtime.
+    fn apply_request(
+        &self,
+        request: RaftRequest,
+        log_index: u64,
+        hooks: &ApplyHooks,
+    ) -> RaftResponse {
         match request {
             RaftRequest::ConfigPublish(payload) => {
                 let crate::raft::request::ConfigPublishPayload {
@@ -1142,7 +1228,7 @@ impl RocksStateMachine {
                     now_ms,
                 );
                 if resp.success
-                    && let Some(hook) = self.naming_hook.read().await.as_ref()
+                    && let Some(hook) = hooks.naming.as_ref()
                 {
                     hook.on_register(
                         &namespace_id,
@@ -1174,7 +1260,7 @@ impl RocksStateMachine {
                     &instance_id,
                 );
                 if resp.success
-                    && let Some(hook) = self.naming_hook.read().await.as_ref()
+                    && let Some(hook) = hooks.naming.as_ref()
                 {
                     hook.on_deregister(&namespace_id, &group_name, &service_name, &instance_id);
                 }
@@ -1211,7 +1297,7 @@ impl RocksStateMachine {
                     now_ms,
                 );
                 if resp.success
-                    && let Some(hook) = self.naming_hook.read().await.as_ref()
+                    && let Some(hook) = hooks.naming.as_ref()
                 {
                     hook.on_update(
                         &namespace_id,
@@ -1286,8 +1372,7 @@ impl RocksStateMachine {
                 op_type,
                 payload,
             } => {
-                let registry = self.plugin_registry.read().await;
-                if let Some(handler) = registry.get(&plugin_id) {
+                if let Some(handler) = hooks.plugins.get(&plugin_id) {
                     handler.apply(&self.db, &op_type, &payload, log_index)
                 } else {
                     warn!(
@@ -1312,7 +1397,7 @@ impl RocksStateMachine {
                 // and forward-compat. Map to (success, status_label) for the
                 // hook.
                 let success = matches!(status.as_str(), "passing" | "warning");
-                if let Some(hook) = self.health_check_hook.read().await.as_ref() {
+                if let Some(hook) = hooks.health_check.as_ref() {
                     hook.on_status_update(
                         &check_key,
                         success,
@@ -1330,7 +1415,7 @@ impl RocksStateMachine {
                 output,
                 timestamp_ms,
             } => {
-                if let Some(hook) = self.health_check_hook.read().await.as_ref() {
+                if let Some(hook) = hooks.health_check.as_ref() {
                     hook.on_ttl_update(&check_key, &status, output.as_deref(), timestamp_ms);
                 }
                 RaftResponse::success()
@@ -1800,18 +1885,23 @@ impl RocksStateMachine {
         }
     }
 
+    /// Durable meta write, executed on the blocking pool.
+    fn persist_meta_sync(&self, key: &'static [u8], bytes: &[u8]) -> Result<(), std::io::Error> {
+        self.db
+            .put_cf_opt(self.cf_meta(), key, bytes, &sync_write_options())
+            .map_err(io_error)
+    }
+
+    /// Persist a state-machine marker without occupying the async worker.
+    async fn persist_meta(&self, key: &'static [u8], bytes: Vec<u8>) -> Result<(), std::io::Error> {
+        let handle = self.handle();
+        blocking_apply_io(move || handle.persist_meta_sync(key, &bytes)).await?
+    }
+
     /// Save last applied log ID
     async fn save_last_applied(&self, log_id: LogId) -> Result<(), std::io::Error> {
         let bytes = bincode::serialize(&log_id).map_err(io_error)?;
-
-        self.db
-            .put_cf_opt(
-                self.cf_meta(),
-                KEY_LAST_APPLIED,
-                &bytes,
-                &sync_write_options(),
-            )
-            .map_err(io_error)?;
+        self.persist_meta(KEY_LAST_APPLIED, bytes).await?;
 
         *self.last_applied.write().await = Some(log_id);
         Ok(())
@@ -1820,15 +1910,7 @@ impl RocksStateMachine {
     /// Save membership
     async fn save_membership(&self, membership: StoredMembership) -> Result<(), std::io::Error> {
         let bytes = bincode::serialize(&membership).map_err(io_error)?;
-
-        self.db
-            .put_cf_opt(
-                self.cf_meta(),
-                KEY_LAST_MEMBERSHIP,
-                &bytes,
-                &sync_write_options(),
-            )
-            .map_err(io_error)?;
+        self.persist_meta(KEY_LAST_MEMBERSHIP, bytes).await?;
 
         *self.last_membership.write().await = membership;
         Ok(())
@@ -1981,7 +2063,16 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             let log_id = entry.log_id;
 
             let response = match entry.payload {
-                EntryPayload::Normal(request) => self.apply_request(request, log_id.index).await,
+                EntryPayload::Normal(request) => {
+                    // Resolve shared handles on the async thread, then move every
+                    // RocksDB read/write to the blocking pool. The join is awaited
+                    // before the next entry is pulled, so apply order, responder
+                    // semantics and durability are unchanged.
+                    let hooks = self.apply_hooks().await;
+                    let handle = self.handle();
+                    blocking_apply_io(move || handle.apply_request(request, log_id.index, &hooks))
+                        .await?
+                }
                 EntryPayload::Membership(membership) => {
                     let stored = StoredMembership::new(Some(log_id), membership);
                     self.save_membership(stored).await?;
@@ -2048,21 +2139,23 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
         // Snapshot builder uses default WriteOptions (snapshots don't need the same tuning)
         RocksStateMachine {
-            db: self.db.clone(),
-            last_applied: RwLock::new(*self.last_applied.read().await),
-            last_membership: RwLock::new(self.last_membership.read().await.clone()),
-            // Clone the LIVE registry, not a fresh empty one. The snapshot
-            // builder's `snapshot_cf_names()` reads this registry to enumerate
-            // plugin column families (Consul/Apollo/visibility etc.). Building
-            // from an empty registry would silently drop every plugin CF from
-            // the snapshot, so a follower restored from it would lose all
-            // plugin data.
-            plugin_registry: self.plugin_registry.clone(),
-            naming_hook: self.naming_hook.clone(),
-            health_check_hook: self.health_check_hook.clone(),
-            write_opts: rocksdb::WriteOptions::default(),
-            snapshot_dir: self.snapshot_dir.clone(),
-            transient_snapshot_path: self.transient_snapshot_path.clone(),
+            inner: Arc::new(StateMachineInner {
+                db: self.db.clone(),
+                last_applied: RwLock::new(*self.last_applied.read().await),
+                last_membership: RwLock::new(self.last_membership.read().await.clone()),
+                // Clone the LIVE registry, not a fresh empty one. The snapshot
+                // builder's `snapshot_cf_names()` reads this registry to enumerate
+                // plugin column families (Consul/Apollo/visibility etc.). Building
+                // from an empty registry would silently drop every plugin CF from
+                // the snapshot, so a follower restored from it would lose all
+                // plugin data.
+                plugin_registry: self.plugin_registry.clone(),
+                naming_hook: self.naming_hook.clone(),
+                health_check_hook: self.health_check_hook.clone(),
+                write_opts: rocksdb::WriteOptions::default(),
+                snapshot_dir: self.snapshot_dir.clone(),
+                transient_snapshot_path: self.transient_snapshot_path.clone(),
+            }),
         }
     }
 
@@ -2116,6 +2209,112 @@ mod tests {
     /// wall clock, and two replicas applying the same entry must see the
     /// same value.
     const TEST_NOW_MS: i64 = 1_700_000_000_000;
+
+    /// Apply work must not run on the async worker: on the actix
+    /// `current_thread` runtime that thread also polls heartbeats and the
+    /// election deadline notifier (see `docs/raft-timing.md` section 6).
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_apply_io_runs_off_the_async_worker_thread() {
+        let async_thread = std::thread::current().id();
+        let blocking_thread = blocking_apply_io(|| std::thread::current().id())
+            .await
+            .expect("blocking apply task must succeed");
+        assert_ne!(
+            async_thread, blocking_thread,
+            "state-machine RocksDB work must not occupy the async worker thread"
+        );
+    }
+
+    /// Architecture guard. Reverting `apply()` to an inline `apply_request`
+    /// call, making `apply_request` async again, or dropping the blocking hop
+    /// from the helper must all turn this test red.
+    #[test]
+    fn apply_path_runs_on_the_blocking_pool() {
+        let src = include_str!("mod.rs");
+        // Exclude this test module: otherwise the guard's own literal strings
+        // would be found in the source and mask a real regression.
+        let tests_start = src
+            .find("#[cfg(test)]\nmod tests")
+            .expect("tests module must exist");
+        let production = &src[..tests_start];
+        assert!(
+            production.contains("fn apply_request("),
+            "apply_request must exist"
+        );
+        assert!(
+            !production.contains("async fn apply_request("),
+            "apply_request must stay synchronous so a blocking task can call it"
+        );
+
+        let start = production
+            .find("async fn apply<Strm>")
+            .expect("apply must exist");
+        let end = production
+            .find("async fn get_current_snapshot")
+            .expect("get_current_snapshot must exist");
+        let body = &production[start..end];
+        assert!(
+            body.contains("blocking_apply_io("),
+            "apply must dispatch RocksDB work through the blocking pool"
+        );
+        assert!(
+            body.contains(".await?"),
+            "apply must await the blocking task before pulling the next entry"
+        );
+
+        let helper = production
+            .find("async fn blocking_apply_io")
+            .expect("blocking helper must exist");
+        assert!(
+            production[helper..helper + 700].contains("spawn_blocking"),
+            "the helper must actually use spawn_blocking"
+        );
+    }
+
+    /// Success path: the migrated durable marker still reaches RocksDB and
+    /// updates the in-memory view.
+    #[tokio::test]
+    async fn save_last_applied_still_persists_after_blocking_migration() {
+        use crate::raft::types::CommittedLeaderId;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+        let log_id = LogId::new(
+            CommittedLeaderId {
+                term: 3,
+                node_id: 1,
+            },
+            42,
+        );
+
+        sm.save_last_applied(log_id)
+            .await
+            .expect("persist last applied");
+        assert_eq!(*sm.last_applied.read().await, Some(log_id));
+
+        let bytes = sm
+            .db
+            .get_cf(sm.cf_meta(), KEY_LAST_APPLIED)
+            .expect("meta read")
+            .expect("last applied marker");
+        let decoded: LogId = bincode::deserialize(&bytes).expect("decode marker");
+        assert_eq!(decoded, log_id);
+    }
+
+    /// The blocking apply closure owns all shared handles it may dispatch to.
+    #[tokio::test]
+    async fn apply_hooks_snapshot_covers_plugins_and_hook_slots() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+        let hooks = sm.apply_hooks().await;
+        assert!(hooks.naming.is_none());
+        assert!(hooks.health_check.is_none());
+        assert!(hooks.plugins.get("missing").is_none());
+    }
 
     /// Publish the same config entry on two independent replicas and compare
     /// the raw RocksDB bytes. A local `Utc::now()` in apply() would make the

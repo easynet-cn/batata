@@ -31,7 +31,14 @@ pub struct RaftConfig {
     /// Snapshot threshold - number of log entries before triggering snapshot
     pub snapshot_threshold: u64,
 
-    /// RPC request timeout in milliseconds (default: 5000ms)
+    /// RPC request timeout in milliseconds (default: 5000ms).
+    ///
+    /// Scope: the channel-level ceiling for Raft gRPC calls, the fallback when
+    /// openraft supplies a zero `RPCOption` TTL, the snapshot-timeout floor,
+    /// and the `R` term in the election-cycle derivation. It does NOT bound an
+    /// individual heartbeat/AppendEntries/Vote RPC: openraft 0.10.1 passes
+    /// `heartbeat_interval` as `RPCOption::hard_ttl()` and the transport must
+    /// honour `soft_ttl()`. See `docs/raft-timing.md`.
     pub rpc_request_timeout_ms: u64,
 
     /// Maximum entries per append request (default: 300)
@@ -189,7 +196,10 @@ impl RaftConfig {
         Duration::from_millis(self.heartbeat_interval_ms)
     }
 
-    /// Get RPC timeout as Duration
+    /// Get RPC timeout as Duration.
+    ///
+    /// Channel ceiling and fallback for Raft RPCs; the per-request deadline is
+    /// `RPCOption::soft_ttl()`, not this value. See the field documentation.
     pub fn rpc_timeout(&self) -> Duration {
         Duration::from_millis(self.rpc_request_timeout_ms)
     }
@@ -305,6 +315,20 @@ impl RaftConfig {
                 self.snapshot_transfer_timeout_ms, self.rpc_request_timeout_ms
             ));
         }
+        // openraft 0.10.1 hands `heartbeat_interval` to the network as the
+        // `RPCOption::hard_ttl()` for heartbeat and streaming replication
+        // (`core/heartbeat/worker.rs`, `replication/mod.rs`). `rpc_timeout` is
+        // only a channel-level ceiling: if it were tighter than the heartbeat,
+        // the tonic endpoint timeout would fire before the transport could
+        // honour `soft_ttl()`, and every heartbeat would look like a network
+        // failure. Keep this check after the snapshot check so the existing
+        // diagnostics for that pair stay specific.
+        if self.rpc_request_timeout_ms <= heartbeat {
+            return Err(format!(
+                "rpc_request_timeout_ms ({}) must exceed heartbeat_interval_ms ({}) so the channel timeout cannot preempt openraft's soft TTL",
+                self.rpc_request_timeout_ms, heartbeat
+            ));
+        }
         if self.forward_max_retries > 0 && self.forward_initial_delay_ms == 0 {
             return Err(
                 "forward_initial_delay_ms must be greater than zero when forwarding is enabled"
@@ -337,6 +361,19 @@ impl RaftConfig {
             // `Option` as `None`, and `get_enable_pre_vote()` treats `None` as
             // `false`. See `docs/raft-timing.md` §6.1 for the measured failure.
             enable_pre_vote: Some(true),
+            // openraft defaults this `Option` to `None`, which
+            // `Config::enable_leader_restore()` reads as `true`: a restarted
+            // former leader campaigns immediately in a higher term without
+            // waiting for an election timeout. The upstream rationale is to
+            // avoid reusing a log id when the old leader replicated an entry
+            // before its local flush; `RocksLogStore::append` fsyncs every
+            // batch before returning and fires `IOFlushed` only afterwards,
+            // so that window does not exist here. The regression matrix
+            // restarts nodes between its six combinations, where an immediate
+            // campaign only inflates terms. With PreVote enabled the restarted
+            // node instead goes through the normal pre-elect/election timing.
+            // See `docs/raft-timing.md` §4.
+            enable_leader_restore: Some(false),
             snapshot_policy: openraft::SnapshotPolicy::LogsSinceLast(self.snapshot_threshold),
             max_payload_entries: self.max_payload_entries,
             ..Default::default()
@@ -572,6 +609,57 @@ mod tests {
         }
     }
 
+    /// `rpc_request_timeout_ms` is a channel ceiling, not a per-RPC deadline.
+    /// openraft derives `RPCOption::hard_ttl()` from `heartbeat_interval`; a
+    /// channel timeout at or below that would preempt the transport's
+    /// `soft_ttl()` and turn healthy heartbeats into spurious RPC failures.
+    /// Removing the guard in `validate()` must make this test fail.
+    #[test]
+    fn validate_rejects_rpc_timeout_tighter_than_heartbeat() {
+        let equal = RaftConfig {
+            rpc_request_timeout_ms: 300,
+            ..Default::default()
+        };
+        let err = equal
+            .validate()
+            .expect_err("a channel timeout equal to the heartbeat must be rejected");
+        assert!(err.contains("must exceed heartbeat_interval_ms"), "{err}");
+
+        let smaller = RaftConfig {
+            rpc_request_timeout_ms: 100,
+            ..Default::default()
+        };
+        let err = smaller
+            .validate()
+            .expect_err("a channel timeout below the heartbeat must be rejected");
+        assert!(err.contains("must exceed heartbeat_interval_ms"), "{err}");
+
+        // Success path: one millisecond above the heartbeat is valid.
+        let valid = RaftConfig {
+            rpc_request_timeout_ms: 301,
+            ..Default::default()
+        };
+        assert!(valid.validate().is_ok());
+    }
+
+    /// Both real default sets satisfy the new invariant; the production values
+    /// are the ones the regression matrix actually runs.
+    #[test]
+    fn production_and_library_defaults_keep_rpc_timeout_above_heartbeat() {
+        for (election, heartbeat) in [(3000, 300), (1000, 200)] {
+            let config = RaftConfig {
+                election_timeout_ms: election,
+                heartbeat_interval_ms: heartbeat,
+                ..Default::default()
+            };
+            assert!(
+                config.rpc_request_timeout_ms > heartbeat,
+                "{election}/{heartbeat}"
+            );
+            assert!(config.validate().is_ok(), "{election}/{heartbeat}");
+        }
+    }
+
     #[test]
     fn test_new_config() {
         let config = RaftConfig::new(3000, 500, 900, 5000, PathBuf::from("/data/raft"));
@@ -595,6 +683,25 @@ mod tests {
         // `None` is treated as disabled by openraft; a transient stall would
         // then turn into a term bump on every missed heartbeat.
         assert_eq!(openraft_config.enable_pre_vote, Some(true));
+        assert_eq!(openraft_config.enable_leader_restore, Some(false));
+    }
+
+    /// openraft 0.10.1 reads `None` as `true` for `enable_leader_restore`, so
+    /// a restarted former leader campaigns immediately in a higher term. The
+    /// regression matrix restarts nodes between its six combinations, where
+    /// that only inflates terms. Removing the explicit `Some(false)` must turn
+    /// this test red.
+    #[test]
+    fn to_openraft_config_disables_immediate_leader_restore() {
+        let config = RaftConfig::default();
+        let openraft_config = config.to_openraft_config();
+        assert_eq!(openraft_config.enable_leader_restore, Some(false));
+        // PreVote is what makes the normal election path safe after a restart.
+        assert_eq!(openraft_config.enable_pre_vote, Some(true));
+        assert!(openraft_config.validate().is_ok());
+
+        // Document the upstream default this guard exists to override.
+        assert_eq!(openraft::Config::default().enable_leader_restore, None);
     }
 
     /// The configured chunk size must reach the network layer, and the window

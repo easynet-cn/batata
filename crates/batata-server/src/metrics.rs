@@ -2,13 +2,61 @@
 // Metrics module for observability
 // Provides counters, gauges, and histograms for monitoring application performance
 
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
+use batata_consistency::raft::telemetry::{self, ResourceSnapshot};
 use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
+
+/// Latest resource sample, shared with the Raft telemetry layer.
+///
+/// The reporter owns the only `sysinfo::System` handle; Raft anomaly logging
+/// reads this short-lived mutex snapshot instead of creating a fresh `System`
+/// (whose first CPU reading would be meaningless). Created lazily so crates
+/// that never start the reporter do not allocate it.
+fn system_stats_latest() -> Arc<Mutex<ResourceSnapshot>> {
+    static LATEST: OnceLock<Arc<Mutex<ResourceSnapshot>>> = OnceLock::new();
+    LATEST
+        .get_or_init(|| Arc::new(Mutex::new(ResourceSnapshot::UNKNOWN)))
+        .clone()
+}
+
+/// Publish one reporter sample to the Raft telemetry provider.
+///
+/// Kept as a plain function (no async, no sysinfo) so the units and the
+/// provider hand-off are unit-testable.
+fn store_system_stats(cpu_pct: f64, process_memory_bytes: Option<u64>) {
+    let sample = ResourceSnapshot {
+        cpu_pct: Some(cpu_pct),
+        process_memory_mb: process_memory_bytes.map(|bytes| bytes as f64 / (1024.0 * 1024.0)),
+    };
+    // A poisoned mutex still holds a valid value; recover rather than drop
+    // observability for the rest of the process lifetime.
+    match system_stats_latest().lock() {
+        Ok(mut guard) => *guard = sample,
+        Err(poisoned) => *poisoned.into_inner() = sample,
+    }
+}
+
+/// Install the Raft anomaly resource sampler.
+///
+/// Called from `init_metrics`, i.e. even when the periodic reporter is
+/// disabled. In that case the provider stays at `ResourceSnapshot::UNKNOWN`
+/// and anomaly WARNs log the numeric `-1` sentinel.
+pub fn register_raft_resource_provider() {
+    let latest = system_stats_latest();
+    telemetry::set_resource_snapshot_provider(Arc::new(move || {
+        latest
+            .lock()
+            .map(|guard| *guard)
+            .unwrap_or(ResourceSnapshot::UNKNOWN)
+    }));
+}
 
 /// Initialize all metric descriptions
 /// Should be called once at application startup
 pub fn init_metrics() {
+    register_raft_resource_provider();
     // HTTP request metrics
     describe_counter!(
         "http_requests_total",
@@ -416,12 +464,18 @@ pub fn start_system_stats_reporter(interval_secs: Option<u64>) -> tokio::task::J
             gauge!("system_memory_total_bytes").set(sys.total_memory() as f64);
 
             // Process-specific memory
-            if let Some(pid) = pid {
+            let process_memory = pid.and_then(|pid| {
                 sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-                if let Some(process) = sys.process(pid) {
-                    gauge!("process_memory_bytes").set(process.memory() as f64);
-                }
+                sys.process(pid).map(|process| process.memory())
+            });
+            if let Some(bytes) = process_memory {
+                gauge!("process_memory_bytes").set(bytes as f64);
             }
+
+            // Feed the same sample to Raft telemetry. Resource values attached
+            // to a Raft anomaly WARN are at most one reporter interval old;
+            // that staleness is documented in docs/raft-timing.md.
+            store_system_stats(cpu_usage, process_memory);
         }
     })
 }
@@ -463,5 +517,61 @@ mod tests {
     #[test]
     fn test_normalize_path_no_change() {
         assert_eq!(normalize_path("/v3/admin/cs/config"), "/v3/admin/cs/config");
+    }
+
+    /// Structural guard: startup must install the provider, and the reporter
+    /// must feed every sample into it. Otherwise anomaly WARNs silently fall
+    /// back to the `-1` sentinel while the Prometheus gauges still look fine.
+    #[test]
+    fn test_metrics_startup_wires_the_raft_resource_provider() {
+        // Production code only: the assertion literals below would otherwise
+        // satisfy themselves after the real calls are deleted.
+        let prod = include_str!("metrics.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        let at = prod
+            .find("pub fn init_metrics() {")
+            .expect("init_metrics is missing");
+        let body = &prod[at..at + 400];
+        assert!(
+            body.contains("register_raft_resource_provider();"),
+            "init_metrics no longer installs the Raft resource provider"
+        );
+        assert!(
+            prod.contains("store_system_stats(cpu_usage, process_memory);"),
+            "the reporter no longer publishes samples to Raft telemetry"
+        );
+        assert!(prod.contains("telemetry::set_resource_snapshot_provider"));
+    }
+
+    /// One sequential test for the shared slot: `OnceLock` and the mutex are
+    /// process-wide, so parallel writers here would make the assertions flaky.
+    #[test]
+    fn test_system_stats_provider_feeds_raft_anomaly_context() {
+        register_raft_resource_provider();
+
+        // Sampled case: bytes -> MiB, high CPU flags resource pressure.
+        store_system_stats(91.5, Some(256 * 1024 * 1024));
+        let sample = telemetry::resource_snapshot();
+        assert_eq!(sample.cpu_pct, Some(91.5));
+        assert_eq!(sample.process_memory_mb, Some(256.0));
+        assert!(sample.high_cpu());
+
+        let context = telemetry::AnomalyContext::for_event("client_write_timeout");
+        assert_eq!(context.event, "client_write_timeout");
+        assert_eq!(context.cpu_pct, 91.5);
+        assert_eq!(context.process_memory_mb, 256.0);
+        assert!(context.resource_pressure);
+        assert!(context.sampled());
+
+        // Absent process memory stays None (a real 0-byte reading is not the
+        // same as "not sampled") and logs the numeric unknown sentinel.
+        store_system_stats(12.0, None);
+        let sample = telemetry::resource_snapshot();
+        assert_eq!(sample.cpu_pct, Some(12.0));
+        assert_eq!(sample.process_memory_mb, None);
+        assert_eq!(sample.log_memory_mb(), telemetry::RESOURCE_UNKNOWN);
+        assert!(!sample.high_cpu());
     }
 }
