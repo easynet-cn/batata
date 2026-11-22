@@ -458,6 +458,41 @@ explicitly disabled `enable_leader_restore`, and added the cross-node
   non-goal. The performance baseline is still the advisory 11-15
   `mac1714-18t` capture; a perf health check does not refresh it.
 
+## 8. Deterministic Cold-Start Leader (Bootstrap)
+
+`Raft::initialize(members)` writes the initial membership log entry **and
+immediately starts an election**. Before this change every cluster member
+called `initialize()` with the same membership, so all three nodes campaigned
+at boot and the winner depended on process scheduling. That randomness was
+harmless for correctness but not for measurement: `bench_ab.py` sends all load
+to one node, so a node-1 leader ran `client_write` locally (~1.8 ms) while a
+node-2/3 leader forced a gRPC forward plus `wait_for_applied()` (~7.4 ms).
+A median over both rounds describes neither path.
+
+`startup/cluster.rs` now resolves one designated initializer:
+
+| `batata.raft.bootstrap_leader` | Behaviour |
+| --- | --- |
+| `0` (default) | lowest member node id from `BTreeMap` ordering |
+| `> 0` | that explicit member id; fails fast if it is not a member |
+| `< 0` | legacy: every node initializes and races (break-glass only) |
+
+Only that node calls `initialize()`; the others keep their Raft gRPC servers
+up, wait for peer reachability as before, and learn the membership from the
+designated leader's AppendEntries. Restart behaviour is unchanged: an already
+initialized node ignores a second `initialize()` (the existing "already
+initialized is OK" log path). Vote handling in openraft 0.10.1 does not
+require local membership, so followers grant the vote normally.
+
+Verification: `crates/batata-consistency/tests/config_cluster_ordered_pairs.rs`
+starts three independent real three-node clusters and asserts node 1 wins
+every cold start and can still commit a replicated config. The shell-script
+gate keeps the `rocks|cluster|Config Write` anchor meaningful by defaulting
+`PERF_WRITE_NODE` to `2` in cluster mode, i.e. load on a follower, which is
+the forwarded path the anchor was captured on. Set `PERF_WRITE_NODE=1` to
+measure the leader-local path deliberately; do not compare that number to
+the forwarded-path anchor without a same-session recapture.
+
 ## References
 
 - openraft 0.10.1 `Config` documentation: https://docs.rs/openraft/0.10.1/openraft/struct.Config.html

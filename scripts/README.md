@@ -124,6 +124,9 @@ scripts/
 ├── benchmark.sh                    # wrk/hey throughput benchmark (config / naming / consul)
 ├── bench_ab.py                     # A/B driver: alternating rounds, median aggregation
 ├── perf_observability.py           # Host snapshots, per-round log paths, log capping
+├── perf_dispersion.py              # Reject medians whose rounds mix distinct populations
+├── perf_leader.py                  # Attribute each round to the Raft leader that served it
+├── perf_paths.py                   # Split rounds into leader-local / forwarded medians
 ├── regression.sh                   # Unified regression gate (see "Regression Gate")
 ├── regression_whitelist.txt        # Known-failure baseline for the gate
 ├── regression_perf_baseline.txt    # Performance anchors for `regression.sh --perf`
@@ -371,9 +374,20 @@ manual commands "run everything" used to mean. It runs the stages, collects
 
 | Level | Stages |
 |-------|--------|
-| `quick` | `fmt`, `check`, `unit` (core crates), `integration` (standalone + Rust SDK) |
+| `quick` | `fmt`, `check`, `unit` (core crates), `sim`, `integration` (standalone + Rust SDK) |
 | `standard` | + `unit` (all core crates), `integration` (Java + Go SDK) |
 | `full` | + `matrix` (standalone/cluster x rock/mysql/postgres), `unit` incl. apollo |
+
+`--only sim` runs the protocol-level suites alone. `sim` is a pure-Rust stage:
+no server, no SDK, no ports. It runs three `batata-consistency` integration
+binaries — `deterministic_raft_simulation` (deterministic in-process Raft with
+fault injection and a linearizability checker), `openraft_storage_conformance`
+(openraft 0.10's own storage `Suite` against `RocksLogStore`), and
+`config_cluster_ordered_pairs` (real three-node gRPC, all nine ordered
+write/read pairs). Each writes `logs/sim-<name>.log`; the stage fails closed if
+a log is empty, reports zero passed cases, or lacks `test result: ok.`.
+The matrix stage remains the authoritative Raft health gate; `sim` validates
+the consensus contract, not runtime health.
 
 Exit code is `0` only when nothing outside the whitelist failed.
 
@@ -444,6 +458,75 @@ PERF_TOLERANCE)` and `PERF_TOLERANCE` defaulting to `0.08`. The stage is
 **advisory by default** - it is the only stage whose result depends on how busy
 the host is - and blocks only when `--perf-gate` is passed.
 
+Before any comparison, `perf_dispersion.py` rejects a median whose recorded
+rounds disagree by more than `max(PERF_MAX_SPREAD_PCT, PERF_SPREAD_FACTOR *
+anchor cv_pct)` (defaults `20` and `3`). Such a case is reported as
+`INCONCLUSIVE`: it is not compared to an anchor, and `--perf-capture` refuses
+to write it back as a new anchor; under `--perf-gate` it is a blocker. This is
+not a theoretical concern. `bench_ab.py` sends all load to cluster node 1, but
+a cold-start Raft election can elect any of the three nodes. When node 1 is
+leader the write runs `client_write` locally (~1.8 ms); otherwise the follower
+forwards it over gRPC and then waits for its own state machine to catch up
+(~7.4 ms). Two rounds of `rocks|cluster|Config Write` were therefore `2701` and
+`14631` RPS on 2026-11-21, while both rounds of other runs sat near `2700` -
+the 11-15 anchor (`2735`) describes the forwarded population only.
+`perf_leader.py` now records the serving leader for every round, so the two
+populations are named rather than merely detected; making the leader
+deterministic is a separate product-level change. Until then the dispersion
+criterion prevents a fake `+217%` verdict.
+The `check` stage runs `perf_dispersion.py --self-test`, which also verifies
+that the shell wiring in `stage_perf`/`stage_check` has not been dropped.
+
+`perf_leader.py` makes the attribution explicit. After each round's server logs
+are capped, it parses the `raft_event="leader_changed"` /
+`raft_event="election_settled"` telemetry (ANSI codes included) from the three
+node logs and resolves the steady-state leader. Each perf CSV gains a
+`# meta build|<sha>|<clean|dirty>|<mode>|<nodes>|batata-server` line and one
+`# meta leader|<variant>|r<N>|node<X>|<path>|<term>|<source>|<write_node>` line
+per recorded round; `logs/leader-attribution.log` carries the same records as
+JSONL. The path is derived from `(leader, write_node)`: load landing on the
+leader is `leader-local`, load landing on a follower is `forwarded`, and missing
+evidence is `path-unknown` - the parser never guesses from the load target.
+`bench_ab.py --write-node N` (also `PERF_WRITE_NODE=N` for the gate) selects the
+node that receives all wrk load; the default `1` keeps the existing anchors
+valid, and the readiness probe, init scripts and per-node HTTP worker sizing all
+follow the same target. Six-field meta lines from older CSVs still parse and
+default to `write_node=1`. `regression.sh` prints `logs/perf-<case>.leaders`
+next to the verdict and adds the attribution to the advisory of any
+`INCONCLUSIVE` scenario. Historical CSVs without meta lines still parse (they
+report `NO_LEADER_META`), so this adds observability without changing any gate
+or anchor. The `--check-logs` mode can replay an archived round directly;
+`--require-meta` is available for a future gate that wants fail-closed
+attribution.
+
+`perf_paths.py` completes the dual-path split. It joins the `# meta leader`
+lines with the `# raw <variant> Config Write: [..]` samples by round order and
+prints one median per write path plus a verdict: `SINGLE_PATH` when all recorded
+rounds took one path (the median is a real code path), `MIXED` when both
+`leader-local` and `forwarded` appear (the aggregate median describes neither),
+and `UNATTRIBUTED` when meta is missing, mismatched or unresolved. On the
+2026-11-21 double peak it reports `forwarded n=1 median=2701` and
+`leader-local n=1 median=14631` instead of a fake `8666`. The report lands in
+`logs/perf-<case>.paths`, is echoed into the perf advisory, and is attached to
+any `INCONCLUSIVE` advisory. It is **observability only**: `perf_dispersion.py`
+remains the authority on anchor comparison, and no anchor is recaptured.
+`--require-single-path` is available for a future fail-closed gate.
+The `check` stage runs its self-test against the archived mixed and
+forwarded-only CSVs, with mutants guarding the wiring.
+
+The cluster cold-start leader is now **deterministic**: `startup/cluster.rs`
+lets only one member (by default the lowest node id) call `Raft::initialize`,
+instead of every node doing so and racing three simultaneous elections. The
+other members learn the membership from that leader's AppendEntries. This is
+controlled by `batata.raft.bootstrap_leader` / `BATATA_RAFT_BOOTSTRAP_LEADER`:
+`0` = auto (lowest member id), a positive value pins a member id, a negative
+value restores the legacy race as a break-glass option. Because the leader is
+then node 1, `PERF_WRITE_NODE` defaults to `0` (auto): standalone uses node 1,
+cluster uses node 2 so the measured Config Write still takes the forwarded
+path that the `2735` anchor describes. Set `PERF_WRITE_NODE=1` explicitly to
+measure the leader-local path. `crates/batata-consistency/tests/config_cluster_ordered_pairs.rs`
+runs three cold starts and asserts the designated node wins every time.
+
 `perf_observability.py` makes a slow run explainable afterwards: it appends
 JSON-lines host snapshots (load average, CPU count, free disk and memory) to
 `logs/perf-host-state.log` before/after each case and each measured round, gives
@@ -456,8 +539,14 @@ result lands in `logs/perf-<case>-raft-health.log` and in the report's advisory
 section. It is **diagnostic, not a gate**: the driver SIGTERMs all three nodes
 between rounds, and a peer disappearing during shutdown can emit a
 `steady_state_election` WARN just before the shutdown marker. The matrix stage
-remains the authoritative Raft health gate. The `check` stage runs `perf_observability.py --self-test`, which also verifies that the shell
-wiring in `stage_perf`/`stage_check` has not been dropped.
+remains the authoritative Raft health gate. The `check` stage runs six script
+self-tests (`sdk_port_guard.sh`, `raft_health_check.py`,
+`perf_observability.py`, `perf_dispersion.py`, `perf_leader.py`,
+`perf_paths.py`) plus a static `sim`-stage wiring guard, and asserts that each
+artifact exists and contains its PASS marker; the perf helpers also verify
+statically that the shell wiring in `stage_perf`/`stage_check` has not been
+dropped. The wiring guard checks the `SIM_TESTS` declaration line itself, so
+its own text cannot satisfy it.
 
 It needs `target/release/batata-server`; without it the stage is skipped with a
 warning rather than failing (a release build can take several minutes and

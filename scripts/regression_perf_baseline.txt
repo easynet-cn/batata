@@ -37,6 +37,24 @@
 # Tolerance is max(cv_pct, PERF_TOLERANCE), never a single global number: a
 # box that cannot resolve better than 40% must not fail runs for a 20% drop.
 #
+# The perf stage also refuses to compare or capture a case whose own rounds
+# disagree by more than max(PERF_MAX_SPREAD_PCT, PERF_SPREAD_FACTOR * cv_pct)
+# (defaults 20 / 3); see perf_dispersion.py. Known trap (2026-11-21): the
+# `rocks|cluster|Config Write` anchor below was captured with the Raft leader
+# on a peer of the measured node 1, i.e. the follower-forwarded write path.
+# A cold-start election that puts the leader on node 1 instead measures the
+# local `client_write` path and is ~5x faster (14631 vs 2701 RPS). Those two
+# populations must never be averaged, compared across dates, or captured as
+# one anchor. Keep all four (storage, mode) groups captured in the same batch.
+# perf_leader.py labels each round with (leader, write_node) and perf_paths.py
+# reports the two medians separately; PERF_WRITE_NODE selects the load target so
+# a future clean single-path capture can name which path its anchor describes.
+# Since 2026-11-22 the cold-start leader is deterministic (node 1), so cluster
+# perf defaults PERF_WRITE_NODE=2 to stay on the forwarded path this anchor
+# describes; PERF_WRITE_NODE=1 would measure leader-local and MUST NOT be
+# compared to 2735 without a same-session, four-group recapture.
+# Data rows below are unchanged and still dated 2026-11-15.
+#
 # The perf stage is advisory by default - it is the only stage whose result
 # depends on how busy the host is. Pass --perf-gate to make a drop block.
 #

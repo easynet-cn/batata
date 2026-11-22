@@ -167,6 +167,10 @@ const ENV_KEY_ALIASES: &[(&str, &str)] = &[
         "batata.istio.mcp.server.service_entry_port",
     ),
     ("BATATA_ISTIO_DOMAIN_SUFFIX", "batata.istio.domain.suffix"),
+    (
+        "BATATA_RAFT_BOOTSTRAP_LEADER",
+        "batata.raft.bootstrap_leader",
+    ),
 ];
 
 /// Map one environment variable name to its config key.
@@ -1910,6 +1914,14 @@ impl Configuration {
         self.typed.raft.peer_connect_retry_interval_ms as u64
     }
 
+    /// Deterministic cold-start Raft leader (default `0` = lowest member id).
+    ///
+    /// A positive value pins a member node id; a negative value restores the
+    /// legacy "every node initializes" race. See `startup/cluster.rs`.
+    pub fn raft_bootstrap_leader(&self) -> i64 {
+        self.typed.raft.bootstrap_leader
+    }
+
     // ========================================================================
     // Config Gray Version Management
     // ========================================================================
@@ -3281,6 +3293,29 @@ mod tests {
         assert_eq!(cfg.raft_peer_connect_timeout_secs(), 30);
         assert_eq!(cfg.raft_peer_connect_retry_interval_ms(), 500);
         assert_eq!(cfg.raft_snapshot_chunk_size(), 1024 * 1024);
+        assert_eq!(cfg.raft_bootstrap_leader(), 0);
+    }
+
+    #[test]
+    fn test_raft_bootstrap_leader_default_is_auto() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.raft_bootstrap_leader(), 0);
+    }
+
+    #[test]
+    fn test_raft_bootstrap_leader_accepts_dotted_override() {
+        let cfg = build_config(vec![("batata.raft.bootstrap_leader", 2i64.into())]);
+        assert_eq!(cfg.raft_bootstrap_leader(), 2);
+    }
+
+    /// The key contains an underscore, so the generic BATATA_* mapping would
+    /// turn it into `batata.raft.bootstrap.leader` and silently drop it.
+    #[test]
+    fn test_raft_bootstrap_leader_env_alias_is_registered() {
+        assert_eq!(
+            env_config_key("BATATA", "BATATA_RAFT_BOOTSTRAP_LEADER"),
+            Some("batata.raft.bootstrap_leader".to_string())
+        );
     }
 
     /// Raft state must live beside the business database, never inside it, so

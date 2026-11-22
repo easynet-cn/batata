@@ -68,6 +68,7 @@ from perf_observability import (  # noqa: E402
     capture_host_state,
     server_log_paths,
 )
+import perf_leader  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BENCH = os.path.join(REPO_ROOT, "scripts", "benchmark.sh")
@@ -314,6 +315,19 @@ def strip_mode_flag(cmd: list[str]) -> list[str]:
     return out
 
 
+def load_port(args: argparse.Namespace) -> int:
+    """HTTP port of the single node that receives the measured load.
+
+    Keeping this in one place matters: the benchmark, the readiness probe,
+    the init scripts and the leader attribution all have to agree on which
+    node was written to, otherwise ``write_path`` describes a different
+    request path than the measured RPS.
+    """
+    if args.mode != "cluster":
+        return args.port
+    return args.base_port + 10 * (args.write_node - 1)
+
+
 class Server:
     """One batata-server process, or a whole cluster, for one variant."""
 
@@ -370,9 +384,10 @@ class Server:
                 f"--batata.member.list={member_list}",
                 "--batata.sql.init.platform=embedded",
             ]
-            # Peers only answer distro/raft traffic while node 1 is measured,
-            # so they get a small worker pool to leave cores for wrk.
-            if index > 1:
+            # Only the load target serves wrk; every other node just answers
+            # distro/raft traffic and gets a small worker pool so the measured
+            # node keeps the cores. This must follow --write-node, not node 1.
+            if index != self.args.write_node:
                 cmd.append(f"--batata.server.http.workers={self.args.peer_workers}")
 
             if self.store_dir is not None:
@@ -437,7 +452,7 @@ def wait_business_ready(args: argparse.Namespace, timeout: float) -> tuple[bool,
     deadline = time.time() + timeout
     detail = "timeout"
     while time.time() < deadline:
-        ok, detail = business_ok(args.port, args.user, args.password)
+        ok, detail = business_ok(load_port(args), args.user, args.password)
         if ok:
             return True, detail
         time.sleep(1.0)
@@ -537,6 +552,15 @@ def main() -> int:
     )
     parser.add_argument("--nodes", type=int, default=3, help="cluster size (default: 3)")
     parser.add_argument(
+        "--write-node",
+        type=int,
+        default=1,
+        help="cluster node that receives all wrk load (default: 1). Changing it "
+        "changes whether the write runs locally on the leader or is forwarded; "
+        "attribution records the resulting path per round. Standalone always "
+        "normalises this to 1.",
+    )
+    parser.add_argument(
         "--base-port",
         type=int,
         default=8848,
@@ -614,6 +638,10 @@ def main() -> int:
     if args.mode == "cluster":
         args.port = args.base_port
         args.nodes = max(args.nodes, 1)
+        if not 1 <= args.write_node <= args.nodes:
+            raise SystemExit(
+                f"--write-node {args.write_node} outside cluster 1..{args.nodes}"
+            )
         ports = [args.base_port + 10 * i for i in range(args.nodes)]
         if args.storage != "embedded":
             print(
@@ -624,6 +652,11 @@ def main() -> int:
             args.storage = "embedded"
     else:
         ports = [args.port]
+        # Standalone is one process with no Raft group. Normalise the node
+        # count and the load target so the build/leader metadata does not
+        # claim three nodes or a non-existent write target.
+        args.nodes = 1
+        args.write_node = 1
 
     busy = [
         port + offset
@@ -642,6 +675,11 @@ def main() -> int:
     os.makedirs(args.log_dir, exist_ok=True)
     host_state_log = args.host_state_log or os.path.join(args.log_dir, "host-state.log")
     capture_host_state(host_state_log, f"start case={args.case} mode={args.mode}")
+    # A perf number is only meaningful together with the revision that produced
+    # it and, in cluster mode, the Raft leader that served each round.
+    leader_log_path = os.path.join(args.log_dir, perf_leader.LEADER_LOG_NAME)
+    build_identity = perf_leader.build_identity(args.mode, args.nodes)
+    leader_meta: list[dict[str, object]] = []
     if args.fresh_store and not args.init:
         # A fresh store contains no users, so the benchmark would run anonymously.
         args.init = True
@@ -657,8 +695,10 @@ def main() -> int:
             "THREADS": str(args.threads),
             "USERNAME": args.user,
             "PASSWORD": args.password,
-            # The load always hits node 1; peers only receive raft/distro traffic.
-            "SERVER": f"127.0.0.1:{args.port}",
+            # All wrk load goes to one node. --write-node decides whether that
+            # node is the Raft leader (local client_write) or a follower
+            # (gRPC forward + wait_for_applied); peers only see raft/distro.
+            "SERVER": f"127.0.0.1:{load_port(args)}",
         }
     )
     # Never route local traffic through a proxy: urllib (used by
@@ -671,7 +711,8 @@ def main() -> int:
 
     print(
         f"bench_ab: mode={args.mode} case={args.case} rounds={args.rounds} "
-        f"duration={args.duration} workers={args.workers} wrk=-t{args.threads} -c{args.connections}"
+        f"duration={args.duration} workers={args.workers} wrk=-t{args.threads} -c{args.connections} "
+        f"write-node={args.write_node} load-port={load_port(args)}"
     )
     print(f"variants: {', '.join(name for name, _ in variants)}\n")
 
@@ -745,6 +786,27 @@ def main() -> int:
                 # the artifacts without losing Raft health evidence.
                 for path in server.log_paths:
                     cap_log_file(path, args.server_log_max_bytes)
+                # The cap keeps raft_event lines, so the election/leader
+                # evidence survives the rewrite. Resolve the steady leader
+                # only after stop(): a round that is still serving can change
+                # leader between the measurement and the parse.
+                snapshot = perf_leader.capture_round(
+                    args.log_dir, args.case, name, round_index,
+                    args.nodes, args.mode, paths=server.log_paths,
+                    write_node=args.write_node,
+                )
+                snapshot["recorded"] = bool(recorded)
+                leader_meta.append(snapshot)
+                perf_leader.write_jsonl(leader_log_path, snapshot)
+                leader_label = (
+                    "unknown" if snapshot["leader_node"] is None
+                    else f"node{snapshot['leader_node']}"
+                )
+                print(
+                    f"  leader={leader_label} path={snapshot['write_path']} "
+                    f"write-node={snapshot['write_node']} "
+                    f"source={snapshot['source']}"
+                )
             time.sleep(args.settle)
 
     print("\n" + "=" * 78)
@@ -798,10 +860,35 @@ def main() -> int:
         handle.write("case,variant,median_rps,baseline_rps,delta_pct,verdict\n")
         for row in rows:
             handle.write(row + "\n")
+        # `# meta leader|<variant>|r<N>|node<X>|<path>|<term>|<source>|<write_node>`
+        # lines make every recorded round attributable without changing the CSV
+        # columns consumed by existing tools. The trailing load target lets
+        # perf_paths.py split rounds into the leader-local and forwarded
+        # populations. Warmup rounds are discarded from the results, so they
+        # are discarded from the attribution too.
+        handle.write(perf_leader.format_build_line(build_identity) + "\n")
+        for snapshot in leader_meta:
+            if snapshot.get("recorded"):
+                handle.write(perf_leader.format_meta_line(snapshot) + "\n")
         for name, _ in variants:
             for case_name, samples in results[name].items():
                 values = [round(s.rps, 1) for s in samples]
                 handle.write(f"# raw {name} {case_name}: {values}\n")
+
+    if any(snapshot.get("recorded") for snapshot in leader_meta):
+        print("\nLeader attribution (recorded rounds):")
+        for snapshot in leader_meta:
+            if not snapshot.get("recorded"):
+                continue
+            label = (
+                "unknown" if snapshot["leader_node"] is None
+                else f"node{snapshot['leader_node']}"
+            )
+            print(
+                f"  {snapshot['variant']} r{snapshot['round']}: leader={label} "
+                f"path={snapshot['write_path']} write-node={snapshot['write_node']} "
+                f"term={snapshot['term']} source={snapshot['source']}"
+            )
 
     for name, _ in variants:
         if errors_seen[name]:

@@ -320,9 +320,22 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         let last_purged = *self.last_purged.read().await;
         let last_log_id = *self.last_log_id.read().await;
 
+        // `purge()` may advance past the last entry actually stored (openraft
+        // allows purging up to a log id that was never appended). In that case
+        // the purged marker *is* the last known log id: reporting an older
+        // entry (or None after a restart, when the log CF is empty) makes
+        // openraft believe the node lost entries it had already compacted.
+        // Keep the two fields consistent even after a restart, where the
+        // in-memory last_log_id comes from a now-empty log CF.
+        let effective_last = match (last_log_id, last_purged) {
+            (Some(stored), Some(purged)) if purged.index >= stored.index => Some(purged),
+            (None, Some(purged)) => Some(purged),
+            (other, _) => other,
+        };
+
         Ok(LogState {
             last_purged_log_id: last_purged,
-            last_log_id,
+            last_log_id: effective_last,
         })
     }
 
@@ -409,7 +422,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         let start_key = Self::encode_log_index(start);
 
         let db = self.db.clone();
-        blocking_write(move || {
+        let actual_last_log_id = blocking_write(move || {
             let cf = required_cf(&db, CF_LOGS)?;
             let mut batch = rocksdb::WriteBatch::default();
             let mut iter = db.raw_iterator_cf(cf);
@@ -420,12 +433,19 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
                 }
                 iter.next();
             }
-            db.write_opt(batch, &sync_write_options()).map_err(io_error)
+            db.write_opt(batch, &sync_write_options())
+                .map_err(io_error)?;
+            // The truncation point may be beyond the last stored entry (or the
+            // log may be emptied entirely). openraft expects get_log_state()
+            // to report the last entry that actually remains, not the bound
+            // that was requested. Recompute from the DB rather than trusting
+            // the argument.
+            last_log_id_from(&db)
         })
         .await?;
 
-        // Update cached last log ID
-        *self.last_log_id.write().await = last_log_id;
+        // Update cached last log ID to what is really stored after truncation.
+        *self.last_log_id.write().await = actual_last_log_id;
 
         debug!("Truncated logs after {:?}", last_log_id);
         Ok(())
@@ -460,9 +480,20 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         })
         .await?;
 
+        let purged_index = log_id.index;
         *self.last_purged.write().await = Some(log_id);
+        // Purging past the last stored entry deletes the whole log CF. Keep
+        // the cached last log id at the purged marker so get_log_state() does
+        // not report an entry that no longer exists (or a stale smaller one).
+        let mut last = self.last_log_id.write().await;
+        if last
+            .as_ref()
+            .is_none_or(|current| log_id.index >= current.index)
+        {
+            *last = Some(log_id);
+        }
 
-        debug!("Purged logs up to index {}", log_id.index);
+        debug!("Purged logs up to index {}", purged_index);
         Ok(())
     }
 }
@@ -584,5 +615,48 @@ mod tests {
                 .await
                 .expect("read log range");
         assert!(entries.is_empty());
+    }
+
+    /// openraft permits purging up to a log id that was never appended. That
+    /// empties the log CF but persists the purged marker. On restart
+    /// `load_cached_values()` rebuilds `last_log_id` from an empty log CF
+    /// (None), so `get_log_state()` must fall back to the durable marker
+    /// instead of telling openraft that compacted entries were lost.
+    #[tokio::test]
+    async fn purged_marker_survives_a_restart_as_last_log_id() {
+        use crate::raft::types::CommittedLeaderId;
+        use openraft::storage::RaftLogStorage;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("raft-log");
+        let purged = LogId::new(
+            CommittedLeaderId {
+                term: 2,
+                node_id: 1,
+            },
+            7,
+        );
+
+        {
+            let mut store = RocksLogStore::new(path.clone())
+                .await
+                .expect("open log store");
+            store
+                .purge(purged)
+                .await
+                .expect("purge past the last stored entry");
+            let state = store.get_log_state().await.expect("live log state");
+            assert_eq!(state.last_purged_log_id, Some(purged));
+            assert_eq!(state.last_log_id, Some(purged));
+        }
+
+        let mut reopened = RocksLogStore::new(path).await.expect("reopen log store");
+        let state = reopened.get_log_state().await.expect("reopened log state");
+        assert_eq!(state.last_purged_log_id, Some(purged));
+        assert_eq!(
+            state.last_log_id,
+            Some(purged),
+            "a restart after compaction must still report the durable purged marker"
+        );
     }
 }

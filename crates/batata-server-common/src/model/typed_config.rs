@@ -367,6 +367,9 @@ fn default_raft_peer_connect_timeout_secs() -> i64 {
 fn default_raft_peer_connect_retry_interval_ms() -> i64 {
     500
 }
+fn default_raft_bootstrap_leader() -> i64 {
+    0
+}
 fn default_raft_grpc_tcp_keepalive() -> i64 {
     10
 }
@@ -2747,6 +2750,14 @@ pub struct RaftConfig {
     #[serde(default = "default_raft_peer_connect_retry_interval_ms")]
     /// How often peer connections are retried, in milliseconds.
     pub peer_connect_retry_interval_ms: i64,
+    #[serde(default = "default_raft_bootstrap_leader")]
+    /// Deterministic cold-start Raft leader.
+    ///
+    /// `0` (default) picks the lowest member node id; a positive value pins a
+    /// specific member; a negative value restores the legacy behaviour where
+    /// every node calls `initialize()` and the winner is decided by the
+    /// election race (break-glass only, not a supported deployment mode).
+    pub bootstrap_leader: i64,
     #[serde(default)]
     /// gRPC transport settings for Raft traffic.
     pub grpc: RaftGrpcConfig,
@@ -2764,6 +2775,7 @@ impl Default for RaftConfig {
             forward: RaftForwardConfig::default(),
             peer_connect_timeout_secs: default_raft_peer_connect_timeout_secs(),
             peer_connect_retry_interval_ms: default_raft_peer_connect_retry_interval_ms(),
+            bootstrap_leader: default_raft_bootstrap_leader(),
             grpc: RaftGrpcConfig::default(),
         }
     }

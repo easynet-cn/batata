@@ -704,7 +704,7 @@ impl RaftRequest {
 }
 
 /// Response from Raft consensus operations
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RaftResponse {
     /// Whether the operation succeeded
     pub success: bool,

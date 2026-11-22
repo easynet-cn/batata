@@ -25,22 +25,26 @@
 #   ./scripts/regression.sh --list          # show stages per level
 #
 # Levels:
-#   quick     fmt, check, unit(core), integration(standalone, rust SDK)
+#   quick     fmt, check, unit(core), sim, integration(standalone, rust SDK)
 #   standard  + unit(all crates), integration(java + go SDK)
 #   full      + matrix (standalone/cluster x rock/mysql/postgres)
 #
 # The matrix stage additionally asserts Raft health: zero steady-state
 # elections and zero apply/client-write timeouts (scripts/raft_health_check.py).
 # A missing telemetry liveness marker fails closed rather than passing silently.
-# The check stage runs three script gates' self-tests so the classifier, the
-# canonical SDK port list and the perf observability helpers cannot silently
-# drift.
+# The check stage runs six script gates' self-tests plus a static sim-stage
+# wiring guard so the classifiers, the canonical SDK port list, the perf
+# observability helpers, the leader attribution parser, the dual-path split
+# and the protocol-level simulation stage cannot silently drift. The perf
+# dispersion criterion (perf_dispersion.py) rejects a median whose recorded
+# rounds do not describe one population, perf_leader.py says which Raft leader
+# served each round, and perf_paths.py reports a median per write path.
 #
 # The perf stage is now attributable: host load/free-disk snapshots are recorded
 # before and after each case, every (case, variant, round, node) keeps its own
 # size-capped server log, and cluster perf records a Raft health summary as
 # diagnostic context (the matrix stage stays the authoritative health gate).
-# See perf_observability.py.
+# See perf_observability.py and perf_leader.py.
 #
 # Reports are written to reports/regression/<timestamp>/ (gitignored) with a
 # stable symlink at reports/regression/latest. Never /tmp: it gets cleaned.
@@ -59,9 +63,18 @@
 #                              (mysql/postgres start the server with --db-url and
 #                               reset a dedicated perf DB each run)
 #   PERF_MODE=standalone      standalone | cluster
+#   PERF_WRITE_NODE=0         cluster node that receives all wrk load; 0 = auto
+#                             (1 for standalone, 2 for cluster). The Raft
+#                             bootstrap leader is deterministically node 1, so
+#                             cluster load on node 2 keeps the forwarded-path
+#                             Config Write anchor meaningful. Set 1 explicitly
+#                             to measure the leader-local path instead.
 #   PERF_ROUNDS=3 PERF_DURATION=20s PERF_WARMUP=10s
 #   PERF_CONNECTIONS=20 PERF_THREADS=2 PERF_WORKERS=8
 #   PERF_TOLERANCE=0.08       minimum tolerance when cv_pct is small
+#   PERF_MAX_SPREAD_PCT=20    max (max-min)/median spread before a scenario is
+#                             INCONCLUSIVE (limit also scales with anchor cv)
+#   PERF_SPREAD_FACTOR=3      limit = max(PERF_MAX_SPREAD_PCT, factor*anchor cv)
 #   PERF_SERVER_LOG_MAX_BYTES=4194304
 #                             cap per server log (head + health signals + tail)
 #   PERF_BASELINE=<file>      baseline to read/write (for experiments)
@@ -83,6 +96,13 @@ MATRIX_BASELINE="${SCRIPT_DIR}/regression_matrix_baseline.txt"
 # developer box that is far larger than 8%. A machine that cannot resolve
 # better than 40% must not fail a run for a 20% drop.
 PERF_TOLERANCE="${PERF_TOLERANCE:-0.08}"
+# A median over rounds that disagree by more than this is not a measurement of
+# one code path. Cluster Config Write has two populations: when node 1 (the only
+# node taking load) is the Raft leader the write is local, otherwise every write
+# is forwarded over gRPC and the follower waits for its apply index to catch up.
+# Never compare such a median to an anchor, and never capture it as one.
+PERF_MAX_SPREAD_PCT="${PERF_MAX_SPREAD_PCT:-20}"
+PERF_SPREAD_FACTOR="${PERF_SPREAD_FACTOR:-3}"
 PERF_STORAGE="${PERF_STORAGE:-rocks}"
 PERF_MODE="${PERF_MODE:-standalone}"
 PERF_ROUNDS="${PERF_ROUNDS:-3}"
@@ -92,6 +112,7 @@ PERF_WARMUP="${PERF_WARMUP:-10s}"
 PERF_CONNECTIONS="${PERF_CONNECTIONS:-20}"
 PERF_THREADS="${PERF_THREADS:-2}"
 PERF_WORKERS="${PERF_WORKERS:-8}"
+PERF_WRITE_NODE="${PERF_WRITE_NODE:-0}"
 # Bound each retained server log. The default INFO level emits two lines per
 # config write; an uncapped cluster node reached 66 MiB in one perf run.
 PERF_SERVER_LOG_MAX_BYTES="${PERF_SERVER_LOG_MAX_BYTES:-4194304}"
@@ -133,9 +154,9 @@ done
 if [ "$LIST_ONLY" = 1 ]; then
     cat <<'EOF'
 stages per level
-  quick     fmt check unit integration
-  standard  fmt check unit integration
-  full      fmt check unit integration matrix
+  quick     fmt check unit sim integration
+  standard  fmt check unit sim integration
+  full      fmt check unit sim integration matrix
   --perf    perf (additive, any level; advisory unless --perf-gate)
   --perf-capture  record this machine's anchors instead of comparing
   --only <stage> runs a single stage
@@ -155,6 +176,7 @@ REPORT="${REPORT_DIR}/report.md"
 BLOCKERS=()
 WHITELISTED=()
 PERF_ADVISORY=()
+PERF_INCONCLUSIVE=0
 STAGE_ROWS=()
 TOTAL_PASSED=0
 TOTAL_FAILED=0
@@ -287,9 +309,10 @@ stage_check() {
     detail="${errors} errors, ${warnings} warnings"
     [ "$sdk_rc" -ne 0 ] && detail="${detail}; sdk-tests failed to compile"
 
-    # Script-level gates must be self-validating. A drifted SDK port list or a
-    # weakened Raft anomaly classifier would otherwise stay invisible until a
-    # full matrix run (or forever, if the matrix log happens to be clean).
+    # Script-level gates must be self-validating. A drifted SDK port list, a
+    # weakened Raft anomaly classifier, a disabled perf dispersion criterion
+    # or a lost leader attribution would otherwise stay invisible until a full
+    # matrix run (or forever, if the matrix log happens to be clean).
     local guard_rc=0
     if ! bash "${SCRIPT_DIR}/sdk_port_guard.sh" self-test \
         > "$LOG_DIR/check-port-guard.log" 2>&1; then
@@ -306,13 +329,52 @@ stage_check() {
         record_failure check "perf_observability self-test failed"
         guard_rc=1
     fi
-    # Guard the wiring itself: if a future edit drops one of the three
-    # invocations, the stage must not pass merely because nothing failed. Each
-    # self-test prints an explicit PASS marker, so a missing/empty artifact is
-    # a red gate. The perf helper also checks the perf-stage flags statically.
+    if ! python3 "${SCRIPT_DIR}/perf_dispersion.py" --self-test \
+        > "$LOG_DIR/check-perf-dispersion.log" 2>&1; then
+        record_failure check "perf_dispersion self-test failed"
+        guard_rc=1
+    fi
+    if ! python3 "${SCRIPT_DIR}/perf_leader.py" --self-test \
+        > "$LOG_DIR/check-perf-leader.log" 2>&1; then
+        record_failure check "perf_leader self-test failed"
+        guard_rc=1
+    fi
+    if ! python3 "${SCRIPT_DIR}/perf_paths.py" --self-test \
+        > "$LOG_DIR/check-perf-paths.log" 2>&1; then
+        record_failure check "perf_paths self-test failed"
+        guard_rc=1
+    fi
+    # Guard the sim-stage wiring. Checking the declaration line (not the whole
+    # file) keeps this guard's own text from satisfying the check.
+    local sim_line sim_wiring_ok=1
+    sim_line=$(grep '^SIM_TESTS=' "${SCRIPT_DIR}/regression.sh" || true)
+    case "$sim_line" in
+        *deterministic_raft_simulation*openraft_storage_conformance*config_cluster_ordered_pairs*) ;;
+        *) sim_wiring_ok=0 ;;
+    esac
+    grep -q '^stage_sim() {' "${SCRIPT_DIR}/regression.sh" || sim_wiring_ok=0
+    grep -q '^    stage_sim$' "${SCRIPT_DIR}/regression.sh" || sim_wiring_ok=0
+    if [ "$sim_wiring_ok" -eq 1 ]; then
+        echo "SELF-TEST PASS: sim stage wired with all three suites" \
+            > "$LOG_DIR/check-sim-wiring.log"
+    else
+        echo "SELF-TEST FAIL: sim stage wiring incomplete" \
+            > "$LOG_DIR/check-sim-wiring.log"
+        record_failure check "sim stage wiring missing or incomplete"
+        guard_rc=1
+    fi
+    # Guard the wiring itself: if a future edit drops one of the six
+    # self-tests or the sim wiring guard, the stage must not pass merely
+    # because nothing failed. Each prints an explicit PASS marker, so a
+    # missing/empty artifact is a red gate. The perf helpers also check the
+    # perf-stage flags statically.
     if ! grep -q 'PASS' "$LOG_DIR/check-port-guard.log" 2>/dev/null \
         || ! grep -q 'passed' "$LOG_DIR/check-raft-health.log" 2>/dev/null \
-        || ! grep -q 'SELF-TEST PASS' "$LOG_DIR/check-perf-observability.log" 2>/dev/null; then
+        || ! grep -q 'SELF-TEST PASS' "$LOG_DIR/check-perf-observability.log" 2>/dev/null \
+        || ! grep -q 'SELF-TEST PASS' "$LOG_DIR/check-perf-dispersion.log" 2>/dev/null \
+        || ! grep -q 'SELF-TEST PASS' "$LOG_DIR/check-perf-leader.log" 2>/dev/null \
+        || ! grep -q 'SELF-TEST PASS' "$LOG_DIR/check-perf-paths.log" 2>/dev/null \
+        || ! grep -q 'SELF-TEST PASS' "$LOG_DIR/check-sim-wiring.log" 2>/dev/null; then
         record_failure check "script self-test artifacts missing or incomplete"
         guard_rc=1
     fi
@@ -389,6 +451,38 @@ stage_unit() {
         run_unit_crate "$crate" || rc=1
     done <<< "$crates"
     stage_end unit $rc "${TOTAL_PASSED} passed, ${TOTAL_FAILED} failed"
+}
+
+# ---------------------------------------------------------------------------
+# Stage: sim (deterministic Raft simulation + storage conformance)
+#
+# Pure Rust test binaries: no server, no SDK, no ports. They check the consensus
+# contract itself (openraft's own storage suite, deterministic fault injection,
+# linearizability). A dedicated stage gives a protocol-level regression its own
+# name and log instead of burying it in `unit|batata-consistency`.
+# ---------------------------------------------------------------------------
+SIM_TESTS=(deterministic_raft_simulation openraft_storage_conformance config_cluster_ordered_pairs)
+
+stage_sim() {
+    should_run sim || return 0
+    STAGE_START=$(date +%s)
+    local rc=0 test log test_rc passed failed
+    for test in "${SIM_TESTS[@]}"; do
+        log="$LOG_DIR/sim-${test}.log"
+        cargo test -p batata-consistency --test "$test" --no-fail-fast > "$log" 2>&1
+        test_rc=$?
+        passed=$(awk '/^test result:/{for(i=1;i<=NF;i++) if($i=="passed;") s+=$(i-1)} END{print s+0}' "$log")
+        failed=$(awk '/^test result:/{for(i=1;i<=NF;i++) if($i=="failed;") s+=$(i-1)} END{print s+0}' "$log")
+        # Fail closed on an empty or truncated artifact: a green rc with no
+        # executed tests is a false green, not a pass.
+        if [ "$test_rc" -ne 0 ] || [ "$passed" -eq 0 ] || [ "$failed" -ne 0 ] \
+            || ! grep -q '^test result: ok\.' "$log"; then
+            record_failure sim "${test}: ${passed} passed, ${failed} failed (rc=${test_rc})"
+            rc=1
+        fi
+        printf '    %-38s %5s passed %3s failed\n' "$test" "$passed" "$failed"
+    done
+    stage_end sim $rc "${#SIM_TESTS[@]} simulation/conformance suites"
 }
 
 # ---------------------------------------------------------------------------
@@ -583,10 +677,9 @@ stage_matrix() {
 # The stage is advisory by default - it is the only stage whose result depends
 # on how busy the host is. --perf-gate promotes a drop to a blocker.
 # ---------------------------------------------------------------------------
-median_of() {
-    printf '%s\n' "$1" | tr ',' '\n' | sort -n | awk '{v[NR]=$1} END{ if (NR%2) print v[(NR+1)/2]; else print (v[NR/2]+v[NR/2+1])/2 }'
-}
-
+# Raw-sample arithmetic (median, spread and the INCONCLUSIVE criterion) lives
+# in perf_dispersion.py so it can be unit-tested and mutant-checked.
+#
 # Stable id for the machine that produced an anchor: lowercased hw.model with
 # punctuation stripped plus the core count, e.g. `macbookpro161-16t`.
 perf_machine_id() {
@@ -647,6 +740,22 @@ stage_perf() {
     local MACHINE
     MACHINE=$(perf_machine_id)
 
+    # Resolve the load target. The cluster bootstrap leader is node 1, so
+    # aiming wrk at node 1 would always measure the leader-local write path.
+    # The `rocks|cluster|Config Write` anchor (2735) was captured on the
+    # forwarded path; default cluster runs to a follower so the existing
+    # anchor still describes the code path being compared. Override with
+    # PERF_WRITE_NODE=1 to measure the local path deliberately.
+    local write_node="$PERF_WRITE_NODE"
+    if [ "$write_node" = "0" ]; then
+        if [ "$PERF_MODE" = "cluster" ]; then
+            write_node=2
+        else
+            write_node=1
+        fi
+    fi
+    echo "    load target: node ${write_node} (PERF_WRITE_NODE=${PERF_WRITE_NODE})"
+
     # Cluster mode always uses embedded RocksDB for the raft/protocol layer, so
     # its anchor label and backend are "rocks"/embedded regardless of PERF_STORAGE.
     if [ "$PERF_MODE" = "cluster" ]; then
@@ -697,7 +806,7 @@ stage_perf() {
             --rounds "$PERF_ROUNDS" --warmup-rounds "$PERF_WARMUP_ROUNDS" \
             --duration "$PERF_DURATION" --warmup "$PERF_WARMUP" \
             --connections "$PERF_CONNECTIONS" --threads "$PERF_THREADS" --workers "$PERF_WORKERS" \
-            --mode "$PERF_MODE" --fresh-store \
+            --mode "$PERF_MODE" --write-node "$write_node" --fresh-store \
             --log-dir "$perf_log_dir" \
             --host-state-log "$host_state_log" \
             --server-log-max-bytes "$PERF_SERVER_LOG_MAX_BYTES" \
@@ -735,18 +844,76 @@ stage_perf() {
 
         [ -f "$csv" ] || { perf_fail "${case_name}: no results" || rc=1; continue; }
 
-        # `# raw <variant> <case>: [v1, v2, v3]`
-        while IFS='|' read -r name vals; do
+        # Leader attribution is diagnostic context, not a new gate. Historical
+        # CSVs have no meta lines and must stay readable; every new CSV carries
+        # one row per recorded round, so an INCONCLUSIVE verdict can name the
+        # two code paths instead of leaving the reader to infer them.
+        local leader_summary
+        if ! python3 "${SCRIPT_DIR}/perf_leader.py" --check-csv "$csv" \
+            > "$LOG_DIR/perf-${case_name}.leaders" \
+            2> "$LOG_DIR/perf-${case_name}.leaders.err"; then
+            perf_fail "${case_name}: leader attribution failed" || rc=1
+            leader_summary="unavailable"
+        else
+            leader_summary=$(cat "$LOG_DIR/perf-${case_name}.leaders")
+            PERF_ADVISORY+=("${case_name}: leader attribution: ${leader_summary}")
+            echo "    Leader attribution: ${leader_summary}"
+        fi
+
+        # Split the recorded rounds into leader-local / forwarded populations.
+        # The aggregate median is only a real code path when every round took
+        # that path; otherwise perf_paths reports MIXED and prints the two
+        # independent medians. Advisory only: perf_dispersion decides whether
+        # the sample may be compared to an anchor.
+        local path_summary
+        if ! python3 "${SCRIPT_DIR}/perf_paths.py" --check-csv "$csv" \
+            --case "Config Write" \
+            > "$LOG_DIR/perf-${case_name}.paths" \
+            2> "$LOG_DIR/perf-${case_name}.paths.err"; then
+            perf_fail "${case_name}: path split failed" || rc=1
+            path_summary="unavailable"
+        else
+            path_summary=$(cat "$LOG_DIR/perf-${case_name}.paths")
+            PERF_ADVISORY+=("${case_name}: path split: ${path_summary}")
+            echo "    Path split: ${path_summary}"
+        fi
+
+        # Classify every `# raw <variant> <case>: [v1, v2, v3]` line first.
+        # A spread above the limit means the recorded rounds do not describe
+        # one population: comparing their median to an anchor (or capturing it
+        # as a new anchor) would produce a meaningless verdict. Cluster Config
+        # Write is the known case: node 1 takes all load, while the cold-start
+        # Raft election picks the leader at random. See perf_dispersion.py.
+        local dispersion_out="$LOG_DIR/perf-${case_name}.dispersion"
+        if ! python3 "${SCRIPT_DIR}/perf_dispersion.py" --check-csv "$csv" \
+            --baseline "$PERF_BASELINE" --machine "$MACHINE" \
+            --storage "$PERF_STORAGE" --mode "$PERF_MODE" \
+            --max-spread "$PERF_MAX_SPREAD_PCT" \
+            --spread-factor "$PERF_SPREAD_FACTOR" \
+            > "$dispersion_out" 2> "${dispersion_out}.err"; then
+            perf_fail "${case_name}: dispersion classifier failed" || rc=1
+            continue
+        fi
+
+        while IFS='|' read -r name med spread limit label reason; do
             [ -n "$name" ] || continue
-            local med mn mx cv
-            med=$(median_of "$vals")
-            mn=$(printf '%s\n' "$vals" | tr ',' '\n' | sort -n | head -1)
-            mx=$(printf '%s\n' "$vals" | tr ',' '\n' | sort -n | tail -1)
-            cv=$(awk -v a="$mn" -v b="$mx" -v m="$med" 'BEGIN{ if (m<=0) print "0"; else printf "%.1f", 100*(b-a)/m }')
+            if [ "$label" != "COMPARABLE" ]; then
+                PERF_INCONCLUSIVE=$(( PERF_INCONCLUSIVE + 1 ))
+                PERF_ADVISORY+=("${name}: INCONCLUSIVE leader context: ${leader_summary}; path split: ${path_summary}")
+                if [ "$PERF_CAPTURE" = 1 ]; then
+                    # dispersion-guard: never wash a bimodal median into an anchor.
+                    echo "    [BLOCKER] ${name}: ${reason} - capture refused"
+                    record_failure perf "${name}: ${reason} - capture refused"
+                    rc=1
+                else
+                    perf_fail "${name}: INCONCLUSIVE - ${reason}" || rc=1
+                fi
+                continue
+            fi
 
             if [ "$PERF_CAPTURE" = 1 ]; then
-                perf_capture_write "$MACHINE" "$name" "$med" "$cv"
-                echo "    ${name}: captured median ${med} (cv ${cv}%)"
+                perf_capture_write "$MACHINE" "$name" "$med" "$spread"
+                echo "    ${name}: captured median ${med} (cv ${spread}%)"
                 continue
             fi
 
@@ -762,16 +929,17 @@ stage_perf() {
             tol=$(awk -v c="$acv" -v t="$PERF_TOLERANCE" 'BEGIN{ v=c/100; if (v<t) v=t; printf "%.3f", v }')
             floor=$(awk -v a="$anchor" -v t="$tol" 'BEGIN{printf "%.0f", a*(1-t)}')
             if awk -v m="$med" -v f="$floor" 'BEGIN{exit !(m<f)}'; then
-                perf_fail "${name}: ${med} RPS < floor ${floor} (anchor ${anchor}, tol ${tol}, cv ${cv}%)" || rc=1
+                perf_fail "${name}: ${med} RPS < floor ${floor} (anchor ${anchor}, tol ${tol}, cv ${spread}%)" || rc=1
             else
-                echo "    ${name}: median ${med} (cv ${cv}%) vs anchor ${anchor} (tol ${tol}) — ok"
+                echo "    ${name}: median ${med} (cv ${spread}%, spread limit ${limit}%) vs anchor ${anchor} (tol ${tol}) — ok"
             fi
-        done < <(awk -F':' '/^# raw /{ nm=$1; sub(/^# raw [^ ]+ /,"",nm); v=$2; gsub(/[][ ]/,"",v); print nm"|"v }' "$csv")
+        done < "$dispersion_out"
     done
 
     local detail="advisory"
     [ "$PERF_GATE" = 1 ] && detail="gating"
     [ "$PERF_CAPTURE" = 1 ] && detail="captured for ${MACHINE}"
+    [ "$PERF_INCONCLUSIVE" -gt 0 ] && detail="${detail}; ${PERF_INCONCLUSIVE} inconclusive"
     stage_end perf $rc "$detail"
 }
 
@@ -877,6 +1045,7 @@ main() {
     stage_fmt
     stage_check
     stage_unit
+    stage_sim
     stage_integration
     stage_matrix
     stage_perf
