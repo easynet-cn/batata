@@ -10,6 +10,7 @@
 //! - deleting a branch inserts a tombstone rule and soft-deletes the child
 //!   cluster/namespace/items while **child Releases are retained**.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -62,7 +63,7 @@ impl NamespaceBranchService {
 
     /// Upstream `UniqueKeyGenerator.generate`: `{yyyyMMddHHmmss}-{16 hex}`.
     fn generate_branch_name() -> String {
-        let ts = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let ts = batata_common::datetime::Utc::now().format_compact();
         let mut seed = rand::random::<u64>();
         let hex: String = (0..16)
             .map(|_| {
@@ -148,7 +149,7 @@ impl NamespaceBranchService {
                 )
             })?;
 
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
 
         // 1) child cluster
         let mut branch_cluster = StoredCluster {
@@ -204,7 +205,7 @@ impl NamespaceBranchService {
         else {
             return Err(anyhow::anyhow!("Branch not found"));
         };
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
 
         // Tombstone rule rows under the PARENT key (upstream inserts a rule
         // row with rules="[]" and the final status, deleting older rows).

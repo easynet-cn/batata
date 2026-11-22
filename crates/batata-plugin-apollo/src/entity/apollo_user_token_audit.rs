@@ -17,9 +17,11 @@ pub struct Model {
     /// The HTTP method.
     pub method: String,
     /// Creation timestamp.
-    pub data_change_created_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_created_time: TimeDateTime,
     /// Last update timestamp.
-    pub data_change_last_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_last_time: TimeDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

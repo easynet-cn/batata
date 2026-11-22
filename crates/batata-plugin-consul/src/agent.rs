@@ -1,6 +1,7 @@
 // Consul Agent API HTTP handlers
 // Implements Consul-compatible service registration endpoints
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -1909,7 +1910,7 @@ pub async fn get_agent_metrics(
     }
 
     let response = MetricsResponse {
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: batata_common::datetime::Utc::now().to_rfc3339(),
         gauges,
         counters,
         samples,
@@ -2041,7 +2042,7 @@ pub async fn agent_monitor(
 
 /// Format a single monitor log line (plain text or JSON, matching Consul format)
 fn format_monitor_line(level: &str, as_json: bool, module: &str, message: &str) -> String {
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = batata_common::datetime::Utc::now().to_rfc3339();
     if as_json {
         serde_json::json!({
             "@level": level.to_lowercase(),
@@ -2076,7 +2077,7 @@ fn collect_metrics_snapshot(
     }
 
     MetricsResponse {
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: batata_common::datetime::Utc::now().to_rfc3339(),
         gauges: vec![
             GaugeMetric::new("consul.catalog.service.count", service_count as f64),
             GaugeMetric::new(

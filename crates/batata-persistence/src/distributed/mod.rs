@@ -1,6 +1,7 @@
 // Distributed persistence backend using Raft + RocksDB
 // Provides multi-node consistency through Raft consensus
 
+use batata_common::datetime::DateTimeExt;
 use md5::Digest;
 use std::sync::Arc;
 use std::time::Duration;
@@ -273,7 +274,7 @@ impl ConfigPersistence for DistributedPersistService {
                     ext_info: Some(ext_info),
                 }),
                 // Capture the clock at propose time; apply() must be deterministic.
-                now_ms: chrono::Utc::now().timestamp_millis(),
+                now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
             },
         ));
 
@@ -324,7 +325,7 @@ impl ConfigPersistence for DistributedPersistService {
             group: group.to_string(),
             tenant: namespace_id.to_string(),
             history,
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
 
         self.raft_write(request).await?;
@@ -370,7 +371,7 @@ impl ConfigPersistence for DistributedPersistService {
                 src_user: Some(src_user.to_string()),
                 src_ip: Some(src_ip.to_string()),
                 cas_md5: cas_md5.map(|s| s.to_string()),
-                now_ms: chrono::Utc::now().timestamp_millis(),
+                now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
             },
         ));
         self.raft_write(request).await?;
@@ -662,7 +663,7 @@ impl NamespacePersistence for DistributedPersistService {
             namespace_id: namespace_id.to_string(),
             namespace_name: name.to_string(),
             namespace_desc: Some(desc.to_string()),
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         self.raft_write(request).await
     }
@@ -677,7 +678,7 @@ impl NamespacePersistence for DistributedPersistService {
             namespace_id: namespace_id.to_string(),
             namespace_name: name.to_string(),
             namespace_desc: Some(desc.to_string()),
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         self.raft_write(request).await?;
         Ok(true)
@@ -738,7 +739,7 @@ impl AuthPersistence for DistributedPersistService {
             password_hash: password_hash.to_string(),
             enabled,
             source: source.to_string(),
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         self.raft_write(request).await
     }
@@ -752,7 +753,7 @@ impl AuthPersistence for DistributedPersistService {
             username: username.to_string(),
             password_hash: Some(password_hash.to_string()),
             enabled: None,
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         self.raft_write(request).await
     }
@@ -812,7 +813,7 @@ impl AuthPersistence for DistributedPersistService {
         let request = RaftRequest::RoleCreate {
             role: role.to_string(),
             username: username.to_string(),
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         self.raft_write(request).await
     }
@@ -922,7 +923,7 @@ impl AuthPersistence for DistributedPersistService {
             role: role.to_string(),
             resource: resource.to_string(),
             action: action.to_string(),
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         self.raft_write(request).await
     }

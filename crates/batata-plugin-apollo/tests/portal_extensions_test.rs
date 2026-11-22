@@ -2,6 +2,7 @@
 //! extensions, user tokens, server config, and the config supplementary
 //! endpoints `/services/meta` and `/notifications`.
 
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use actix_web::{App, test, web};
@@ -185,7 +186,10 @@ async fn audit_logs_search_returns_envelope() {
 #[actix_web::test]
 async fn consumer_by_app_id_returns_consumer() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("cons-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "cons-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     ConsumerPersistence::create_consumer(
         &p,
         ConsumerDTO {
@@ -245,7 +249,10 @@ async fn consumer_by_app_id_not_found() {
 #[actix_web::test]
 async fn consumer_tokens_by_app_id_returns_tokens() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("constok-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "constok-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let consumer = ConsumerPersistence::create_consumer(
         &p,
         ConsumerDTO {

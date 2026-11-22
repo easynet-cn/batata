@@ -26,9 +26,11 @@ pub struct Model {
     /// Maximum history count.
     pub max_history_count: i32,
     /// Creation timestamp.
-    pub gmt_create: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub gmt_create: TimeDateTime,
     /// Last modification timestamp.
-    pub gmt_modified: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub gmt_modified: TimeDateTime,
 }
 
 /// Relation definitions for the `tenant_capacity` entity.

@@ -22,7 +22,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }
-chrono = { workspace = true }
+time = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 config = { workspace = true }

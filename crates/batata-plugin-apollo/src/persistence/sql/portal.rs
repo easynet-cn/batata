@@ -27,7 +27,7 @@ use crate::persistence::traits::{
     PermissionPersistence, ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence,
     UserPersistence, UserTokenAuditPersistence, UserTokenPersistence,
 };
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, NaiveDateTimeExt, Utc};
 
 /// Inserts a bootstrap row, treating a unique-key conflict as a normal no-op.
 ///
@@ -1293,7 +1293,7 @@ impl UserTokenPersistence for SqlApolloPersistence {
         token_hash: &str,
         scopes: Option<&str>,
         rate_limit: i32,
-        expires: chrono::DateTime<chrono::Utc>,
+        expires: batata_common::datetime::DateTimeUtc,
         created_by: &str,
     ) -> anyhow::Result<apollo_user_token::Model> {
         let db = &self.db;
@@ -1320,7 +1320,7 @@ impl UserTokenPersistence for SqlApolloPersistence {
     async fn touch_user_token(
         &self,
         id: i64,
-        last_used_time: chrono::NaiveDateTime,
+        last_used_time: batata_common::datetime::NaiveDateTime,
         last_used_ip: Option<&str>,
         last_used_user_agent: Option<&str>,
         operator: &str,

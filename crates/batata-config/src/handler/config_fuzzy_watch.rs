@@ -4,6 +4,7 @@
 //! methods to match configs against registered patterns. It also provides
 //! notification functionality for config changes.
 
+use batata_common::datetime::DateTimeExt;
 use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
@@ -146,7 +147,7 @@ impl ConfigChangeEvent {
             data_id: data_id.to_string(),
             change_type,
             md5: None,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: batata_common::datetime::Utc::now().timestamp_millis(),
         }
     }
 

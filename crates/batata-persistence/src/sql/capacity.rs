@@ -1,6 +1,7 @@
 //! CapacityPersistence implementation for ExternalDbPersistService
 
 use async_trait::async_trait;
+use batata_common::datetime::DateTimeExt;
 use sea_orm::*;
 
 use crate::entity::{group_capacity, tenant_capacity};
@@ -50,7 +51,7 @@ impl CapacityPersistence for ExternalDbPersistService {
             .one(&self.db)
             .await?;
 
-        let now = chrono::Utc::now().naive_utc();
+        let now = batata_common::datetime::Utc::now().naive_utc();
 
         if let Some(model) = existing {
             // Update existing record
@@ -156,7 +157,7 @@ impl CapacityPersistence for ExternalDbPersistService {
             .one(&self.db)
             .await?;
 
-        let now = chrono::Utc::now().naive_utc();
+        let now = batata_common::datetime::Utc::now().naive_utc();
 
         if let Some(model) = existing {
             // Update existing record

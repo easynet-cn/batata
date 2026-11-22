@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use actix_web::{HttpResponse, get, web};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;

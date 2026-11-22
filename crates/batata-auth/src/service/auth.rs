@@ -2,6 +2,7 @@
 //!
 //! Provides JWT token encoding, decoding, caching, and revocation.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -165,7 +166,7 @@ pub fn decode_jwt_token_cached(
 
     // Check cache first - use token directly for lookup
     if let Some(cached) = token_cache().get(token) {
-        let now = chrono::Utc::now().timestamp();
+        let now = batata_common::datetime::Utc::now().timestamp();
 
         if cached.claims.exp > now {
             // Check if user is blacklisted
@@ -273,9 +274,9 @@ pub fn encode_jwt_token(
     secret_key: &str,
     expire_seconds: i64,
 ) -> jsonwebtoken::errors::Result<String> {
-    let exp = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::seconds(expire_seconds))
-        .unwrap_or_else(chrono::Utc::now)
+    let exp = batata_common::datetime::Utc::now()
+        .checked_add_signed(batata_common::datetime::Duration::seconds(expire_seconds))
+        .unwrap_or_else(batata_common::datetime::Utc::now)
         .timestamp();
 
     let payload = JwtPayload {
@@ -325,7 +326,7 @@ mod tests {
         let decoded = decode_jwt_token(&token, TEST_SECRET).unwrap();
 
         assert_eq!(decoded.claims.sub, user);
-        assert!(decoded.claims.exp > chrono::Utc::now().timestamp());
+        assert!(decoded.claims.exp > batata_common::datetime::Utc::now().timestamp());
     }
 
     #[test]
@@ -547,7 +548,7 @@ mod tests {
                 let token = encode_jwt_token("user", TEST_SECRET, expire).unwrap();
                 let decoded = decode_jwt_token(&token, TEST_SECRET).unwrap();
 
-                prop_assert!(decoded.claims.exp > chrono::Utc::now().timestamp() - 1);
+                prop_assert!(decoded.claims.exp > batata_common::datetime::Utc::now().timestamp() - 1);
             }
         }
     }

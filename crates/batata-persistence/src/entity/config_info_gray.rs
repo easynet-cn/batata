@@ -25,9 +25,11 @@ pub struct Model {
     /// Source IP of the operation.
     pub src_ip: Option<String>,
     /// Creation timestamp.
-    pub gmt_create: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub gmt_create: TimeDateTime,
     /// Last modification timestamp.
-    pub gmt_modified: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub gmt_modified: TimeDateTime,
     /// Owning application name.
     pub app_name: Option<String>,
     /// Tenant ID (namespace).

@@ -12,6 +12,7 @@ description = "Service Mesh support for Batata (xDS protocol, Istio integration)
 tonic-prost-build = { workspace = true }
 
 [dependencies]
+batata-common = { workspace = true }
 # gRPC and protobuf
 tonic = { workspace = true, features = ["transport", "codegen"] }
 tonic-prost = { workspace = true }
@@ -41,7 +42,7 @@ dashmap = { workspace = true }
 parking_lot = { workspace = true }
 
 # Time
-chrono = { workspace = true }
+time = { workspace = true }
 
 # UUID
 uuid = { workspace = true }

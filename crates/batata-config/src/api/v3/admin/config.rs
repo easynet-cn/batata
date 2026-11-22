@@ -10,8 +10,8 @@ use actix_web::{
     web,
 };
 use batata_api::config::ConfigCloneInfo;
+use batata_common::datetime::{DateTimeExt, Utc};
 use batata_persistence::model::ConfigGrayStorageData;
-use chrono::Utc;
 use futures::StreamExt;
 use serde::Deserialize;
 
@@ -949,10 +949,7 @@ async fn export_config(
         }
     };
 
-    let filename = format!(
-        "batata_config_export_{}.zip",
-        Utc::now().format("%Y%m%d%H%M%S")
-    );
+    let filename = format!("batata_config_export_{}.zip", Utc::now().format_compact());
 
     // Execute ConfigChangePluginV2 After hook for Export
     if let Some(plugin_mgr) = data.try_plugin_manager() {

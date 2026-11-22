@@ -17,15 +17,18 @@ pub struct Model {
     /// The `locked_by` field.
     pub locked_by: String,
     /// The `locked_at` field.
-    pub locked_at: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub locked_at: TimeDateTime,
     /// The `data_change_created_by` field.
     pub data_change_created_by: String,
     /// The `data_change_created_time` field.
-    pub data_change_created_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_created_time: TimeDateTime,
     /// The `data_change_last_modified_by` field.
     pub data_change_last_modified_by: Option<String>,
     /// The `data_change_last_time` field.
-    pub data_change_last_time: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub data_change_last_time: Option<TimeDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

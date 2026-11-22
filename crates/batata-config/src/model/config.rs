@@ -1,6 +1,8 @@
 // Configuration data models and structures
 // This file defines various data structures for configuration management operations
 
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
@@ -154,12 +156,12 @@ impl From<entity::config_info::Model> for ConfigAllInfo {
             },
             create_time: value
                 .gmt_create
-                .unwrap_or_default()
+                .unwrap_or_else(batata_common::datetime::default_naive)
                 .and_utc()
                 .timestamp_millis(),
             modify_time: value
                 .gmt_modified
-                .unwrap_or_default()
+                .unwrap_or_else(batata_common::datetime::default_naive)
                 .and_utc()
                 .timestamp_millis(),
             create_user: value.src_user.unwrap_or_default(),

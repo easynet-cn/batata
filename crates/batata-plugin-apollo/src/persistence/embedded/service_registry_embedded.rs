@@ -4,6 +4,7 @@
 //! Layout: `sr:{service_name}:{uri}` → JSON [`ServiceRegistryEntry`]; one row
 //! per (service, uri) — heartbeat overwrites in place, refreshing last_time.
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -38,7 +39,7 @@ impl ServiceRegistryEmbedded {
 impl ServiceRegistryPersistence for ServiceRegistryEmbedded {
     async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()> {
         let store = JsonStore::new(self.db.clone(), CF_APOLLO_SERVICE_REGISTRY);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let mut entry: Option<ServiceRegistryEntry> =
             store.get(Self::key(service_name, uri).as_bytes())?;
         match entry.as_mut() {
@@ -75,7 +76,7 @@ impl ServiceRegistryPersistence for ServiceRegistryEmbedded {
         window_secs: i64,
     ) -> anyhow::Result<Vec<ServiceRegistryEntry>> {
         let store = JsonStore::new(self.db.clone(), CF_APOLLO_SERVICE_REGISTRY);
-        let cutoff = chrono::Utc::now().timestamp_millis() - window_secs * 1000;
+        let cutoff = batata_common::datetime::Utc::now().timestamp_millis() - window_secs * 1000;
         let prefix = format!("{}{}:", KEY_PREFIX, service_name);
         Ok(store
             .scan_prefix::<ServiceRegistryEntry>(prefix.as_bytes())?

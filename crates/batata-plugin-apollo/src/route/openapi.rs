@@ -20,7 +20,7 @@ use crate::service::{
     ReleaseService, RoleService, SearchService, ServerConfigService, UserService, UserTokenService,
 };
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, web};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, NaiveDateTimeExt, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -2270,11 +2270,10 @@ fn user_token_view(
         "envs": [],
         "namespaces": [],
         "rateLimit": model.rate_limit,
-        "expires": model.expires.format("%Y-%m-%dT%H:%M:%S+00:00").to_string(),
+        "expires": model.expires.format_apollo_secs(),
         "dataChangeCreatedTime": model
             .data_change_created_time
-            .format("%Y-%m-%dT%H:%M:%S+00:00")
-            .to_string(),
+            .format_apollo_secs(),
     });
     if let Some(token) = token_value {
         view["tokenValue"] = Value::String(token.to_string());
@@ -2288,7 +2287,12 @@ fn user_token_view(
 /// `description` is accepted as a legacy alias for batata's older clients.
 fn user_token_request(
     body: &Value,
-) -> (String, Option<chrono::DateTime<chrono::Utc>>, String, i32) {
+) -> (
+    String,
+    Option<batata_common::datetime::DateTimeUtc>,
+    String,
+    i32,
+) {
     let name = body
         .get("name")
         .and_then(|v| v.as_str())
@@ -2299,14 +2303,11 @@ fn user_token_request(
         .get("expires")
         .and_then(|v| v.as_str())
         .and_then(|raw| {
-            use chrono::{NaiveDate, TimeZone};
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
-                return Some(dt.with_timezone(&chrono::Utc));
+            if let Ok(dt) = batata_common::datetime::parse_rfc3339(raw) {
+                return Some(dt);
             }
-            NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-                .ok()
-                .and_then(|d| d.and_hms_opt(23, 59, 59))
-                .map(|naive| chrono::Utc.from_utc_datetime(&naive))
+            batata_common::datetime::parse_naive(&format!("{raw}T23:59:59"))
+                .map(batata_common::datetime::utc)
         });
     let scopes = body.get("scopes").and_then(Value::as_str).unwrap_or("{}");
     let rate_limit = body
@@ -2323,9 +2324,9 @@ fn user_token_created(token: &str, model: &crate::entity::apollo_user_token::Mod
     body
 }
 
-fn format_token_time(value: Option<chrono::NaiveDateTime>) -> Value {
+fn format_token_time(value: Option<batata_common::datetime::NaiveDateTime>) -> Value {
     value
-        .map(|time| Value::String(time.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()))
+        .map(|time| Value::String(batata_common::datetime::format_naive_secs_plus00(time)))
         .unwrap_or(Value::Null)
 }
 

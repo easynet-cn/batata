@@ -18,6 +18,7 @@
 //! gate is saturated the audit event is dropped (logged), matching upstream's
 //! bounded audit queue. Failures are logged, never propagated.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -246,7 +247,7 @@ impl InstanceAuditService {
         let instance_id = match existing {
             Some(i) => i.id,
             None => {
-                let now = chrono::Utc::now().timestamp_millis();
+                let now = batata_common::datetime::Utc::now().timestamp_millis();
                 let created = InstancePersistence::upsert(
                     &self.persistence,
                     crate::persistence::shared::StoredInstance {

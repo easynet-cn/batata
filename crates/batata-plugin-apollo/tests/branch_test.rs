@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -12,7 +13,7 @@ async fn setup(p: &Arc<dyn ApolloPersistenceService>) {
     use batata_plugin_apollo::persistence::shared::StoredCluster;
     use batata_plugin_apollo::persistence::traits::ClusterPersistence;
     // The default cluster row is created together with an app in real flows.
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = batata_common::datetime::Utc::now().timestamp_millis();
     ClusterPersistence::create(
         p,
         StoredCluster {

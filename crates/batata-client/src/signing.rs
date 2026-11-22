@@ -40,7 +40,7 @@ pub fn sign_request(
     secret_key: &str,
     resource: &str,
 ) -> std::collections::HashMap<String, String> {
-    let timestamp = chrono::Utc::now().timestamp_millis();
+    let timestamp = (time::UtcDateTime::now().unix_timestamp_nanos() / 1_000_000) as i64;
     let sign_str = build_sign_string(timestamp, resource);
     let signature = sign_resource(&sign_str, secret_key);
 

@@ -1,3 +1,4 @@
+use batata_common::datetime::NaiveDateTimeExt;
 use std::sync::Arc;
 
 use crate::api::dto::ConsumerTokenDTO;
@@ -63,12 +64,7 @@ impl ConsumerTokenService {
             consumer_id: model.consumer_id,
             token: model.token.clone(),
             data_change_created_by: Some(model.data_change_created_by.clone()),
-            data_change_created_time: Some(
-                model
-                    .data_change_created_time
-                    .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-                    .to_string(),
-            ),
+            data_change_created_time: Some(model.data_change_created_time.format_apollo()),
         }
     }
 }

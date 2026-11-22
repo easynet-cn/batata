@@ -1,6 +1,7 @@
 //! Embedded implementation of GrayReleasePersistence trait
 
 use crate::bincode;
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -156,7 +157,7 @@ impl GrayReleasePersistence for GrayReleaseEmbedded {
         // Update fields
         rule.rules = rules;
         rule.release_id = release_id;
-        rule.data_change_last_time = Some(chrono::Utc::now().timestamp_millis());
+        rule.data_change_last_time = Some(batata_common::datetime::Utc::now().timestamp_millis());
 
         Self::write_raw(&self.db, &rule)
     }

@@ -6,6 +6,7 @@
 
 #![allow(dead_code)]
 
+use batata_common::datetime::DateTimeExt;
 use sea_orm::ConnectionTrait;
 use sea_orm_migration::MigratorTrait;
 
@@ -39,7 +40,7 @@ async fn probe_pg_last_insert_id_and_namespace_create() {
             false.into(),
             0i64.into(),
             "t".into(),
-            chrono::Utc::now().naive_utc().into(),
+            batata_common::datetime::Utc::now().naive_utc().into(),
         ],
     );
     let qr = conn
@@ -53,7 +54,7 @@ async fn probe_pg_last_insert_id_and_namespace_create() {
 
     // Now via the trait implementation (original exec()+find_by_id code).
     let p = SqlApolloPersistence::new(conn);
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = batata_common::datetime::Utc::now().timestamp_millis();
     let cluster = ClusterPersistence::create(
         &p,
         StoredCluster {

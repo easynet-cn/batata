@@ -27,15 +27,18 @@ pub struct Model {
     /// The `rate_limit` field (0 means unlimited).
     pub rate_limit: i32,
     /// The `expires` field (expiry timestamp).
-    pub expires: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub expires: TimeDateTime,
     /// The `last_used_time` field.
-    pub last_used_time: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub last_used_time: Option<TimeDateTime>,
     /// The `last_used_ip` field.
     pub last_used_ip: Option<String>,
     /// The `last_used_user_agent` field.
     pub last_used_user_agent: Option<String>,
     /// The `revoked_at` field.
-    pub revoked_at: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub revoked_at: Option<TimeDateTime>,
     /// The `revoked_by` field.
     pub revoked_by: Option<String>,
     /// The `is_deleted` field.
@@ -45,11 +48,13 @@ pub struct Model {
     /// The `data_change_created_by` field.
     pub data_change_created_by: String,
     /// The `data_change_created_time` field.
-    pub data_change_created_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_created_time: TimeDateTime,
     /// The `data_change_last_modified_by` field.
     pub data_change_last_modified_by: Option<String>,
     /// The `data_change_last_time` field.
-    pub data_change_last_time: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub data_change_last_time: Option<TimeDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

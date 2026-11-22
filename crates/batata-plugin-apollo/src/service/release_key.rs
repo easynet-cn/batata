@@ -1,5 +1,6 @@
 //! Release key generation shared by every Apollo release path.
 
+use batata_common::datetime::DateTimeExt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -74,7 +75,11 @@ pub fn generate_release_key(args: &[&str]) -> String {
     ];
 
     let hex_id: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-    format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), hex_id)
+    format!(
+        "{}-{}",
+        batata_common::datetime::Utc::now().format_compact(),
+        hex_id
+    )
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, NaiveDateTimeExt, Utc};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -1429,10 +1429,10 @@ fn default_mcp_protocol() -> String {
 /// Convert a stored naive timestamp into epoch millis.
 fn parse_millis(value: Option<&String>) -> Option<i64> {
     let raw = value?;
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f") {
+    if let Ok(dt) = batata_common::datetime::parse_naive_str(raw) {
         return Some(dt.and_utc().timestamp_millis());
     }
-    chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
+    batata_common::datetime::parse_naive_str(raw)
         .ok()
         .map(|dt| dt.and_utc().timestamp_millis())
 }

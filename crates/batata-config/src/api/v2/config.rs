@@ -6,6 +6,7 @@
 //! - DELETE /nacos/v2/cs/config - Delete config
 //! - GET /nacos/v2/cs/config/searchDetail - Search config detail
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, post, web};
@@ -496,7 +497,7 @@ pub async fn publish_config(
 
             batata_plugin::global_trace_registry().fire_detached(
                 batata_plugin::TraceEvent::ConfigPublish {
-                    event_time: chrono::Utc::now().timestamp_millis(),
+                    event_time: batata_common::datetime::Utc::now().timestamp_millis(),
                     namespace: namespace_id.to_string(),
                     group: group.clone(),
                     data_id: form.data_id.clone(),
@@ -604,7 +605,7 @@ pub async fn delete_config(
 
             batata_plugin::global_trace_registry().fire_detached(
                 batata_plugin::TraceEvent::ConfigRemove {
-                    event_time: chrono::Utc::now().timestamp_millis(),
+                    event_time: batata_common::datetime::Utc::now().timestamp_millis(),
                     namespace: namespace_id.to_string(),
                     group: group.clone(),
                     data_id: params.data_id.clone(),

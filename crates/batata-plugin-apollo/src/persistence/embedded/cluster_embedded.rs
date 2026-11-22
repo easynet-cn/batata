@@ -1,4 +1,5 @@
 use crate::bincode;
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -71,7 +72,7 @@ impl ClusterEmbedded {
             Some(data) => {
                 let mut cluster: StoredCluster = bincode::deserialize(&data)?;
                 cluster.is_deleted = true;
-                cluster.deleted_at = chrono::Utc::now().timestamp_millis();
+                cluster.deleted_at = batata_common::datetime::Utc::now().timestamp_millis();
                 let bytes = bincode::serialize(&cluster)?;
                 let key = Self::key(&cluster.app_id, &cluster.name);
                 db.put_cf(cf, key.as_bytes(), &bytes)
@@ -145,7 +146,7 @@ impl ClusterPersistence for ClusterEmbedded {
             Some(data) => {
                 let mut cluster: StoredCluster = bincode::deserialize(&data)?;
                 cluster.is_deleted = true;
-                cluster.deleted_at = chrono::Utc::now().timestamp_millis();
+                cluster.deleted_at = batata_common::datetime::Utc::now().timestamp_millis();
                 let bytes = bincode::serialize(&cluster)?;
                 self.db
                     .put_cf(cf, key.as_bytes(), &bytes)

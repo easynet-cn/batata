@@ -53,5 +53,5 @@ moka = { workspace = true }
 # Utils
 md-5 = { workspace = true }
 const-hex = { workspace = true }
-chrono = { workspace = true }
+time = { workspace = true }
 regex = { workspace = true }

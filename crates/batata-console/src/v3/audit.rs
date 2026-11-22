@@ -4,6 +4,8 @@
 //! by querying the config history via the console data source.
 
 use actix_web::{HttpRequest, Responder, Scope, get, web};
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use serde::{Deserialize, Serialize};
 
 use batata_api::model::Page;
@@ -110,15 +112,15 @@ fn map_query_op_type(operation_type: &str) -> Option<&'static str> {
 
 /// Format timestamp (millis since epoch) to a display string
 fn format_timestamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts)
-        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+    batata_common::datetime::from_millis(ts)
+        .map(|dt| dt.format_space())
         .unwrap_or_default()
 }
 
 /// Parse a datetime string to millis since epoch
 fn parse_time_string(s: &str) -> Option<i64> {
     // Try ISO 8601 / common datetime formats
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+    batata_common::datetime::parse_naive_str(s)
         .ok()
         .map(|ndt| ndt.and_utc().timestamp_millis())
         .or_else(|| s.parse::<i64>().ok())
@@ -132,7 +134,7 @@ fn parse_time_string(s: &str) -> Option<i64> {
 /// published before opening the audit page. Treat a second-precision end as
 /// the end of that second; explicit millisecond values pass through unchanged.
 fn parse_end_time_string(s: &str) -> Option<i64> {
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+    batata_common::datetime::parse_naive_str(s)
         .ok()
         .map(|ndt| ndt.and_utc().timestamp_millis() + 999)
         .or_else(|| s.parse::<i64>().ok())
@@ -301,20 +303,14 @@ pub async fn get_audit_stats(req: HttpRequest, data: web::Data<AppState>) -> imp
         .unwrap_or(0);
 
     // Get today's count by filtering from start of today (UTC)
-    let today_start = chrono::Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .map(|ndt| ndt.and_utc().timestamp_millis());
+    let today_start = batata_common::datetime::start_of_day_utc().timestamp_millis();
 
-    let today_count = if let Some(start_ts) = today_start {
-        data.console_datasource
-            .history_search_with_filters("", "", "", None, None, Some(start_ts), None, 1, 1)
-            .await
-            .map(|p| p.total_count)
-            .unwrap_or(0)
-    } else {
-        0
-    };
+    let today_count = data
+        .console_datasource
+        .history_search_with_filters("", "", "", None, None, Some(today_start), None, 1, 1)
+        .await
+        .map(|p| p.total_count)
+        .unwrap_or(0);
 
     let stats = AuditStats {
         total_operations: total,

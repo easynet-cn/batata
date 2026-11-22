@@ -50,7 +50,7 @@ md-5 = { workspace = true }
 const-hex = { workspace = true }
 
 # Time
-chrono = { workspace = true }
+time = { workspace = true }
 
 # Caching
 moka = { workspace = true }

@@ -79,8 +79,8 @@ tower = "0.5"
 http = "1.5"
 
 # Database (supports both MySQL and PostgreSQL)
-sea-orm = { version = "2.0", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
-sea-orm-migration = { version = "2.0", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+sea-orm = { version = "2.0", default-features = false, features = ["macros", "with-json", "with-rust_decimal", "with-uuid", "with-time", "sqlite-use-returning-for-3_35", "stream", "sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+sea-orm-migration = { version = "2.0", default-features = false, features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -116,7 +116,7 @@ thiserror = "2.0"
 reqwest = { version = "0.13", features = ["json", "stream", "query", "form"] }
 
 # Utils
-chrono = "0.4"
+time = { version = "0.3", features = ["std", "formatting", "parsing", "serde-human-readable", "serde-well-known"] }
 uuid = { version = "1.29", features = ["v4"] }
 regex = "1.13"
 base64 = "0.23"

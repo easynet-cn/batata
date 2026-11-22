@@ -2,6 +2,7 @@
 // Provides standalone (single-node) storage without an external database
 
 use crate::bincode;
+use batata_common::datetime::DateTimeExt;
 use md5::Digest;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -355,7 +356,7 @@ impl EmbeddedPersistService {
             (std::hash::Hasher::finish(&hasher) & 0xFFFF) | 1
         });
 
-        let now = chrono::Utc::now().timestamp_millis() as u64;
+        let now = batata_common::datetime::Utc::now().timestamp_millis() as u64;
         // try_update hands back the value the CAS saw, not the one it stored,
         // so the +1 has to be applied here too.
         let prev = LAST_HISTORY_ID
@@ -435,7 +436,7 @@ impl ConfigPersistence for EmbeddedPersistService {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let key = RocksStateMachine::config_key(data_id, group_id, tenant_id);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let md5_val = Self::compute_md5(content);
 
         // Check if config already exists
@@ -582,7 +583,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         .to_string();
 
         let history_id = Self::generate_history_id();
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let history_key =
             RocksStateMachine::config_history_key(data_id, group, namespace_id, history_id);
         let stored_history = batata_consistency::raft::state_machine::StoredConfigHistory {
@@ -656,7 +657,7 @@ impl ConfigPersistence for EmbeddedPersistService {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let key = RocksStateMachine::config_gray_key(data_id, group_id, tenant_id, gray_name);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let md5_val = Self::compute_md5(content);
 
         // CAS check: if cas_md5 provided, verify current gray MD5 matches
@@ -1082,7 +1083,7 @@ impl NamespacePersistence for EmbeddedPersistService {
         desc: &str,
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::namespace_key(namespace_id);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let stored = batata_consistency::raft::state_machine::StoredNamespace {
             namespace_id: namespace_id.to_string(),
             namespace_name: name.to_string(),
@@ -1115,7 +1116,7 @@ impl NamespacePersistence for EmbeddedPersistService {
         };
         let created_time = existing_json["created_time"].as_i64().unwrap_or(0);
 
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let stored = batata_consistency::raft::state_machine::StoredNamespace {
             namespace_id: namespace_id.to_string(),
             namespace_name: name.to_string(),
@@ -1179,7 +1180,7 @@ impl AuthPersistence for EmbeddedPersistService {
         source: &str,
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::user_key(username);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let stored = batata_consistency::raft::state_machine::StoredUser {
             username: username.to_string(),
             password_hash: password_hash.to_string(),
@@ -1201,7 +1202,7 @@ impl AuthPersistence for EmbeddedPersistService {
         password_hash: &str,
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::user_key(username);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
 
         let existing_json = self
             .reader
@@ -1271,7 +1272,7 @@ impl AuthPersistence for EmbeddedPersistService {
 
     async fn role_create(&self, role: &str, username: &str) -> anyhow::Result<()> {
         let key = RocksStateMachine::role_key(role, username);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let stored = batata_consistency::raft::state_machine::StoredRole {
             role: role.to_string(),
             username: username.to_string(),
@@ -1365,7 +1366,7 @@ impl AuthPersistence for EmbeddedPersistService {
         action: &str,
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::permission_key(role, resource, action);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let stored = batata_consistency::raft::state_machine::StoredPermission {
             role: role.to_string(),
             resource: resource.to_string(),

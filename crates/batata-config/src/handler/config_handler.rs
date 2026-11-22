@@ -1,6 +1,7 @@
 // Config module gRPC handlers
 // Implements handlers for configuration management requests
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -828,7 +829,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     let data_id = data_id.to_string();
                     let group = group.to_string();
                     let tenant = tenant.to_string();
-                    let last_modified = chrono::Utc::now().timestamp_millis();
+                    let last_modified = batata_common::datetime::Utc::now().timestamp_millis();
                     let semaphore = CONFIG_PUSH_SEMAPHORE.clone();
                     tokio::spawn(async move {
                         let _permit = semaphore.acquire().await;
@@ -1182,7 +1183,7 @@ impl PayloadHandler for ConfigRemoveHandler {
                     let data_id = data_id.to_string();
                     let group = group.to_string();
                     let tenant = tenant.to_string();
-                    let last_modified = chrono::Utc::now().timestamp_millis();
+                    let last_modified = batata_common::datetime::Utc::now().timestamp_millis();
                     let semaphore = CONFIG_PUSH_SEMAPHORE.clone();
                     tokio::spawn(async move {
                         let _permit = semaphore.acquire().await;

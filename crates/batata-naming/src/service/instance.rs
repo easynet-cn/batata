@@ -1,5 +1,6 @@
 //! Instance CRUD operations: register, deregister, query, heartbeat, health
 
+use batata_common::datetime::DateTimeExt;
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -700,7 +701,7 @@ impl NamingService {
     /// per-shard RwLock — that blocked every naming operation via Distro sync.
     fn update_empty_state(&self, service_key: &str, empty: bool) {
         if empty {
-            let now = chrono::Utc::now().timestamp_millis();
+            let now = batata_common::datetime::Utc::now().timestamp_millis();
             self.service_empty_since
                 .entry(service_key.to_string())
                 .or_insert(now);
@@ -718,7 +719,7 @@ impl NamingService {
     /// re-syncing empty services forever — background work grows without bound and
     /// eventually starves the cluster.
     pub fn clean_empty_services(&self, expired_ms: i64) -> usize {
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
 
         let victims: Vec<String> = self
             .services

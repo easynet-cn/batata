@@ -5,7 +5,7 @@ use crate::persistence::shared::{StoredCommit, StoredItem};
 use crate::persistence::traits::{
     ApolloPersistenceService, CommitPersistence, ItemPersistence, NamespacePersistence,
 };
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 /// Represents the `ItemSetService` entity.
 pub struct ItemSetService {

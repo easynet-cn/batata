@@ -1,8 +1,8 @@
 //! AiResourcePersistence implementation for ExternalDbPersistService
 
 use async_trait::async_trait;
+use batata_common::datetime::{DateTimeExt, Utc};
 use batata_common::model::clamp_page;
-use chrono::Utc;
 use sea_orm::{
     prelude::Expr,
     sea_query::{Asterisk, OnConflict},

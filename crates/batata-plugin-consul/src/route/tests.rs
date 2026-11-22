@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use actix_web::{App, test, web};
@@ -4562,7 +4563,7 @@ async fn test_http_acl_auth_method_secret_redaction() {
 async fn test_http_expired_acl_token_is_denied() {
     let service = AclService::new();
     let expired_secret = "expired-acl-token";
-    let now = chrono::Utc::now();
+    let now = batata_common::datetime::Utc::now();
     let management_policy = service
         .get_policy("global-management")
         .expect("bootstrap management policy");
@@ -4574,7 +4575,7 @@ async fn test_http_expired_acl_token_is_denied() {
             id: management_policy.id,
             name: management_policy.name,
         }],
-        expiration_time: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+        expiration_time: Some((now - batata_common::datetime::Duration::hours(1)).to_rfc3339()),
         create_time: now.to_rfc3339(),
         modify_time: now.to_rfc3339(),
         ..Default::default()

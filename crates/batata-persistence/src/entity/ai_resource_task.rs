@@ -44,9 +44,11 @@ pub struct Model {
     /// Most recent error message.
     pub last_error: Option<String>,
     /// Creation timestamp.
-    pub gmt_create: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub gmt_create: Option<TimeDateTime>,
     /// Last modification timestamp.
-    pub gmt_modified: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub gmt_modified: Option<TimeDateTime>,
 }
 
 /// Relation definitions for the `ai_resource_task` entity.

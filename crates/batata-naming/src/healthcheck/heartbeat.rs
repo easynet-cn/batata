@@ -10,6 +10,7 @@
 use super::config::HealthCheckConfig;
 use super::interceptor::HealthCheckInterceptorChain;
 use crate::service::{NamingService, build_instance_key_parts};
+use batata_common::datetime::DateTimeExt;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,7 +99,7 @@ impl UnhealthyInstanceChecker {
         ephemeral: bool,
     ) {
         let key = Self::make_key(namespace, group_name, service_name, ip, port, cluster_name);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
 
         let entry = HeartbeatEntry {
             namespace: namespace.to_string(),
@@ -172,7 +173,7 @@ impl UnhealthyInstanceChecker {
                 continue;
             }
 
-            let now = chrono::Utc::now().timestamp_millis();
+            let now = batata_common::datetime::Utc::now().timestamp_millis();
             let mut unhealthy_instances = Vec::new();
 
             // Check all tracked instances (only those this node is responsible for)
@@ -349,7 +350,7 @@ impl ExpiredInstanceChecker {
                 continue;
             }
 
-            let now = chrono::Utc::now().timestamp_millis();
+            let now = batata_common::datetime::Utc::now().timestamp_millis();
             let mut expired_instances = Vec::new();
 
             // Check all tracked instances (only those this node is responsible for)
@@ -713,7 +714,7 @@ mod tests {
         let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Simulate instance with recent heartbeat
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         checker.record_heartbeat(
             "test-namespace",
             "test-group",
@@ -853,7 +854,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(600));
 
         let entry = checker.heartbeat_map.iter().next().unwrap();
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let elapsed = now - entry.value().last_heartbeat;
 
         // Verify elapsed time exceeds timeout

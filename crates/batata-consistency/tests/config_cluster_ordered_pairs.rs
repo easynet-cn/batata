@@ -15,6 +15,7 @@
 //! asserts that both paths actually occurred; with three writers and one
 //! leader, a run that only ever took the local path would be a silent gap.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -211,7 +212,7 @@ fn publish_request(data_id: &str, content: &str) -> RaftRequest {
         history: None,
         // Leader wall time at propose time. apply() must never read the local
         // clock: all replicas have to persist byte-identical state.
-        now_ms: chrono::Utc::now().timestamp_millis(),
+        now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
     }))
 }
 

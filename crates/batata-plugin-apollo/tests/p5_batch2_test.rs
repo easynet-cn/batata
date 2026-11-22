@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -32,7 +33,10 @@ async fn p5_batch2_end_to_end_in_process() {
     let (p, _) = spawn_app().await;
 
     // ---- seed via services ----
-    let app_id = format!("b2t-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "b2t-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     AppService::new(p.clone())
         .create(AppDTO {
             app_id: app_id.clone(),

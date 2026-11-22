@@ -1,6 +1,7 @@
 // Core data models and structures
 // This file defines fundamental data structures used throughout the application
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -141,9 +142,11 @@ impl ConnectionMeta {
     /// Record Push Queue Block Times.
     pub fn record_push_queue_block_times(&mut self) {
         if self.first_push_queue_block_time == 0 {
-            self.first_push_queue_block_time = chrono::Utc::now().timestamp_millis();
+            self.first_push_queue_block_time =
+                batata_common::datetime::Utc::now().timestamp_millis();
         } else {
-            self.last_push_queue_block_time = chrono::Utc::now().timestamp_millis();
+            self.last_push_queue_block_time =
+                batata_common::datetime::Utc::now().timestamp_millis();
         }
     }
 

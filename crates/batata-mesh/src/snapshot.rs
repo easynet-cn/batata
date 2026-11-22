@@ -3,6 +3,7 @@
 //! This module provides a snapshot-based cache for xDS resources,
 //! enabling efficient resource management and versioning.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,7 +52,7 @@ impl ResourceSnapshot {
             listeners: HashMap::new(),
             routes: HashMap::new(),
             secrets: HashMap::new(),
-            created_at: chrono::Utc::now().timestamp_millis(),
+            created_at: batata_common::datetime::Utc::now().timestamp_millis(),
         }
     }
 

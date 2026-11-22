@@ -4,6 +4,7 @@
 //! The "default" partition always exists and cannot be deleted.
 //! Delete is soft-delete (sets `DeletedAt` timestamp) rather than hard removal.
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -290,7 +291,7 @@ impl ConsulPartitionService {
         }
 
         // Soft delete: set deleted_at timestamp
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let deleted = Partition {
             deleted_at: Some(now),
             ..existing

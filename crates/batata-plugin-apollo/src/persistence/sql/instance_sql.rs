@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
 };
@@ -31,14 +33,14 @@ impl From<StoredInstance> for apollo_instance::ActiveModel {
             cluster_name: Set(instance.cluster_name),
             data_center: Set(instance.data_center),
             ip: Set(instance.ip),
-            data_change_created_time: Set(chrono::DateTime::from_timestamp_millis(
+            data_change_created_time: Set(batata_common::datetime::from_millis(
                 instance.data_change_created_time,
             )
-            .unwrap_or_default()
+            .unwrap_or_else(batata_common::datetime::default_utc)
             .naive_utc()),
             data_change_last_time: Set(instance
                 .data_change_last_time
-                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
+                .and_then(|t| batata_common::datetime::from_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -75,7 +77,8 @@ impl InstancePersistence for InstanceSqlPersistence {
                 // Update existing instance
                 let mut active_model: apollo_instance::ActiveModel = model.into();
                 active_model.data_center = Set(instance.data_center);
-                active_model.data_change_last_time = Set(Some(chrono::Utc::now().naive_utc()));
+                active_model.data_change_last_time =
+                    Set(Some(batata_common::datetime::Utc::now().naive_utc()));
                 let updated = active_model.update(&self.db).await?;
                 Ok(updated.into())
             }
@@ -114,8 +117,10 @@ impl InstancePersistence for InstanceSqlPersistence {
     }
 
     async fn delete_expired(&self, before_timestamp: i64) -> anyhow::Result<usize> {
-        let before_time =
-            chrono::DateTime::from_timestamp_millis(before_timestamp).unwrap_or_default();
+        let before_time = batata_common::datetime::naive(
+            batata_common::datetime::from_millis(before_timestamp)
+                .unwrap_or_else(batata_common::datetime::default_utc),
+        );
 
         let results = apollo_instance::Entity::find()
             .filter(apollo_instance::Column::DataChangeLastTime.lt(before_time))

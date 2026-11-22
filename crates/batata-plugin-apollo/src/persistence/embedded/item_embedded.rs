@@ -4,7 +4,7 @@ use crate::bincode;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_ITEM;

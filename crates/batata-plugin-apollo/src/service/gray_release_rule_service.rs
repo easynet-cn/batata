@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::api::dto::GrayReleaseRuleDTO;
 use crate::persistence::shared::StoredGrayReleaseRule;
 use crate::persistence::traits::{ApolloPersistenceService, GrayReleasePersistence};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use serde_json::Value;
 
 /// Represents the `GrayReleaseRuleService` entity.
@@ -437,8 +437,7 @@ impl From<StoredGrayReleaseRule> for GrayReleaseRuleDTO {
 }
 
 fn format_timestamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts)
-        .unwrap_or_default()
-        .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-        .to_string()
+    batata_common::datetime::from_millis(ts)
+        .unwrap_or_else(batata_common::datetime::default_utc)
+        .format_apollo()
 }

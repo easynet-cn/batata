@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Cloud native integration plugin for Batata (Kubernetes sync, Prometheus SD)"
 
 [dependencies]
+batata-common = { workspace = true }
 batata-server-common = { workspace = true }
 
 # Web framework
@@ -33,4 +34,4 @@ futures = { workspace = true }
 tracing = { workspace = true }
 
 # Time
-chrono = { workspace = true }
+time = { workspace = true }

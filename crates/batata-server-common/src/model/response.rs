@@ -3,6 +3,7 @@
 //! This module provides common response structures for API responses.
 
 use actix_web::{HttpResponse, HttpResponseBuilder, http::StatusCode};
+use batata_common::datetime::DateTimeExt;
 use serde::{Deserialize, Serialize};
 
 /// Generic result wrapper for API responses
@@ -129,7 +130,7 @@ impl ErrorResult {
     /// Performs the `new` operation.
     pub fn new(status: i32, error: String, message: String, path: String) -> Self {
         ErrorResult {
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: batata_common::datetime::Utc::now().to_rfc3339(),
             status,
             error,
             message,
@@ -140,7 +141,7 @@ impl ErrorResult {
     /// Performs the `forbidden` operation.
     pub fn forbidden(message: &str, path: &str) -> Self {
         ErrorResult {
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: batata_common::datetime::Utc::now().to_rfc3339(),
             status: actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
             error: actix_web::http::StatusCode::FORBIDDEN
                 .canonical_reason()

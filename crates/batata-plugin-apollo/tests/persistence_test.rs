@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -94,7 +95,10 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     // NOTE: `apollo_consumer.app_id` carries a UNIQUE constraint and the
     // consumer is never deleted, so the app id must be unique per run to keep
     // the suite rerunnable against a persistent SQL database.
-    let consumer_app_id = format!("app1-{}", chrono::Utc::now().timestamp_millis());
+    let consumer_app_id = format!(
+        "app1-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let consumer = ConsumerPersistence::create_consumer(
         &p,
         ConsumerDTO {
@@ -161,7 +165,10 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     // Same rerun-safety note as the consumer: (target_id, permission_type) is
     // UNIQUE and the permission is never deleted, so the target must be
     // unique per run.
-    let perm_target = format!("target1-{}", chrono::Utc::now().timestamp_millis());
+    let perm_target = format!(
+        "target1-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let perm = PermissionPersistence::create_permission(&p, 1, &perm_target, "tester")
         .await
         .unwrap();
@@ -309,7 +316,7 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     );
 
     // ---- UserToken ----
-    let expires = chrono::Utc::now() + chrono::Duration::days(30);
+    let expires = batata_common::datetime::Utc::now() + batata_common::datetime::Duration::days(30);
     let ut = UserTokenPersistence::create_user_token(
         &p,
         "apollo",
@@ -387,7 +394,10 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     // ---- Namespace / Item / Release (core) + list_all / list_deleted_items ----
     // `apollo_namespace` is UNIQUE on (app_id, cluster, name, deleted_at) and
     // the namespace is never deleted, so the app id must be unique per run.
-    let ns_app_id = format!("nsapp-{}", chrono::Utc::now().timestamp_millis());
+    let ns_app_id = format!(
+        "nsapp-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let namespace = NamespacePersistence::create(
         &p,
         StoredNamespace {
@@ -449,7 +459,10 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
 
     // `apollo_release.release_key` is UNIQUE and the release is never
     // deleted — timestamp it so reruns against a persistent DB don't collide.
-    let release_key = format!("rk1-{}", chrono::Utc::now().timestamp_millis());
+    let release_key = format!(
+        "rk1-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let release = ReleasePersistence::create(
         &p,
         StoredRelease {
@@ -502,7 +515,9 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
 /// reported "no release at all" and `PUT /openapi/v1/envs/{env}/releases/{id}/rollback`
 /// answered 400 `release not found after raft apply`.
 async fn release_latest_suite(p: Arc<dyn ApolloPersistenceService>) {
-    let stamp = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let stamp = batata_common::datetime::Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or(0);
     let app_id = format!("app-latest-{stamp}");
 
     let mk = |suffix: &str, configurations: &str| StoredRelease {

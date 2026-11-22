@@ -1,5 +1,7 @@
 //! Portal user service.
 
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -130,7 +132,7 @@ impl UserService {
                 current
                     .data_change_created_time
                     .and_utc()
-                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    .to_rfc3339_opts(batata_common::datetime::Precision::Secs, true),
             ),
         };
         let model = UserPersistence::update_user(&self.persistence, username, dto).await?;
@@ -155,7 +157,7 @@ impl UserService {
                 model
                     .data_change_created_time
                     .and_utc()
-                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    .to_rfc3339_opts(batata_common::datetime::Precision::Secs, true),
             ),
         }
     }

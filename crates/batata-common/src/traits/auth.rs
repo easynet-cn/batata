@@ -1,7 +1,7 @@
 //! Authentication and authorization traits and types.
 
-use chrono::{DateTime, Utc};
 use thiserror::Error;
+use time::UtcDateTime;
 
 /// JWT token validation errors
 #[derive(Error, Debug, Clone)]
@@ -14,7 +14,7 @@ pub enum TokenError {
     /// The `TokenExpired` variant.
     TokenExpired {
         /// The `expired_at` field.
-        expired_at: DateTime<Utc>,
+        expired_at: UtcDateTime,
     },
 
     #[error("token is malformed")]
@@ -37,7 +37,7 @@ pub enum TokenError {
     /// The `TokenNotYetValid` variant.
     TokenNotYetValid {
         /// The `valid_from` field.
-        valid_from: DateTime<Utc>,
+        valid_from: UtcDateTime,
     },
 
     #[error("token has been revoked")]
@@ -325,7 +325,7 @@ mod tests {
         assert!(ok.error.is_none());
 
         let fail = AuthCheckResult::fail(AuthError::Token(TokenError::TokenExpired {
-            expired_at: Utc::now(),
+            expired_at: crate::datetime::Utc::now(),
         }));
 
         assert!(!fail.success);

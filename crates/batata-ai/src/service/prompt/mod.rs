@@ -12,6 +12,7 @@
 //! four configs per prompt). The public behaviour is unchanged:
 //! `tests/prompt_persistence.rs` pins it and must still pass.
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use batata_persistence::PersistenceService;
@@ -220,7 +221,7 @@ impl PromptOperationService {
             anyhow::bail!("Template cannot be empty");
         }
 
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let md5 = const_hex::encode(md5::Md5::digest(template.as_bytes()));
 
         // A version cannot be republished.
@@ -660,7 +661,7 @@ impl PromptOperationService {
             anyhow::bail!("Prompt '{}' already has a draft version", prompt_key);
         }
 
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let storage = PromptStorage {
             prompt_key: prompt_key.to_string(),
             template: effective_template.clone(),
@@ -721,7 +722,7 @@ impl PromptOperationService {
             md5: Some(const_hex::encode(md5::Md5::digest(template.as_bytes()))),
             commit_msg: commit_msg.map(|s| s.to_string()),
             src_user: Some(src_user.to_string()),
-            gmt_modified: Some(chrono::Utc::now().timestamp_millis()),
+            gmt_modified: Some(batata_common::datetime::Utc::now().timestamp_millis()),
             variables,
         };
         self.persistence

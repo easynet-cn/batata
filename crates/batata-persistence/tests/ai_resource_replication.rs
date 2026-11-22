@@ -8,6 +8,7 @@
 //! overwrite a follower's local writes with the leader's. These tests pin the
 //! replicated behaviour down against an actual cluster rather than a mock.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::BTreeMap;
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -565,7 +566,7 @@ async fn two_nodes_cannot_both_claim_one_index_task() {
         .expect("initialize cluster");
     let _leader_idx = wait_for_leader(&nodes).await;
 
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = batata_common::datetime::Utc::now().timestamp_millis();
     nodes[0]
         .store
         .task_upsert(&index_task("shared-task", now - 1_000))
@@ -650,7 +651,7 @@ async fn a_renewed_lease_replicates_and_a_lapsed_one_cannot_be_renewed() {
         .expect("initialize cluster");
     let _leader_idx = wait_for_leader(&nodes).await;
 
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = batata_common::datetime::Utc::now().timestamp_millis();
     nodes[0]
         .store
         .task_upsert(&index_task("renewed-task", now - 1_000))

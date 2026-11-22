@@ -1,5 +1,7 @@
 //! Distributed audit-log service.
 
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use std::sync::Arc;
 
 use crate::api::dto::{

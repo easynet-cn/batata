@@ -2313,6 +2313,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
 mod tests {
     use super::*;
     use crate::raft::reader::RocksDbReader;
+    use batata_common::datetime::DateTimeExt;
 
     /// Fixed leader clock for lock tests: assertions must not depend on the
     /// wall clock, and two replicas applying the same entry must see the
@@ -3176,7 +3177,7 @@ mod tests {
 
         // Write a legacy-shaped value directly (no lock_count field).
         let key = RocksStateMachine::lock_key("public", "legacy");
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let legacy = serde_json::json!({
             "namespace": "public",
             "name": "legacy",

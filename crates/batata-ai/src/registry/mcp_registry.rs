@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use actix_web::{HttpResponse, get, web};
-use chrono::{DateTime, Utc};
+use batata_common::datetime::DateTimeExt;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{McpServer, McpServerType};
@@ -168,7 +168,7 @@ pub struct GetServerQuery {
 // =============================================================================
 
 fn millis_to_rfc3339(millis: i64) -> Option<String> {
-    DateTime::<Utc>::from_timestamp_millis(millis).map(|dt| dt.to_rfc3339())
+    batata_common::datetime::from_millis(millis).map(|dt| dt.to_rfc3339())
 }
 
 fn mcp_server_type_to_remote_type(server_type: McpServerType) -> &'static str {

@@ -20,6 +20,7 @@
 //!    (`apollo.access-key.auth-time-diff-tolerance`, override via env).
 //! 4. Requests to unprotected paths pass through untouched.
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use actix_web::HttpRequest;
@@ -94,7 +95,7 @@ pub async fn authenticate(
         None => return Err(unauthorized("Unauthorized")),
     };
 
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = batata_common::datetime::Utc::now().timestamp_millis();
     if (now - ts).abs() >= max_skew_ms() {
         return Err(unauthorized("Unauthorized"));
     }

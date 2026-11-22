@@ -10,7 +10,7 @@ use crate::persistence::traits::{
     ReleasePersistence,
 };
 use crate::service::release_message_service::ReleaseMessageService;
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, NaiveDateTimeExt, Utc};
 
 /// Represents the `ReleaseService` entity.
 pub struct ReleaseService {
@@ -163,7 +163,7 @@ impl ReleaseService {
                     expected,
                     format!(
                         "{}-master-normal-release-merge-to-gray",
-                        Utc::now().format("%Y%m%d%H%M%S")
+                        Utc::now().format_compact()
                     ),
                     operator,
                     5,
@@ -561,7 +561,7 @@ impl ReleaseService {
             configurations,
             format!(
                 "{}-master-rollback-merge-to-gray",
-                Utc::now().format("%Y%m%d%H%M%S")
+                Utc::now().format_compact()
             ),
             operator,
             operation,
@@ -745,11 +745,7 @@ impl ReleaseService {
                 operation: m.operation,
                 operation_context: m.operation_context,
                 data_change_created_by: Some(m.data_change_created_by),
-                data_change_created_time: Some(
-                    m.data_change_created_time
-                        .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-                        .to_string(),
-                ),
+                data_change_created_time: Some(m.data_change_created_time.format_apollo()),
             })
             .collect();
         Ok((dtos, total))
@@ -805,8 +801,7 @@ impl From<StoredRelease> for ReleaseDTO {
 }
 
 fn format_timestamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts)
-        .unwrap_or_default()
-        .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-        .to_string()
+    batata_common::datetime::from_millis(ts)
+        .unwrap_or_else(batata_common::datetime::default_utc)
+        .format_apollo()
 }

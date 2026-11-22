@@ -17,6 +17,7 @@
 //! payload is intentionally opaque at the archive layer — the backing
 //! Raft implementation decides what goes inside.
 
+use batata_common::datetime::DateTimeExt;
 use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
@@ -124,7 +125,7 @@ fn append_file<W: Write>(
     let mut header = tar::Header::new_gnu();
     header.set_size(data.len() as u64);
     header.set_mode(0o600);
-    header.set_mtime(chrono::Utc::now().timestamp() as u64);
+    header.set_mtime(batata_common::datetime::Utc::now().timestamp() as u64);
     header.set_cksum();
     builder.append_data(&mut header, name, data)
 }

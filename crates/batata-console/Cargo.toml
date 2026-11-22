@@ -41,7 +41,7 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 
 # Time
-chrono = { workspace = true }
+time = { workspace = true }
 
 # UUID
 uuid = { workspace = true }

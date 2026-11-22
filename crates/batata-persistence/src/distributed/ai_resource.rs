@@ -11,6 +11,7 @@
 // and applied on every node.
 
 use async_trait::async_trait;
+use batata_common::datetime::DateTimeExt;
 
 use batata_consistency::raft::state_machine::{
     CF_AI_RESOURCE, CF_AI_RESOURCE_SEARCH_CHUNK, CF_AI_RESOURCE_SEARCH_DOCUMENT,
@@ -54,7 +55,7 @@ fn cas_matched(response: &RaftResponse) -> bool {
 
 /// Current time as an RFC 3339 string, matching the other AI writers.
 fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339()
+    batata_common::datetime::Utc::now().to_rfc3339()
 }
 
 impl DistributedPersistService {
@@ -482,7 +483,7 @@ impl AiResourcePersistence for DistributedPersistService {
         let id = self.next_ai_resource_id().await?;
         let mut info = resource.clone();
         info.id = id;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         if info.gmt_create.is_none() {
             info.gmt_create = Some(now.clone());
         }
@@ -511,7 +512,7 @@ impl AiResourcePersistence for DistributedPersistService {
                 }
                 info.version_info = Some(version_info.to_string());
                 info.meta_version = new_meta_version;
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info).await?;
                 Ok(true)
             }
@@ -530,7 +531,7 @@ impl AiResourcePersistence for DistributedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.biz_tags = Some(biz_tags.to_string());
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -553,7 +554,7 @@ impl AiResourcePersistence for DistributedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.description = Some(description.to_string());
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -576,7 +577,7 @@ impl AiResourcePersistence for DistributedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.status = Some(status.to_string());
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -599,7 +600,7 @@ impl AiResourcePersistence for DistributedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.scope = scope.to_string();
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -622,7 +623,7 @@ impl AiResourcePersistence for DistributedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.download_count += increment;
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -741,7 +742,7 @@ impl AiResourcePersistence for DistributedPersistService {
         let id = self.next_ai_resource_version_id().await?;
         let mut info = version.clone();
         info.id = id;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         if info.gmt_create.is_none() {
             info.gmt_create = Some(now.clone());
         }
@@ -770,7 +771,7 @@ impl AiResourcePersistence for DistributedPersistService {
         match self.get_ai_resource_version(&key)? {
             Some(mut info) => {
                 info.status = status.to_string();
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource_version(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -799,7 +800,7 @@ impl AiResourcePersistence for DistributedPersistService {
                 if let Some(desc) = description {
                     info.description = Some(desc.to_string());
                 }
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource_version(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -824,7 +825,7 @@ impl AiResourcePersistence for DistributedPersistService {
         match self.get_ai_resource_version(&key)? {
             Some(mut info) => {
                 info.download_count += increment;
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource_version(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
@@ -1024,7 +1025,7 @@ impl AiResourcePersistence for DistributedPersistService {
             &document.resource_name,
             &document.resource_version,
         );
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
 
         match self.get_search_document(&key)? {
             Some(existing) => {
@@ -1109,7 +1110,7 @@ impl AiResourcePersistence for DistributedPersistService {
             )
             .await?;
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let mut ops = Vec::with_capacity(chunks.len() + 1);
         ops.push(Self::delete_prefix_op(CF_AI_RESOURCE_SEARCH_CHUNK, &prefix));
         for (chunk, id) in chunks.iter().zip(ids) {
@@ -1178,7 +1179,7 @@ impl AiResourcePersistence for DistributedPersistService {
     // ========================================================================
 
     async fn task_upsert(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let mut stored = task.clone();
         match self.get_task(&task.task_key)? {
             Some(existing) => {

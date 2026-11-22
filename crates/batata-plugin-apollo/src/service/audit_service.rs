@@ -1,3 +1,4 @@
+use batata_common::datetime::NaiveDateTimeExt;
 use std::sync::Arc;
 
 use crate::api::dto::AuditDTO;
@@ -47,10 +48,7 @@ impl AuditService {
             entity_name: model.entity_name.clone(),
             entity_id: model.entity_id.clone(),
             op_name: model.op_name.clone(),
-            op_time: model
-                .op_time
-                .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-                .to_string(),
+            op_time: model.op_time.format_apollo(),
             op_by: model.op_by.clone(),
             op_client_ip: model.op_client_ip.clone(),
             detail: model.detail.clone(),

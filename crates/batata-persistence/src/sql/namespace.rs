@@ -1,5 +1,6 @@
 //! NamespacePersistence implementation for ExternalDbPersistService
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -115,8 +116,8 @@ impl NamespacePersistence for ExternalDbPersistService {
             tenant_desc: Set(Some(desc.to_string())),
             kp: Set(DEFAULT_KP.to_string()),
             create_source: Set(Some(DEFAULT_CREATE_SOURCE.to_string())),
-            gmt_create: Set(chrono::Utc::now().timestamp_millis()),
-            gmt_modified: Set(chrono::Utc::now().timestamp_millis()),
+            gmt_create: Set(batata_common::datetime::Utc::now().timestamp_millis()),
+            gmt_modified: Set(batata_common::datetime::Utc::now().timestamp_millis()),
             ..Default::default()
         };
 
@@ -139,7 +140,7 @@ impl NamespacePersistence for ExternalDbPersistService {
             active.tenant_name.set_if_not_equals(Some(name.to_string()));
             active.tenant_desc.set_if_not_equals(Some(desc.to_string()));
             if active.is_changed() {
-                active.gmt_modified = Set(chrono::Utc::now().timestamp_millis());
+                active.gmt_modified = Set(batata_common::datetime::Utc::now().timestamp_millis());
                 active.update(&self.db).await?;
             }
             Ok(true)

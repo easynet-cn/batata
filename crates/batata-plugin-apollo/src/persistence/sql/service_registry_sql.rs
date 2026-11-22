@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use sea_orm::{ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::entity::apollo_service_registry;
@@ -33,7 +35,7 @@ fn to_entry(m: apollo_service_registry::Model) -> ServiceRegistryEntry {
 #[async_trait]
 impl ServiceRegistryPersistence for ServiceRegistrySqlPersistence {
     async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().naive_utc();
+        let now = batata_common::datetime::Utc::now().naive_utc();
         let existing = apollo_service_registry::Entity::find()
             .filter(apollo_service_registry::Column::ServiceName.eq(service_name))
             .filter(apollo_service_registry::Column::Uri.eq(uri))
@@ -81,7 +83,8 @@ impl ServiceRegistryPersistence for ServiceRegistrySqlPersistence {
         window_secs: i64,
     ) -> anyhow::Result<Vec<ServiceRegistryEntry>> {
         use sea_orm::QueryOrder;
-        let cutoff = chrono::Utc::now() - chrono::Duration::seconds(window_secs);
+        let cutoff = batata_common::datetime::Utc::now()
+            - batata_common::datetime::Duration::seconds(window_secs);
         let rows = apollo_service_registry::Entity::find()
             .filter(apollo_service_registry::Column::ServiceName.eq(service_name))
             .filter(

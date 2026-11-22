@@ -4,7 +4,7 @@
 //! and connection authorization endpoints.
 
 use actix_web::{HttpRequest, HttpResponse, web};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use dashmap::DashMap;
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
@@ -404,7 +404,8 @@ const ROCKS_KEY_ACTIVE_ROOT: &str = "__active_root__";
 const CA_KEY_ID_STATE_KEY: &str = "ca_key_id";
 /// Default leaf certificate lifetime used when the CA config does not carry
 /// a parseable `LeafCertTTL`.
-const DEFAULT_LEAF_CERT_TTL: chrono::Duration = chrono::Duration::hours(72);
+const DEFAULT_LEAF_CERT_TTL: batata_common::datetime::Duration =
+    batata_common::datetime::Duration::hours(72);
 /// Fraction of the leaf lifetime after which a cached leaf is rotated.
 const LEAF_SOFT_EXPIRY_RATIO: f64 = 0.6;
 
@@ -430,7 +431,7 @@ struct CachedLeaf {
     /// The last generated leaf response.
     leaf: LeafCert,
     /// Moment after which the leaf must be regenerated (60% of its TTL).
-    soft_expiry: chrono::DateTime<Utc>,
+    soft_expiry: batata_common::datetime::DateTimeUtc,
     /// Fingerprint of the CA key that signed this leaf. A changed CA key
     /// invalidates the cached leaf immediately.
     ca_key_id: String,
@@ -974,7 +975,7 @@ impl ConsulConnectCAService {
 
     /// Parse a Consul-style duration string (e.g. "72h", "30m", "1h30m").
     /// Returns `None` when the string has no recognised time component.
-    fn parse_duration(value: &str) -> Option<chrono::Duration> {
+    fn parse_duration(value: &str) -> Option<batata_common::datetime::Duration> {
         let bytes = value.as_bytes();
         let mut total_seconds: i64 = 0;
         let mut i = 0;
@@ -1008,11 +1009,11 @@ impl ConsulConnectCAService {
             i += 1;
         }
 
-        found.then(|| chrono::Duration::seconds(total_seconds))
+        found.then(|| batata_common::datetime::Duration::seconds(total_seconds))
     }
 
     /// Effective leaf lifetime from the CA configuration.
-    fn leaf_cert_ttl(&self) -> chrono::Duration {
+    fn leaf_cert_ttl(&self) -> batata_common::datetime::Duration {
         let config = self.ca_config.read().unwrap_or_else(|e| e.into_inner());
         config
             .config
@@ -1062,8 +1063,8 @@ impl ConsulConnectCAService {
             modify_index: index,
         };
         let soft_expiry = now
-            + chrono::Duration::milliseconds(
-                (ttl.num_milliseconds() as f64 * LEAF_SOFT_EXPIRY_RATIO) as i64,
+            + batata_common::datetime::Duration::milliseconds(
+                (ttl.whole_milliseconds() as f64 * LEAF_SOFT_EXPIRY_RATIO) as i64,
             );
         self.leaf_cache.insert(
             service.to_string(),
@@ -3594,7 +3595,7 @@ mod tests {
             .leaf_cache
             .get_mut("web")
             .expect("cached leaf")
-            .soft_expiry = Utc::now() - chrono::Duration::seconds(1);
+            .soft_expiry = Utc::now() - batata_common::datetime::Duration::seconds(1);
         let rotated = service.get_leaf_cert("web");
         assert_ne!(
             rotated.cert_pem, first.cert_pem,

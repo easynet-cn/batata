@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::api::dto::CommitDTO;
 use crate::persistence::shared::StoredCommit;
 use crate::persistence::traits::{ApolloPersistenceService, CommitPersistence};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 /// Represents the `CommitService` entity.
 pub struct CommitService {
@@ -105,8 +105,7 @@ impl From<StoredCommit> for CommitDTO {
 }
 
 fn format_timestamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts)
-        .unwrap_or_default()
-        .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-        .to_string()
+    batata_common::datetime::from_millis(ts)
+        .unwrap_or_else(batata_common::datetime::default_utc)
+        .format_apollo()
 }

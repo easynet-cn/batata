@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use dashmap::DashMap;
 use futures::TryStreamExt;
 use k8s_openapi::api::core::v1::{Endpoints, Pod, Service};

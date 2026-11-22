@@ -1,5 +1,7 @@
 //! Audit services for portal user tokens and open-platform consumers.
 
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use std::sync::Arc;
 
 use crate::api::dto::{ConsumerAuditDTO, NewConsumerAudit, NewUserTokenAudit, UserTokenAuditDTO};

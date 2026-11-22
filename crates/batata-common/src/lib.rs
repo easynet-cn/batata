@@ -10,6 +10,7 @@
 pub mod ai_trace;
 pub mod bincode;
 pub mod crypto;
+pub mod datetime;
 pub mod error;
 /// Shared macros used across Batata components.
 #[macro_use]

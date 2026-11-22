@@ -8,6 +8,8 @@
 //! and is never stored, so a leaked database cannot be used to impersonate a
 //! user. batata keeps the same contract.
 
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -39,7 +41,7 @@ impl UserTokenService {
         user_id: &str,
         name: &str,
         created_by: &str,
-        expires: Option<chrono::DateTime<chrono::Utc>>,
+        expires: Option<batata_common::datetime::DateTimeUtc>,
     ) -> anyhow::Result<(String, crate::entity::apollo_user_token::Model)> {
         self.create_with_options(user_id, name, created_by, expires, "{}", 0)
             .await
@@ -51,7 +53,7 @@ impl UserTokenService {
         user_id: &str,
         name: &str,
         created_by: &str,
-        expires: Option<chrono::DateTime<chrono::Utc>>,
+        expires: Option<batata_common::datetime::DateTimeUtc>,
         scopes: &str,
     ) -> anyhow::Result<(String, crate::entity::apollo_user_token::Model)> {
         self.create_with_options(user_id, name, created_by, expires, scopes, 0)
@@ -65,7 +67,7 @@ impl UserTokenService {
         user_id: &str,
         name: &str,
         created_by: &str,
-        expires: Option<chrono::DateTime<chrono::Utc>>,
+        expires: Option<batata_common::datetime::DateTimeUtc>,
         scopes: &str,
         rate_limit: i32,
     ) -> anyhow::Result<(String, crate::entity::apollo_user_token::Model)> {
@@ -89,7 +91,9 @@ impl UserTokenService {
         );
         let token = format!("{}{}_{}", TOKEN_PREFIX, prefix, secret);
         let hash = sha256_hex(&token);
-        let expires = expires.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(365));
+        let expires = expires.unwrap_or_else(|| {
+            batata_common::datetime::Utc::now() + batata_common::datetime::Duration::days(365)
+        });
         let model = <dyn UserTokenPersistence>::create_user_token(
             &*self.persistence,
             user_id,
@@ -137,7 +141,7 @@ impl UserTokenService {
         {
             return Ok(None);
         }
-        if model.expires.and_utc().timestamp() < chrono::Utc::now().timestamp() {
+        if model.expires.and_utc().timestamp() < batata_common::datetime::Utc::now().timestamp() {
             return Ok(None);
         }
         Ok(Some(model))
@@ -155,7 +159,7 @@ impl UserTokenService {
         last_used_ip: Option<&str>,
         last_used_user_agent: Option<&str>,
     ) {
-        let now = chrono::Utc::now().naive_utc();
+        let now = batata_common::datetime::Utc::now().naive_utc();
         if let Err(error) = <dyn UserTokenPersistence>::touch_user_token(
             &*self.persistence,
             model.id,

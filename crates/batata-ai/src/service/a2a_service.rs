@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;

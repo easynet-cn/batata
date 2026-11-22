@@ -13,17 +13,20 @@ pub struct Model {
     /// The `op_name` field.
     pub op_name: String,
     /// The `op_time` field.
-    pub op_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub op_time: TimeDateTime,
     /// The `op_by` field.
     pub op_by: String,
     /// The `data_change_created_by` field.
     pub data_change_created_by: String,
     /// The `data_change_created_time` field.
-    pub data_change_created_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_created_time: TimeDateTime,
     /// The `data_change_last_modified_by` field.
     pub data_change_last_modified_by: Option<String>,
     /// The `data_change_last_time` field.
-    pub data_change_last_time: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub data_change_last_time: Option<TimeDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

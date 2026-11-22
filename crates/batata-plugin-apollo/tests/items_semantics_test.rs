@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -73,7 +74,10 @@ async fn seed(p: Arc<dyn ApolloPersistenceService>, app_id: &str, ns: &str) {
 #[actix_web::test]
 async fn item006_deleted_items_are_scoped_to_latest_release() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("del-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "del-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let ns = "nsd";
     seed(p.clone(), &app_id, ns).await;
 
@@ -144,7 +148,10 @@ async fn item006_deleted_items_are_scoped_to_latest_release() {
 #[actix_web::test]
 async fn item008_encoded_key_read_uses_canonical_path() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("enc-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "enc-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let ns = "nse";
     seed(p.clone(), &app_id, ns).await;
 
@@ -198,7 +205,10 @@ async fn item008_encoded_key_read_uses_canonical_path() {
 #[actix_web::test]
 async fn item009_items_with_page_returns_page_dto_and_slices() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("page-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "page-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let ns = "nsp";
     seed(p.clone(), &app_id, ns).await;
 
@@ -264,7 +274,10 @@ async fn item009_items_with_page_returns_page_dto_and_slices() {
 #[actix_web::test]
 async fn item011_key_and_value_search_returns_page_dto() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("srch-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "srch-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let ns = "nss";
     seed(p.clone(), &app_id, ns).await;
 

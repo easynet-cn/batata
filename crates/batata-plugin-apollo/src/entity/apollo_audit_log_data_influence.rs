@@ -27,11 +27,13 @@ pub struct Model {
     /// Creator of the row.
     pub data_change_created_by: Option<String>,
     /// Creation timestamp.
-    pub data_change_created_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_created_time: TimeDateTime,
     /// Last modifier of the row.
     pub data_change_last_modified_by: String,
     /// Last update timestamp.
-    pub data_change_last_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_last_time: TimeDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

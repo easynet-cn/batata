@@ -1,6 +1,7 @@
 // Cluster gRPC client for inter-node communication
 // Provides methods to communicate with other cluster nodes via gRPC
 
+use batata_common::datetime::DateTimeExt;
 use std::{
     path::PathBuf,
     sync::{
@@ -194,8 +195,10 @@ pub struct ClusterConnection {
 impl ClusterConnection {
     /// Update the last used timestamp (lock-free)
     pub fn update_last_used(&self) {
-        self.last_used
-            .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+        self.last_used.store(
+            batata_common::datetime::Utc::now().timestamp_millis(),
+            Ordering::Relaxed,
+        );
     }
 
     /// Get the last used timestamp (lock-free)
@@ -327,8 +330,8 @@ impl ClusterClientManager {
             address: address.to_string(),
             grpc_address,
             client,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            last_used: AtomicI64::new(chrono::Utc::now().timestamp_millis()),
+            created_at: batata_common::datetime::Utc::now().timestamp_millis(),
+            last_used: AtomicI64::new(batata_common::datetime::Utc::now().timestamp_millis()),
         });
 
         self.connections
@@ -542,7 +545,7 @@ impl ClusterClientManager {
     /// Clean up idle connections that haven't been used for longer than idle_timeout
     /// This is now lock-free and doesn't require async
     pub fn cleanup_idle_connections(&self) -> usize {
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         let idle_timeout_ms = self.config.idle_timeout.as_millis() as i64;
         let mut removed = 0;
 

@@ -3,6 +3,7 @@
 //! The Distro protocol is used to sync ephemeral data (like service instances) across cluster nodes.
 //! This is the AP (Availability, Partition tolerance) mode in Batata (Nacos-compatible), used for ephemeral instances.
 
+use batata_common::datetime::DateTimeExt;
 use std::{
     sync::{
         Arc,
@@ -248,7 +249,7 @@ impl DistroData {
             data_type,
             key,
             content,
-            version: chrono::Utc::now().timestamp_millis(),
+            version: batata_common::datetime::Utc::now().timestamp_millis(),
             source,
         }
     }
@@ -844,7 +845,7 @@ impl DistroProtocol {
     /// - Local datacenter members are synced immediately (with normal sync delay)
     /// - Remote datacenter members are synced with cross-DC delay
     pub async fn sync_data(&self, data_type: DistroDataType, key: &str) {
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
 
         if let Some(ref dc_manager) = self.datacenter_manager {
             // Datacenter-aware sync: local first, then cross-DC with delay
@@ -1114,7 +1115,7 @@ impl DistroProtocol {
                     }
                 }
 
-                let now = chrono::Utc::now().timestamp_millis();
+                let now = batata_common::datetime::Utc::now().timestamp_millis();
 
                 // Atomically claim ready tasks. A concurrent sync_data()/retry
                 // can replace a task with a newer scheduled_time between the
@@ -1355,7 +1356,7 @@ impl DistroProtocol {
                     }
 
                     // Collect results from all parallel verify requests
-                    let now = chrono::Utc::now().timestamp_millis();
+                    let now = batata_common::datetime::Utc::now().timestamp_millis();
                     for handle in handles {
                         match handle.await {
                             Ok(Some((addr, dt, keys_need_sync))) => {

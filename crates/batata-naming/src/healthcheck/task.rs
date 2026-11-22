@@ -10,6 +10,7 @@ use super::config::HealthCheckConfig;
 use super::processor::{HealthCheckProcessor, HealthCheckResult, HealthCheckType};
 use crate::model::Instance;
 use crate::service::{ClusterConfig, NamingService};
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -121,7 +122,7 @@ impl HealthCheckTask {
             check_rt_worst: Duration::ZERO,
             check_rt_last: Duration::ZERO,
             check_rt_last_last: Duration::ZERO,
-            start_time: chrono::Utc::now().timestamp_millis(),
+            start_time: batata_common::datetime::Utc::now().timestamp_millis(),
             consecutive_failures: 0,
             healthy: true,
             check_type,

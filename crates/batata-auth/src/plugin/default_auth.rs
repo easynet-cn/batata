@@ -64,7 +64,7 @@ impl DefaultAuthPlugin {
             jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
                 // Estimate expired_at from current time + token cache delay
                 TokenError::TokenExpired {
-                    expired_at: chrono::Utc::now(),
+                    expired_at: batata_common::datetime::Utc::now(),
                 }
             }
             jsonwebtoken::errors::ErrorKind::InvalidToken => TokenError::TokenMalformed,
@@ -72,7 +72,7 @@ impl DefaultAuthPlugin {
             jsonwebtoken::errors::ErrorKind::InvalidAudience => TokenError::TokenAudienceMismatch,
             jsonwebtoken::errors::ErrorKind::InvalidIssuer => TokenError::TokenIssuerMismatch,
             jsonwebtoken::errors::ErrorKind::ImmatureSignature => TokenError::TokenNotYetValid {
-                valid_from: chrono::Utc::now(),
+                valid_from: batata_common::datetime::Utc::now(),
             },
             _ => TokenError::DecodeError(e.to_string()),
         }

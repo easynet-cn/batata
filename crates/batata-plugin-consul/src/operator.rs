@@ -12,6 +12,7 @@
 // - GET/POST/PUT/DELETE /v1/operator/keyring - Keyring management
 
 use actix_web::{HttpRequest, HttpResponse, web};
+use batata_common::datetime::DateTimeExt;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -511,7 +512,7 @@ impl ConsulOperatorService {
                     last_index: current_index,
                     healthy: is_healthy,
                     voter: true,
-                    stable_since: chrono::Utc::now().to_rfc3339(),
+                    stable_since: batata_common::datetime::Utc::now().to_rfc3339(),
                 }
             })
             .collect();

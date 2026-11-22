@@ -539,7 +539,7 @@ impl<T: ApolloPersistenceService + ?Sized> UserTokenPersistence for Arc<T> {
         token_hash: &str,
         scopes: Option<&str>,
         rate_limit: i32,
-        expires: chrono::DateTime<chrono::Utc>,
+        expires: batata_common::datetime::DateTimeUtc,
         created_by: &str,
     ) -> anyhow::Result<crate::entity::apollo_user_token::Model> {
         UserTokenPersistence::create_user_token(
@@ -558,7 +558,7 @@ impl<T: ApolloPersistenceService + ?Sized> UserTokenPersistence for Arc<T> {
     async fn touch_user_token(
         &self,
         id: i64,
-        last_used_time: chrono::NaiveDateTime,
+        last_used_time: batata_common::datetime::NaiveDateTime,
         last_used_ip: Option<&str>,
         last_used_user_agent: Option<&str>,
         operator: &str,

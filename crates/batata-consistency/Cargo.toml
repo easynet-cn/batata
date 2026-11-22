@@ -41,7 +41,7 @@ metrics = { workspace = true }
 anyhow = { workspace = true }
 
 # Time
-chrono = { workspace = true }
+time = { workspace = true }
 
 # Hashing
 md-5 = { workspace = true }

@@ -19,9 +19,11 @@ pub struct Model {
     /// The `metadata` field.
     pub metadata: Option<String>,
     /// The `data_change_created_time` field.
-    pub data_change_created_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_created_time: TimeDateTime,
     /// The `data_change_last_time` field.
-    pub data_change_last_time: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub data_change_last_time: Option<TimeDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

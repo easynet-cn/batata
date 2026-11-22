@@ -58,7 +58,7 @@ rocksdb = { workspace = true }
 moka = { workspace = true }
 
 # Time
-chrono = { workspace = true }
+time = { workspace = true }
 
 # UUID
 uuid = { workspace = true }

@@ -1,5 +1,7 @@
 //! ConfigPersistence implementation for ExternalDbPersistService
 
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use md5::Digest;
 use std::collections::HashMap;
 
@@ -109,12 +111,12 @@ fn config_entity_to_storage(model: config_info::Model, tags: String) -> ConfigSt
         src_ip: model.src_ip.clone().unwrap_or_default(),
         created_time: model
             .gmt_create
-            .unwrap_or_default()
+            .unwrap_or_else(batata_common::datetime::default_naive)
             .and_utc()
             .timestamp_millis(),
         modified_time: model
             .gmt_modified
-            .unwrap_or_default()
+            .unwrap_or_else(batata_common::datetime::default_naive)
             .and_utc()
             .timestamp_millis(),
     }
@@ -286,7 +288,7 @@ impl ConfigPersistence for ExternalDbPersistService {
     ) -> anyhow::Result<bool> {
         let md5_hash = const_hex::encode(md5::Md5::digest(content));
         let tags = normalize_tags(config_tags);
-        let now = chrono::Utc::now().naive_utc();
+        let now = batata_common::datetime::Utc::now().naive_utc();
 
         // Start transaction BEFORE reading so the CAS check and UPDATE are
         // atomic — prevents TOCTOU race where two concurrent requests both
@@ -548,7 +550,7 @@ impl ConfigPersistence for ExternalDbPersistService {
 
             // Record history
             let ext_info = build_ext_info(&tags, &entity);
-            let now = chrono::Utc::now().naive_utc();
+            let now = batata_common::datetime::Utc::now().naive_utc();
             let his = his_config_info::ActiveModel {
                 id: Set(entity.id),
                 nid: NotSet,
@@ -621,7 +623,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
         let md5_hash = const_hex::encode(md5::Md5::digest(content));
-        let now = chrono::Utc::now().naive_utc();
+        let now = batata_common::datetime::Utc::now().naive_utc();
 
         let existing = config_info_gray::Entity::find()
             .filter(config_info_gray::Column::DataId.eq(data_id))
@@ -763,7 +765,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         }
 
         let tx = self.db.begin().await?;
-        let now = chrono::Utc::now().naive_utc();
+        let now = batata_common::datetime::Utc::now().naive_utc();
 
         // Bulk fetch all entities in a single query instead of N individual queries
         let entities: Vec<config_info::Model> = config_info::Entity::find()
@@ -951,18 +953,18 @@ impl ConfigPersistence for ExternalDbPersistService {
             select = select.filter(his_config_info::Column::SrcUser.contains(user));
         }
         if let Some(start) = start_time
-            && let Some(dt) = chrono::DateTime::from_timestamp_millis(start)
+            && let Some(dt) = batata_common::datetime::from_millis(start)
         {
             select = select.filter(his_config_info::Column::GmtModified.gte(dt.naive_utc()));
         }
         if let Some(end) = end_time
-            && let Some(dt) = chrono::DateTime::from_timestamp_millis(end)
+            && let Some(dt) = batata_common::datetime::from_millis(end)
         {
             // Include records up to the end of the second (whole-second boundaries
             // would otherwise exclude sub-second records created at the boundary).
             select = select.filter(
                 his_config_info::Column::GmtModified
-                    .lte(dt.naive_utc() + chrono::Duration::seconds(1)),
+                    .lte(dt.naive_utc() + batata_common::datetime::Duration::seconds(1)),
             );
         }
 

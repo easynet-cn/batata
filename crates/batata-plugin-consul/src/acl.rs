@@ -2,6 +2,7 @@
 // Provides token-based authentication and authorization for Consul API endpoints
 // Supports both in-memory storage and persistent storage via ConfigService
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -575,8 +576,8 @@ query_prefix "" { policy = "write" }
 "#
             .to_string(),
             datacenters: None,
-            create_time: chrono::Utc::now().to_rfc3339(),
-            modify_time: chrono::Utc::now().to_rfc3339(),
+            create_time: batata_common::datetime::Utc::now().to_rfc3339(),
+            modify_time: batata_common::datetime::Utc::now().to_rfc3339(),
         };
         self.store.put_policy(&mgmt_policy);
 
@@ -601,8 +602,8 @@ query_prefix "" { policy = "write" }
             local: false,
             expiration_time: None,
             expiration_ttl: None,
-            create_time: chrono::Utc::now().to_rfc3339(),
-            modify_time: chrono::Utc::now().to_rfc3339(),
+            create_time: batata_common::datetime::Utc::now().to_rfc3339(),
+            modify_time: batata_common::datetime::Utc::now().to_rfc3339(),
         };
         self.store.put_token(&bootstrap_secret, &bootstrap_token);
     }
@@ -687,7 +688,7 @@ query_prefix "" { policy = "write" }
         local: bool,
         expiration_ttl: Option<&str>,
     ) -> AclToken {
-        let now = chrono::Utc::now();
+        let now = batata_common::datetime::Utc::now();
         let now_str = now.to_rfc3339();
         let accessor_id = uuid::Uuid::new_v4().to_string();
         let secret_id = uuid::Uuid::new_v4().to_string();
@@ -716,7 +717,10 @@ query_prefix "" { policy = "write" }
         let (expiration_time, expiration_ttl_nanos) =
             if let Some(ttl_str) = expiration_ttl.filter(|s| !s.is_empty()) {
                 if let Some(std_dur) = parse_duration(ttl_str) {
-                    let chrono_dur = chrono::Duration::from_std(std_dur).unwrap_or_default();
+                    let chrono_dur = batata_common::datetime::Duration::new(
+                        std_dur.as_secs() as i64,
+                        std_dur.subsec_nanos() as i32,
+                    );
                     let exp = now + chrono_dur;
                     (Some(exp.to_rfc3339()), Some(std_dur.as_nanos() as u64))
                 } else {
@@ -820,7 +824,7 @@ query_prefix "" { policy = "write" }
             ));
         }
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let policy_id = uuid::Uuid::new_v4().to_string();
 
         let policy = AclPolicy {
@@ -914,7 +918,7 @@ query_prefix "" { policy = "write" }
         service_identities: Option<Vec<ServiceIdentity>>,
         node_identities: Option<Vec<NodeIdentity>>,
     ) -> AclRole {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let role_id = uuid::Uuid::new_v4().to_string();
 
         let policy_links: Vec<PolicyLink> = policies
@@ -976,7 +980,7 @@ query_prefix "" { policy = "write" }
         node_identities: Option<Vec<NodeIdentity>>,
     ) -> Option<AclRole> {
         let mut role = self.get_role(id)?;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
 
         // Remove old name mapping if name is changing
         if let Some(new_name) = name
@@ -1560,8 +1564,8 @@ query_prefix "" { policy = "write" }
         let Some(exp) = token.expiration_time.as_deref() else {
             return false;
         };
-        match chrono::DateTime::parse_from_rfc3339(exp) {
-            Ok(exp) => exp.with_timezone(&chrono::Utc) <= chrono::Utc::now(),
+        match batata_common::datetime::parse_rfc3339(exp) {
+            Ok(exp) => exp <= batata_common::datetime::Utc::now(),
             Err(_) => true,
         }
     }
@@ -2875,7 +2879,7 @@ impl AclService {
         accessor_id: &str,
         update: TokenUpdateRequest,
     ) -> Option<AclToken> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let (secret_key, mut token) = self.store.find_token_by_accessor(accessor_id)?;
 
         if let Some(desc) = update.description {
@@ -2918,7 +2922,7 @@ impl AclService {
 
     /// Update an existing policy
     pub async fn update_policy(&self, id: &str, update: PolicyUpdateRequest) -> Option<AclPolicy> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let mut policy = self.store.get_policy(id)?;
 
         let old_name = policy.name.clone();

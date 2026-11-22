@@ -15,6 +15,7 @@
 //! and client IP are only known at the HTTP layer, and the console handlers
 //! depend on this crate rather than on `batata-ai`.
 
+use crate::datetime::DateTimeExt;
 use serde::Serialize;
 use tracing::info;
 
@@ -169,8 +170,8 @@ pub fn build_trace_event(
             .map(str::to_string)
     }
 
-    let timestamp = chrono::DateTime::from_timestamp_millis(event_time_millis)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    let timestamp = crate::datetime::from_millis(event_time_millis)
+        .map(|dt| dt.to_rfc3339_opts(crate::datetime::Precision::Millis, true))
         .unwrap_or_default();
 
     AiResourceTraceEvent {
@@ -202,7 +203,7 @@ pub fn log(
     ext: Option<&str>,
 ) {
     let event = build_trace_event(
-        chrono::Utc::now().timestamp_millis(),
+        crate::datetime::Utc::now().timestamp_millis(),
         operator,
         resource_type,
         resource_id,

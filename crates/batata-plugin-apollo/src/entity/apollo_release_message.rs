@@ -11,7 +11,8 @@ pub struct Model {
     /// The `message` field.
     pub message: String,
     /// The `data_change_created_time` field.
-    pub data_change_created_time: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub data_change_created_time: TimeDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

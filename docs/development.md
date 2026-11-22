@@ -31,6 +31,17 @@ cargo clippy --workspace
 cargo doc --workspace --open
 ```
 
+### Date/time compatibility
+
+Date/time handling uses the `time` crate. `batata_common::datetime` keeps the
+historical wire and persistence shapes: naive datetimes serialize as
+`YYYY-MM-DDTHH:MM:SS[.fraction]`, and UTC instants use RFC 3339 with an explicit
+`+00:00` offset (or `Z` where the endpoint expects it). SeaORM is configured
+with `with-time` and without `with-chrono`; entity fields use `TimeDateTime`
+plus the shared serde adapter. Keep these helpers when changing embedded JSON
+persistence or Apollo/Consul timestamp strings. `sea-orm-migration` still pulls
+`chrono` transitively because it enables SeaORM's default features upstream.
+
 ## Multi-Platform Build & Release
 
 batata publishes prebuilt binaries through GitHub Actions. Pushing a tag of the

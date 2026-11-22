@@ -41,7 +41,7 @@ base64 = { workspace = true }
 zip = { workspace = true, optional = true }
 
 # Utils
-chrono = { workspace = true }
+time = { workspace = true }
 
 [features]
 default = ["skill-zip"]

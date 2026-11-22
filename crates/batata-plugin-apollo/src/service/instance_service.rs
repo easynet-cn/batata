@@ -6,7 +6,7 @@ use crate::persistence::shared::StoredInstance;
 use crate::persistence::traits::{
     ApolloPersistenceService, InstanceConfigPersistence, InstancePersistence, ReleasePersistence,
 };
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 /// Represents the `InstanceService` entity.
 pub struct InstanceService {
@@ -124,9 +124,9 @@ impl InstanceService {
             ip,
             release_key: Some(cfg.release_key.clone()),
             release_id: None,
-            last_modified_time: cfg.data_change_last_time.map(|ts| {
-                format_timestamp(chrono::DateTime::from_naive_utc_and_offset(ts, chrono::Utc))
-            }),
+            last_modified_time: cfg
+                .data_change_last_time
+                .map(|ts| format_timestamp(batata_common::datetime::utc(ts))),
         }
     }
 
@@ -257,15 +257,16 @@ impl From<StoredInstance> for InstanceDTO {
     }
 }
 
-fn format_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
-    ts.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()
+fn format_timestamp(ts: batata_common::datetime::DateTimeUtc) -> String {
+    ts.format_apollo()
 }
 
 /// Convert an epoch-millis timestamp (`i64`) into an ISO-8601 UTC string.
 ///
 /// Used when materializing [`StoredInstance`], whose timestamps are stored as
-/// epoch millis rather than [`chrono::DateTime`].
+/// epoch millis rather than [`batata_common::datetime::DateTimeUtc`].
 fn format_timestamp_millis(ts: i64) -> String {
-    let dt = chrono::DateTime::from_timestamp_millis(ts).unwrap_or_else(chrono::Utc::now);
+    let dt =
+        batata_common::datetime::from_millis(ts).unwrap_or_else(batata_common::datetime::Utc::now);
     format_timestamp(dt)
 }

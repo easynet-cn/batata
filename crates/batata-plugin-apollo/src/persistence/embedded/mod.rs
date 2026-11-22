@@ -2,6 +2,7 @@
 //!
 //! Provides standalone single-node storage using RocksDB without an external database.
 
+use batata_common::datetime::DateTimeExt;
 mod access_key_embedded;
 mod app_embedded;
 mod cluster_embedded;
@@ -641,7 +642,8 @@ impl crate::persistence::traits::GrayReleasePersistence for EmbeddedApolloPersis
             let mut rule = GrayReleaseEmbedded::get_by_id(&self.db, id)?;
             rule.rules = rules;
             rule.release_id = release_id;
-            rule.data_change_last_time = Some(chrono::Utc::now().timestamp_millis());
+            rule.data_change_last_time =
+                Some(batata_common::datetime::Utc::now().timestamp_millis());
             writer
                 .write(ApolloRaftRequest::GrayReleaseUpdate(rule.clone()))
                 .await

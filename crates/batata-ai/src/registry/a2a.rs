@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::VERSIONING_UNSUPPORTED;
 use actix_web::{HttpResponse, delete, get, post, put, web};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use dashmap::DashMap;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};

@@ -3,6 +3,7 @@
 //! Provides a tracing subscriber layer that broadcasts formatted log events
 //! to HTTP streaming consumers (e.g., `/v1/agent/monitor`).
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::OnceLock;
 
 use tokio::sync::broadcast;
@@ -99,7 +100,7 @@ where
         event.record(&mut visitor);
 
         let entry = LogEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: batata_common::datetime::Utc::now().to_rfc3339(),
             level,
             module,
             message: visitor.message,

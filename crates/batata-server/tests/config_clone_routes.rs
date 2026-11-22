@@ -6,6 +6,7 @@
 //! the UI reported success. These tests drive the real production route with
 //! the real `LocalDataSource`/`AppState` wiring.
 
+use batata_common::datetime::DateTimeExt;
 #[path = "common/ai_store.rs"]
 mod ai_store;
 
@@ -175,7 +176,10 @@ async fn clone_resolves_zero_id_by_natural_key_and_source_namespace() {
     let ts = TestStore::open().await;
     let store = ts.store();
     let app = build_app(store.clone()).await;
-    let data_id = format!("clone-{}.yaml", chrono::Utc::now().timestamp_millis());
+    let data_id = format!(
+        "clone-{}.yaml",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed(&store, &data_id, "ns-src", "key: source\n").await;
 
     let (status, body) = clone(&app, &data_id, Some("ns-src"), "ns-target", "ABORT").await;
@@ -208,7 +212,10 @@ async fn clone_honours_abort_skip_and_overwrite_policies() {
     let ts = TestStore::open().await;
     let store = ts.store();
     let app = build_app(store.clone()).await;
-    let data_id = format!("policy-{}.yaml", chrono::Utc::now().timestamp_millis());
+    let data_id = format!(
+        "policy-{}.yaml",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed(&store, &data_id, "public", "v1").await;
 
     let (_, first) = clone(&app, &data_id, Some("public"), "ns-policy", "ABORT").await;

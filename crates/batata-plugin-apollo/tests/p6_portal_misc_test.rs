@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -66,7 +67,10 @@ async fn seed(p: Arc<dyn ApolloPersistenceService>, app_id: &str, ns: &str) {
 #[actix_web::test]
 async fn pitem009_diff_produces_per_namespace_changesets() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("diff-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "diff-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed(p.clone(), &app_id, "src").await;
 
     let isvc = ItemService::new(p.clone());
@@ -111,7 +115,10 @@ async fn pitem009_diff_produces_per_namespace_changesets() {
 #[actix_web::test]
 async fn pitem010_synchronize_applies_changesets() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("sync-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "sync-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed(p.clone(), &app_id, "src").await;
 
     let isvc = ItemService::new(p.clone());
@@ -149,7 +156,10 @@ async fn pitem010_synchronize_applies_changesets() {
 #[actix_web::test]
 async fn pmisc001_instances_returns_paged_envelope() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("inst-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "inst-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed(p.clone(), &app_id, "ns").await;
 
     let app = test::init_service(
@@ -222,7 +232,10 @@ async fn pmisc_degraded_endpoints() {
 #[actix_web::test]
 async fn port009_env_cluster_info() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("envc-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "envc-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed(p.clone(), &app_id, "ns").await;
 
     let app = test::init_service(

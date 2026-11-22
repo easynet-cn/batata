@@ -20,9 +20,11 @@ pub struct Model {
     /// MD5 hash of the content.
     pub md5: Option<String>,
     /// Creation timestamp.
-    pub gmt_create: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub gmt_create: Option<TimeDateTime>,
     /// Last modification timestamp.
-    pub gmt_modified: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub gmt_modified: Option<TimeDateTime>,
     /// User who created/modified the config.
     #[sea_orm(column_type = "Text", nullable)]
     pub src_user: Option<String>,

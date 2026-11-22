@@ -24,9 +24,11 @@ pub struct Model {
     /// MD5 hash of the content.
     pub md5: Option<String>,
     /// Creation timestamp.
-    pub gmt_create: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub gmt_create: TimeDateTime,
     /// Last modification timestamp.
-    pub gmt_modified: DateTime,
+    #[serde(with = "batata_common::datetime::naive_serde")]
+    pub gmt_modified: TimeDateTime,
     /// User who performed the operation.
     #[sea_orm(column_type = "Text", nullable)]
     pub src_user: Option<String>,

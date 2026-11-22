@@ -3,7 +3,7 @@
 //! Provides cluster peering endpoints for cross-datacenter service discovery.
 
 use actix_web::{HttpRequest, HttpResponse, web};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 use dashmap::DashMap;
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};

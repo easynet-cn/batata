@@ -1,6 +1,7 @@
 // Cluster member health check service
 // Periodically checks the health of cluster members and updates their state
 
+use batata_common::datetime::DateTimeExt;
 use std::{
     sync::{
         Arc,
@@ -88,7 +89,7 @@ impl MemberHealthStatus {
             address,
             fail_count: 0,
             last_check_time: 0,
-            last_success_time: chrono::Utc::now().timestamp_millis(),
+            last_success_time: batata_common::datetime::Utc::now().timestamp_millis(),
             state: NodeState::Up,
         }
     }
@@ -96,7 +97,7 @@ impl MemberHealthStatus {
     /// Record Success.
     pub fn record_success(&mut self) {
         self.fail_count = 0;
-        self.last_success_time = chrono::Utc::now().timestamp_millis();
+        self.last_success_time = batata_common::datetime::Utc::now().timestamp_millis();
         self.state = NodeState::Up;
     }
 
@@ -138,7 +139,7 @@ impl MemberHealthState {
     pub fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::Relaxed);
         self.last_check_time.store(
-            chrono::Utc::now().timestamp_millis() as u64,
+            batata_common::datetime::Utc::now().timestamp_millis() as u64,
             Ordering::Relaxed,
         );
     }
@@ -147,7 +148,7 @@ impl MemberHealthState {
     /// Returns the new consecutive failure count.
     pub fn record_failure(&self) -> u32 {
         self.last_check_time.store(
-            chrono::Utc::now().timestamp_millis() as u64,
+            batata_common::datetime::Utc::now().timestamp_millis() as u64,
             Ordering::Relaxed,
         );
         self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1
@@ -364,7 +365,7 @@ impl MemberHealthChecker {
             );
             // Still update status to reflect circuit is open
             if let Some(mut status) = health_status.get_mut(address) {
-                status.last_check_time = chrono::Utc::now().timestamp_millis();
+                status.last_check_time = batata_common::datetime::Utc::now().timestamp_millis();
             }
             return;
         }
@@ -398,7 +399,7 @@ impl MemberHealthChecker {
 
         // Update health status
         if let Some(mut status) = health_status.get_mut(address) {
-            status.last_check_time = chrono::Utc::now().timestamp_millis();
+            status.last_check_time = batata_common::datetime::Utc::now().timestamp_millis();
 
             if check_result {
                 status.record_success();

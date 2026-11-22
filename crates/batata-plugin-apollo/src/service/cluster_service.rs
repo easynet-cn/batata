@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::api::dto::ClusterDTO;
 use crate::persistence::shared::StoredCluster;
 use crate::persistence::traits::{ApolloPersistenceService, ClusterPersistence};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 /// Represents the `ClusterService` entity.
 pub struct ClusterService {
@@ -111,14 +111,13 @@ impl ClusterService {
             data_change_created_by: Some(stored.data_change_created_by.clone()),
             data_change_last_modified_by: stored.data_change_last_modified_by.clone(),
             data_change_created_time: Some(
-                chrono::DateTime::from_timestamp_millis(stored.data_change_created_time)
-                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string())
+                batata_common::datetime::from_millis(stored.data_change_created_time)
+                    .map(|dt| dt.format_apollo())
                     .unwrap_or_default(),
             ),
-            data_change_last_time: stored.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t)
-                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string())
-            }),
+            data_change_last_time: stored
+                .data_change_last_time
+                .and_then(|t| batata_common::datetime::from_millis(t).map(|dt| dt.format_apollo())),
         }
     }
 }

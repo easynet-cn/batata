@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
 };
@@ -34,15 +36,15 @@ impl From<StoredAccessKey> for apollo_access_key::ActiveModel {
             is_deleted: Set(access_key.is_deleted),
             deleted_at: Set(access_key.deleted_at),
             data_change_created_by: Set(access_key.data_change_created_by),
-            data_change_created_time: Set(chrono::DateTime::from_timestamp_millis(
+            data_change_created_time: Set(batata_common::datetime::from_millis(
                 access_key.data_change_created_time,
             )
-            .unwrap_or_default()
+            .unwrap_or_else(batata_common::datetime::default_utc)
             .naive_utc()),
             data_change_last_modified_by: Set(access_key.data_change_last_modified_by),
             data_change_last_time: Set(access_key
                 .data_change_last_time
-                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
+                .and_then(|t| batata_common::datetime::from_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -113,7 +115,7 @@ impl AccessKeyPersistence for AccessKeySqlPersistence {
         active_model.data_change_last_modified_by = Set(access_key.data_change_last_modified_by);
         active_model.data_change_last_time = Set(access_key
             .data_change_last_time
-            .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())));
+            .and_then(|t| batata_common::datetime::from_millis(t).map(|dt| dt.naive_utc())));
 
         let updated = active_model.update(&self.db).await?;
         Ok(updated.into())
@@ -128,7 +130,7 @@ impl AccessKeyPersistence for AccessKeySqlPersistence {
 
         let mut active_model: apollo_access_key::ActiveModel = existing.into();
         active_model.is_deleted = Set(true);
-        active_model.deleted_at = Set(chrono::Utc::now().timestamp_millis());
+        active_model.deleted_at = Set(batata_common::datetime::Utc::now().timestamp_millis());
         active_model.update(&self.db).await?;
         Ok(())
     }

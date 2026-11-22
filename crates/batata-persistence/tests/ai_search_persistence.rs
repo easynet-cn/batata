@@ -14,6 +14,7 @@
 //!   cargo test -p batata-persistence --test ai_search_persistence -- --nocapture
 //! ```
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use batata_persistence::entity::{
@@ -271,7 +272,7 @@ async fn search_index_persistence_round_trip() {
     println!("ok: chunk replace");
 
     // ---- tasks: upsert, find due, delete -----------------------------------
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = batata_common::datetime::Utc::now().timestamp_millis();
     db.task_upsert(&task("due-task", now - 1_000))
         .await
         .expect("task upsert (due)");

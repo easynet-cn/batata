@@ -1,6 +1,7 @@
 //! Embedded implementation of InstancePersistence trait
 
 use crate::bincode;
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -56,7 +57,8 @@ impl InstancePersistence for InstanceEmbedded {
         } else {
             instance.id = self.id_gen.next_id();
         }
-        instance.data_change_last_time = Some(chrono::Utc::now().timestamp_millis());
+        instance.data_change_last_time =
+            Some(batata_common::datetime::Utc::now().timestamp_millis());
 
         let bytes = bincode::serialize(&instance)?;
         self.db

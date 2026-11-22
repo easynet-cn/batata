@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Server-only API definitions for Batata (raft, distro, validation)"
 
 [dependencies]
+batata-common = { workspace = true }
 batata-api = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -17,7 +18,7 @@ prost-types = { workspace = true }
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
 tonic-prost = { workspace = true }
 validator = { workspace = true }
-chrono = { workspace = true }
+time = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }

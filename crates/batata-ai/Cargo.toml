@@ -31,7 +31,7 @@ serde_json = { workspace = true }
 serde_urlencoded = { workspace = true }
 
 # Async
-chrono = { workspace = true }
+time = { workspace = true }
 uuid = { workspace = true }
 
 # Caching

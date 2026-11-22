@@ -1,6 +1,7 @@
 // Lock module gRPC handler: LockOperationHandler
 // Handles distributed lock acquire/release operations
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -284,7 +285,7 @@ impl LockOperationHandler {
             ttl_ms,
             fence_token,
             owner_metadata: None,
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         match raft.write(req).await {
             Ok(resp) => resp.success,
@@ -329,7 +330,7 @@ impl LockOperationHandler {
             key,
             owner,
             expired_time_ms,
-            chrono::Utc::now().timestamp_millis(),
+            batata_common::datetime::Utc::now().timestamp_millis(),
         );
         match raft.write(req).await {
             Ok(resp) => resp.success,

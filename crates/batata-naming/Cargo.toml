@@ -56,7 +56,7 @@ reqwest = { workspace = true }
 anyhow = { workspace = true }
 
 # Time
-chrono = { workspace = true }
+time = { workspace = true }
 
 # Pattern matching
 regex = { workspace = true }

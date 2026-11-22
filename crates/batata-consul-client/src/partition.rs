@@ -27,9 +27,10 @@ pub struct Partition {
         rename = "DeletedAt",
         alias = "deleted_at",
         default,
-        skip_serializing_if = "Option::is_none"
+        skip_serializing_if = "Option::is_none",
+        with = "time::serde::rfc3339::option"
     )]
-    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub deleted_at: Option<time::OffsetDateTime>,
     /// Raft creation index.
     #[serde(rename = "CreateIndex", default)]
     pub create_index: u64,

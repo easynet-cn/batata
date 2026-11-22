@@ -17,9 +17,11 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     /// Creation timestamp.
-    pub gmt_create: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub gmt_create: Option<TimeDateTime>,
     /// Last modification timestamp.
-    pub gmt_modified: Option<DateTime>,
+    #[serde(with = "batata_common::datetime::naive_serde::option")]
+    pub gmt_modified: Option<TimeDateTime>,
     /// Owning namespace ID.
     pub namespace_id: String,
     /// Resource type (for example `skill`, `mcp`).

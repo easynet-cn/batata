@@ -1,6 +1,7 @@
 // Cluster management and coordination
 // Manages cluster membership, health checks, and inter-node communication
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashSet, sync::Arc};
 
@@ -210,7 +211,7 @@ impl ServerMemberManager {
             extend_info.insert(Member::SUPPORT_GRAY_MODEL.to_string(), Value::from(true));
             extend_info.insert(
                 Member::LAST_REFRESH_TIME.to_string(),
-                Value::from(chrono::Utc::now().timestamp_millis()),
+                Value::from(batata_common::datetime::Utc::now().timestamp_millis()),
             );
         }
 
@@ -610,7 +611,7 @@ impl ServerMemberManager {
         {
             extend_info.insert(
                 Member::LAST_REFRESH_TIME.to_string(),
-                Value::from(chrono::Utc::now().timestamp_millis()),
+                Value::from(batata_common::datetime::Utc::now().timestamp_millis()),
             );
         }
     }

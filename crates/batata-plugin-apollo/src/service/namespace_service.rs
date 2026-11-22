@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::api::dto::NamespaceDTO;
 use crate::persistence::shared::StoredNamespace;
 use crate::persistence::traits::{ApolloPersistenceService, NamespacePersistence};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 /// Represents the `NamespaceService` entity.
 pub struct NamespaceService {
@@ -175,8 +175,7 @@ impl From<StoredNamespace> for NamespaceDTO {
 }
 
 fn format_timestamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts)
-        .unwrap_or_default()
-        .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-        .to_string()
+    batata_common::datetime::from_millis(ts)
+        .unwrap_or_else(batata_common::datetime::default_utc)
+        .format_apollo()
 }

@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -69,7 +70,10 @@ fn missing_uri(app_id: &str) -> String {
 #[actix_web::test]
 async fn pat_metadata_scope_controls_missing_namespaces_get() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("mn-get-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "mn-get-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed_namespaces(p.clone(), &app_id).await;
 
     let tokens = UserTokenService::new(p.clone());
@@ -130,7 +134,10 @@ async fn pat_metadata_scope_controls_missing_namespaces_get() {
 #[actix_web::test]
 async fn pat_create_namespace_scope_controls_missing_namespaces_post() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("mn-post-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "mn-post-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed_namespaces(p.clone(), &app_id).await;
 
     let tokens = UserTokenService::new(p.clone());
@@ -211,7 +218,10 @@ async fn pat_create_namespace_scope_controls_missing_namespaces_post() {
 #[actix_web::test]
 async fn consumer_create_namespace_role_controls_missing_namespaces_post() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("mn-consumer-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "mn-consumer-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     seed_namespaces(p.clone(), &app_id).await;
 
     async fn make_consumer(

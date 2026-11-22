@@ -20,6 +20,7 @@
 //!     client_secret: ${GOOGLE_CLIENT_SECRET}
 //! ```
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -633,7 +634,7 @@ impl OAuthService {
 
         // Basic validation
         if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-            let now = chrono::Utc::now().timestamp();
+            let now = batata_common::datetime::Utc::now().timestamp();
 
             if now > exp {
                 return Err(anyhow::anyhow!("ID token has expired"));

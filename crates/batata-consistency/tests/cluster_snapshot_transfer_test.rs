@@ -5,6 +5,7 @@
 //! and hands it to openraft, and the membership rides along so the follower
 //! does not lose its cluster config.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::BTreeMap;
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -164,7 +165,7 @@ async fn follower_installs_streamed_snapshot_and_keeps_membership() {
             namespace_id: "ns-snapshot".to_string(),
             namespace_name: "snapshot".to_string(),
             namespace_desc: None,
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
         })
         .await
         .expect("replicate namespace");

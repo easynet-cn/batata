@@ -19,7 +19,7 @@ use actix_web::{
 use futures::StreamExt;
 use serde::Deserialize;
 
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 use batata_api::config::ConfigListenerInfo;
 use batata_common::IdentityContext;
@@ -637,10 +637,7 @@ async fn export_configs(
         Err(e) => return HttpResponse::NotFound().body(e.to_string()),
     };
 
-    let filename = format!(
-        "batata_config_export_{}.zip",
-        Utc::now().format("%Y%m%d%H%M%S")
-    );
+    let filename = format!("batata_config_export_{}.zip", Utc::now().format_compact());
 
     HttpResponse::Ok()
         .content_type("application/zip")

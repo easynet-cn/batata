@@ -2,6 +2,7 @@
 //!
 //! This module defines request/response models for Distro cluster synchronization.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 
 use prost_types::Any;
@@ -59,7 +60,7 @@ impl DistroDataItem {
             custom_type_name: None,
             key,
             content,
-            version: chrono::Utc::now().timestamp_millis(),
+            version: batata_common::datetime::Utc::now().timestamp_millis(),
             source,
         }
     }
@@ -76,7 +77,7 @@ impl DistroDataItem {
             custom_type_name: Some(custom_type_name),
             key,
             content,
-            version: chrono::Utc::now().timestamp_millis(),
+            version: batata_common::datetime::Utc::now().timestamp_millis(),
             source,
         }
     }

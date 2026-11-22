@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use batata_common::datetime::{DateTimeExt, NaiveDateTimeExt, Utc};
 use batata_persistence::PersistenceService;
 use batata_persistence::model::{AiResourceInfo, AiResourceVersionInfo, Page};
-use chrono::Utc;
 use tracing::debug;
 
 use crate::model::skill::*;
@@ -19,11 +19,11 @@ use crate::service::version_lifecycle;
 fn datetime_str_to_millis(s: &Option<String>) -> Option<i64> {
     s.as_deref().and_then(|dt| {
         // Try NaiveDateTime (no timezone, from Utc::now().naive_utc().to_string())
-        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%d %H:%M:%S%.f") {
+        if let Ok(ndt) = batata_common::datetime::parse_naive_str(dt) {
             return Some(ndt.and_utc().timestamp_millis());
         }
         // Try ISO 8601 with timezone
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(dt) {
+        if let Ok(dt) = batata_common::datetime::parse_rfc3339(dt) {
             return Some(dt.timestamp_millis());
         }
         // Try parsing as millis directly

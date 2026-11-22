@@ -2,6 +2,7 @@
 // Uses RocksDB column families for ai_resource, ai_resource_version, and pipeline_execution
 
 use async_trait::async_trait;
+use batata_common::datetime::DateTimeExt;
 
 use batata_consistency::raft::state_machine::{
     CF_AI_RESOURCE, CF_AI_RESOURCE_SEARCH_CHUNK, CF_AI_RESOURCE_SEARCH_DOCUMENT,
@@ -30,7 +31,7 @@ fn lock_tasks(service: &EmbeddedPersistService) -> std::sync::MutexGuard<'_, ()>
 
 /// Current time as an RFC 3339 string, matching the other embedded writers.
 fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339()
+    batata_common::datetime::Utc::now().to_rfc3339()
 }
 
 /// Key for the auto-increment counter stored in the ai_resource CF
@@ -377,7 +378,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         let id = self.next_ai_resource_id()?;
         let mut info = resource.clone();
         info.id = id;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         if info.gmt_create.is_none() {
             info.gmt_create = Some(now.clone());
         }
@@ -406,7 +407,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
                 }
                 info.version_info = Some(version_info.to_string());
                 info.meta_version = new_meta_version;
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info)?;
                 Ok(true)
             }
@@ -425,7 +426,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.biz_tags = Some(biz_tags.to_string());
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -448,7 +449,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.description = Some(description.to_string());
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -471,7 +472,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.status = Some(status.to_string());
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -494,7 +495,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.scope = scope.to_string();
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -517,7 +518,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         match self.get_ai_resource(&key)? {
             Some(mut info) => {
                 info.download_count += increment;
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -635,7 +636,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         let id = self.next_ai_resource_version_id()?;
         let mut info = version.clone();
         info.id = id;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         if info.gmt_create.is_none() {
             info.gmt_create = Some(now.clone());
         }
@@ -664,7 +665,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         match self.get_ai_resource_version(&key)? {
             Some(mut info) => {
                 info.status = status.to_string();
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource_version(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -693,7 +694,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
                 if let Some(desc) = description {
                     info.description = Some(desc.to_string());
                 }
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource_version(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -718,7 +719,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         match self.get_ai_resource_version(&key)? {
             Some(mut info) => {
                 info.download_count += increment;
-                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                info.gmt_modified = Some(batata_common::datetime::Utc::now().to_rfc3339());
                 self.put_ai_resource_version(&key, &info)
             }
             None => Err(anyhow::anyhow!(
@@ -936,7 +937,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
             &document.resource_name,
             &document.resource_version,
         );
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
 
         match self.get_search_document(&key)? {
             Some(existing) => {
@@ -1002,7 +1003,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
             .map(|d| d.id)
             .unwrap_or_default();
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = batata_common::datetime::Utc::now().to_rfc3339();
         let cf = self.cf(CF_AI_RESOURCE_SEARCH_CHUNK)?;
         for chunk in chunks {
             let id = self.next_search_chunk_id()?;
@@ -1337,7 +1338,7 @@ mod tests {
         assert_eq!(chunks[0].chunk_hash, "hash-c");
 
         // Tasks: upsert, update in place, find due, delete.
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("due", now - 1_000)).await.unwrap();
         svc.task_upsert(&task("future", now + 60_000))
             .await
@@ -1383,7 +1384,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_task_claim_is_exclusive() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("claimed", now - 1_000))
             .await
             .unwrap();
@@ -1407,7 +1408,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_task_claim_respects_the_schedule() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("future", now + 60_000))
             .await
             .unwrap();
@@ -1435,7 +1436,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_task_claim_takes_over_an_expired_lease() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("leased", now - 1_000)).await.unwrap();
         let snapshot = svc.task_find("leased").await.unwrap().expect("task");
         let leased = svc
@@ -1471,7 +1472,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_reschedule_supersedes_an_in_flight_lease() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("rescheduled", now - 1_000))
             .await
             .unwrap();
@@ -1526,7 +1527,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_task_lease_renewal_extends_the_expiry() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("renew", now - 1_000)).await.unwrap();
         let snapshot = svc.task_find("renew").await.unwrap().expect("task");
         let claimed = svc
@@ -1558,7 +1559,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_task_lease_renewal_cannot_resurrect_a_lapsed_lease() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("lapsed", now - 1_000)).await.unwrap();
         let snapshot = svc.task_find("lapsed").await.unwrap().expect("task");
         let first = svc
@@ -1605,7 +1606,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_task_writes_are_fenced_by_the_lease_token() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("fenced", now - 1_000)).await.unwrap();
         let snapshot = svc.task_find("fenced").await.unwrap().expect("task");
         let claimed = svc
@@ -1642,7 +1643,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_task_delete_is_fenced_by_the_lease_token() {
         let (svc, _tmp) = create_test_service().await;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = batata_common::datetime::Utc::now().timestamp_millis();
         svc.task_upsert(&task("removable", now - 1_000))
             .await
             .unwrap();

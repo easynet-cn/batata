@@ -6,6 +6,8 @@
 //!
 //! Uses the `PersistenceService` trait abstraction instead of direct DB access.
 
+use batata_common::datetime::DateTimeExt;
+use batata_common::datetime::NaiveDateTimeExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -19,11 +21,11 @@ use crate::service::version_lifecycle;
 /// Parse ISO8601 datetime string to epoch milliseconds
 fn parse_datetime_to_millis(s: &str) -> Option<i64> {
     // Try chrono parsing for ISO8601 with timezone
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+    if let Ok(dt) = batata_common::datetime::parse_rfc3339(s) {
         return Some(dt.timestamp_millis());
     }
     // Try parsing as "YYYY-MM-DD HH:MM:SS" (no timezone)
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+    if let Ok(dt) = batata_common::datetime::parse_naive_str(s) {
         return Some(dt.and_utc().timestamp_millis());
     }
     // Try parsing as epoch millis string

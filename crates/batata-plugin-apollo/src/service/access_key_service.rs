@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::api::dto::AccessKeyDTO;
 use crate::persistence::shared::StoredAccessKey;
 use crate::persistence::traits::{AccessKeyPersistence, ApolloPersistenceService};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 /// Represents the `AccessKeyService` entity.
 pub struct AccessKeyService {
@@ -125,8 +125,7 @@ impl From<StoredAccessKey> for AccessKeyDTO {
 }
 
 fn format_timestamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts)
-        .unwrap_or_default()
-        .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-        .to_string()
+    batata_common::datetime::from_millis(ts)
+        .unwrap_or_else(batata_common::datetime::default_utc)
+        .format_apollo()
 }

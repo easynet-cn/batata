@@ -6,6 +6,7 @@
 //! The in-memory [`crate::service::notification_hub`] remains only as a
 //! process-local wake-up accelerator on top of this persisted truth.
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -49,7 +50,7 @@ impl ReleaseMessageService {
         let stored = StoredReleaseMessage {
             id: 0,
             message: Self::generate_message(app_id, cluster, namespace_name),
-            data_change_created_time: chrono::Utc::now().timestamp_millis(),
+            data_change_created_time: batata_common::datetime::Utc::now().timestamp_millis(),
         };
         self.persistence.create(stored).await
     }

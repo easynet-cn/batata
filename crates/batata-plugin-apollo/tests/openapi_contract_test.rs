@@ -5,6 +5,7 @@
 //! registered on the wrong path). Reverting any guard must turn the
 //! corresponding test red.
 
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -43,7 +44,10 @@ macro_rules! call {
 #[actix_web::test]
 async fn server_config_crud_uses_upstream_paths_and_real_storage() {
     let app = make_app!();
-    let key = format!("cfg-{}", chrono::Utc::now().timestamp_millis());
+    let key = format!(
+        "cfg-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
 
     let (status, _) = call!(
         app,
@@ -183,7 +187,10 @@ async fn user_tokens_use_upstream_dto_and_hide_the_hash() {
 #[actix_web::test]
 async fn users_is_create_flag_and_username_contract() {
     let app = make_app!();
-    let username = format!("u-{}", chrono::Utc::now().timestamp_millis());
+    let username = format!(
+        "u-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
 
     let payload = json!({
         "username": username,

@@ -2,6 +2,7 @@
 // Naming module gRPC handlers
 // Implements handlers for service discovery requests
 
+use batata_common::datetime::DateTimeExt;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -1014,7 +1015,7 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
                             } else {
                                 instance.cluster_name.clone()
                             },
-                            now_ms: chrono::Utc::now().timestamp_millis(),
+                            now_ms: batata_common::datetime::Utc::now().timestamp_millis(),
                         },
                     ));
                 match raft.write(req).await {

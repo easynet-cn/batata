@@ -1,3 +1,4 @@
+use batata_common::datetime::NaiveDateTimeExt;
 use std::sync::Arc;
 
 use crate::api::dto::InstanceConfigDTO;
@@ -71,15 +72,8 @@ impl InstanceConfigService {
             release_key: model.release_key.clone(),
             configurations: model.configurations.clone(),
             data_change_created_by: Some(model.data_change_created_by.clone()),
-            data_change_created_time: Some(
-                model
-                    .data_change_created_time
-                    .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
-                    .to_string(),
-            ),
-            data_change_last_time: model
-                .data_change_last_time
-                .map(|t| t.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()),
+            data_change_created_time: Some(model.data_change_created_time.format_apollo()),
+            data_change_last_time: model.data_change_last_time.map(|t| t.format_apollo()),
         }
     }
 }

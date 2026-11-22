@@ -1,6 +1,7 @@
 // Member change event handling
 // Provides event-driven notifications for cluster membership changes
 
+use batata_common::datetime::DateTimeExt;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -53,7 +54,7 @@ impl MemberChangeEvent {
             change_type: MemberChangeType::MemberJoin,
             member,
             previous_state: None,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: batata_common::datetime::Utc::now().timestamp_millis(),
         }
     }
 
@@ -63,7 +64,7 @@ impl MemberChangeEvent {
             change_type: MemberChangeType::MemberLeave,
             member,
             previous_state: None,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: batata_common::datetime::Utc::now().timestamp_millis(),
         }
     }
 
@@ -73,7 +74,7 @@ impl MemberChangeEvent {
             change_type: MemberChangeType::MemberStateChange,
             member,
             previous_state: Some(previous_state),
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: batata_common::datetime::Utc::now().timestamp_millis(),
         }
     }
 
@@ -83,7 +84,7 @@ impl MemberChangeEvent {
             change_type: MemberChangeType::MemberMetaUpdate,
             member,
             previous_state: None,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: batata_common::datetime::Utc::now().timestamp_millis(),
         }
     }
 }

@@ -1,3 +1,4 @@
+use batata_common::datetime::DateTimeExt;
 mod common;
 
 use std::sync::Arc;
@@ -81,7 +82,10 @@ async fn make_consumer_with_app_admin(
 #[actix_web::test]
 async fn pat_env_scope_controls_access_key_list() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("ak-list-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "ak-list-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let tokens = UserTokenService::new(p.clone());
     let (pro_only, _) = tokens
         .create_with_scope(
@@ -137,7 +141,10 @@ async fn pat_env_scope_controls_access_key_list() {
 #[actix_web::test]
 async fn pat_without_manage_role_operation_cannot_list_access_keys() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("ak-forbidden-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "ak-forbidden-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let (token, _) = UserTokenService::new(p.clone())
         .create_with_scope(
             "apollo",
@@ -170,7 +177,10 @@ async fn pat_without_manage_role_operation_cannot_list_access_keys() {
 #[actix_web::test]
 async fn consumer_create_access_key_uses_operator_query() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("ak-create-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "ak-create-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let (_, token) = make_consumer_with_app_admin(p.clone(), &app_id).await;
     UserPersistence::create_user(
         &p,
@@ -225,7 +235,10 @@ async fn consumer_create_access_key_uses_operator_query() {
 #[actix_web::test]
 async fn pat_activation_uses_current_user_and_mode() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("ak-enable-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "ak-enable-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let (token, _) = UserTokenService::new(p.clone())
         .create_with_scope(
             "apollo",
@@ -293,7 +306,10 @@ async fn pat_activation_uses_current_user_and_mode() {
 #[actix_web::test]
 async fn consumer_deactivation_requires_operator() {
     let p = common::make_embedded_persistence().await;
-    let app_id = format!("ak-disable-{}", chrono::Utc::now().timestamp_millis());
+    let app_id = format!(
+        "ak-disable-{}",
+        batata_common::datetime::Utc::now().timestamp_millis()
+    );
     let (_, token) = make_consumer_with_app_admin(p.clone(), &app_id).await;
     UserPersistence::create_user(
         &p,

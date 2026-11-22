@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::persistence::shared::StoredNamespaceLock;
 use crate::persistence::traits::{ApolloPersistenceService, NamespaceLockPersistence};
-use chrono::Utc;
+use batata_common::datetime::{DateTimeExt, Utc};
 
 /// Represents the `NamespaceLockService` entity.
 pub struct NamespaceLockService {

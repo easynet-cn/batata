@@ -4,6 +4,7 @@
 // PUT /v1/snapshot - Restore/import a snapshot
 
 use actix_web::{HttpRequest, HttpResponse, web};
+use batata_common::datetime::DateTimeExt;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -100,7 +101,7 @@ impl ConsulSnapshotService {
 
         let snapshot = SnapshotData {
             index: self.index.load(Ordering::SeqCst),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: batata_common::datetime::Utc::now().to_rfc3339(),
             version: "1".to_string(),
             data,
         };
@@ -269,7 +270,7 @@ impl ConsulSnapshotServicePersistent {
     pub async fn save_snapshot(&self) -> Vec<u8> {
         let snapshot = SnapshotData {
             index: self.index.load(Ordering::SeqCst),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: batata_common::datetime::Utc::now().to_rfc3339(),
             version: "1".to_string(),
             data: HashMap::new(),
         };

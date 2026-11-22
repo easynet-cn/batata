@@ -3,6 +3,7 @@
 //! Provides a high-level API for interacting with the Raft consensus.
 
 use crate::bincode;
+use batata_common::datetime::DateTimeExt;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -1053,7 +1054,7 @@ impl RaftNode {
             .db
             .cf_handle(super::state_machine::CF_LOCKS)
             .ok_or("CF_LOCKS missing")?;
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = batata_common::datetime::Utc::now().timestamp_millis();
         let mut expired = Vec::new();
         let mut alive_count: u64 = 0;
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
