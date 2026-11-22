@@ -9,8 +9,9 @@
 
 # ---------------------------------------------------------------------------
 # Stage 1 — build
+# MSRV 1.89: shared SDK floor (let chains need 1.88; uuid 1.29 needs 1.89).
 # ---------------------------------------------------------------------------
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.89-bookworm AS builder
 
 # RocksDB (C++) needs a C/C++ toolchain, clang and cmake.
 RUN apt-get update && apt-get install -y --no-install-recommends \

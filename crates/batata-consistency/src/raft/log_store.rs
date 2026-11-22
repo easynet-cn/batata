@@ -8,7 +8,6 @@ use std::ops::RangeBounds;
 use std::path::Path;
 use std::sync::Arc;
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use openraft::storage::{IOFlushed, LogState, RaftLogStorage};
 use openraft::{OptionalSend, RaftLogReader};
 use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
@@ -229,24 +228,25 @@ impl RocksLogStore {
     }
 
     /// Encode log index to bytes (big-endian for proper ordering)
-    /// This operation is infallible since we're writing to a pre-allocated Vec
     fn encode_log_index(index: u64) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(8);
-        // Safe: writing to a Vec with sufficient capacity always succeeds
-        buf.write_u64::<BigEndian>(index)
-            .expect("Writing to Vec should never fail");
-        buf
+        index.to_be_bytes().to_vec()
     }
 
     /// Decode log index from bytes
     /// Returns 0 if bytes are invalid (defensive fallback)
     #[allow(dead_code)]
     fn decode_log_index(bytes: &[u8]) -> u64 {
-        let mut cursor = std::io::Cursor::new(bytes);
-        cursor.read_u64::<BigEndian>().unwrap_or_else(|e| {
-            tracing::error!("Failed to decode log index: {}", e);
-            0
-        })
+        let arr: [u8; 8] = match bytes.try_into() {
+            Ok(arr) => arr,
+            Err(_) => {
+                tracing::error!(
+                    "Failed to decode log index: expected 8 bytes, got {}",
+                    bytes.len()
+                );
+                return 0;
+            }
+        };
+        u64::from_be_bytes(arr)
     }
 
     /// Serialize an entry using bincode (3-5x faster than JSON, 40-60% smaller).

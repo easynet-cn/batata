@@ -15,7 +15,6 @@ batata-server-api = { workspace = true }
 # Raft consensus
 openraft = { workspace = true }
 rocksdb = { workspace = true }
-byteorder = { workspace = true }
 
 # gRPC
 tonic = { workspace = true }
