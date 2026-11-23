@@ -1161,4 +1161,70 @@ mod tests {
         // Non-existent protocol should return None
         assert!(manager.get_protocol_adapter("eureka").is_none());
     }
+
+    struct ShutdownOrderAdapter {
+        id: &'static str,
+        priority: i32,
+        order: Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProtocolAdapterPlugin for ShutdownOrderAdapter {
+        fn name(&self) -> &str {
+            self.id
+        }
+
+        fn protocol(&self) -> &str {
+            self.id
+        }
+
+        fn is_enabled(&self) -> bool {
+            true
+        }
+
+        fn priority(&self) -> i32 {
+            self.priority
+        }
+
+        fn default_port(&self) -> u16 {
+            0
+        }
+
+        fn configure(&self, _cfg: &mut actix_web::web::ServiceConfig) {}
+
+        async fn shutdown(&self) -> anyhow::Result<()> {
+            self.order
+                .lock()
+                .expect("shutdown order mutex poisoned")
+                .push(self.id);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn protocol_adapters_shutdown_in_reverse_priority_order() {
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut manager = PluginManager::new();
+        manager.register_protocol_adapter(Arc::new(ShutdownOrderAdapter {
+            id: "late",
+            priority: 20,
+            order: order.clone(),
+        }));
+        manager.register_protocol_adapter(Arc::new(ShutdownOrderAdapter {
+            id: "early",
+            priority: 10,
+            order: order.clone(),
+        }));
+
+        manager
+            .shutdown_protocol_adapters()
+            .await
+            .expect("shutdown must succeed");
+
+        assert_eq!(
+            *order.lock().expect("shutdown order mutex poisoned"),
+            vec!["late", "early"],
+            "teardown must be the reverse of startup priority"
+        );
+    }
 }

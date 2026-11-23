@@ -69,14 +69,32 @@ use crate::{
     },
 };
 
+/// Join one gRPC listener task without letting an unresponsive listener hold
+/// up the whole shutdown sequence.
+async fn join_grpc_task(
+    name: &'static str,
+    handle: tokio::task::JoinHandle<()>,
+    deadline: std::time::Instant,
+) {
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    match tokio::time::timeout(remaining, handle).await {
+        Ok(Ok(())) => info!("{} server task stopped", name),
+        Ok(Err(error)) => warn!(error = %error, "{} server task panicked", name),
+        Err(_) => warn!(
+            "{} server task did not stop before the drain deadline",
+            name
+        ),
+    }
+}
+
 /// gRPC server configuration and state.
 pub struct GrpcServers {
-    /// Handle for the SDK gRPC server task.
-    _sdk_server: tokio::task::JoinHandle<()>,
-    /// Handle for the cluster gRPC server task.
-    _cluster_server: tokio::task::JoinHandle<()>,
+    /// Handle for the SDK gRPC server task. Taken and joined on shutdown.
+    sdk_server: Option<tokio::task::JoinHandle<()>>,
+    /// Handle for the cluster gRPC server task. Taken and joined on shutdown.
+    cluster_server: Option<tokio::task::JoinHandle<()>>,
     /// Handle for the Raft gRPC server task (only in distributed embedded mode).
-    _raft_server: Option<tokio::task::JoinHandle<()>>,
+    raft_server: Option<tokio::task::JoinHandle<()>>,
     /// Shutdown signal sender — dropping or sending signals graceful stop.
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     /// Per-server state trackers for health aggregation.
@@ -100,14 +118,33 @@ pub struct GrpcServers {
 }
 
 impl GrpcServers {
-    /// Signal all gRPC servers to stop accepting new connections and shut down gracefully.
-    pub fn shutdown(&self) {
+    /// Signal all gRPC servers to stop and join their tasks within `timeout`.
+    ///
+    /// The watch signal drives `serve_with_shutdown()` so in-flight RPCs get a
+    /// chance to finish. Joining the handles is what makes the drain
+    /// state-based: `Stopped` is only published after the listener task has
+    /// actually exited, or after the bounded timeout has elapsed.
+    pub async fn shutdown(&mut self, timeout: Duration) {
         self.sdk_state.set_draining();
         self.cluster_state.set_draining();
         self.raft_state.set_draining();
         let _ = self.shutdown_tx.send(true);
+
+        let deadline = std::time::Instant::now() + timeout;
+
+        if let Some(handle) = self.sdk_server.take() {
+            join_grpc_task("SDK gRPC", handle, deadline).await;
+        }
         self.sdk_state.set_stopped();
+
+        if let Some(handle) = self.cluster_server.take() {
+            join_grpc_task("cluster gRPC", handle, deadline).await;
+        }
         self.cluster_state.set_stopped();
+
+        if let Some(handle) = self.raft_server.take() {
+            join_grpc_task("Raft gRPC", handle, deadline).await;
+        }
         self.raft_state.set_stopped();
     }
 
@@ -1112,9 +1149,9 @@ pub fn start_grpc_servers(
     }
 
     Ok(GrpcServers {
-        _sdk_server: sdk_server,
-        _cluster_server: cluster_server,
-        _raft_server: raft_server_handle,
+        sdk_server: Some(sdk_server),
+        cluster_server: Some(cluster_server),
+        raft_server: raft_server_handle,
         shutdown_tx,
         sdk_state,
         cluster_state,

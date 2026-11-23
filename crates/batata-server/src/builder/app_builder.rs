@@ -21,6 +21,7 @@
 //! 13. Graceful shutdown
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use batata_auth::service::oauth::OAuthService;
@@ -39,6 +40,56 @@ use crate::startup::{
     PersistenceIstioMcpConfigProvider, XdsServerHandle, start_istio_mcp_service, start_xds_service,
 };
 
+/// Tracks tokio tasks owned by the server startup path so shutdown can cancel
+/// and join them instead of relying on runtime teardown.
+#[derive(Clone, Default)]
+struct BackgroundTasks {
+    tasks: Arc<std::sync::Mutex<Vec<(&'static str, tokio::task::JoinHandle<()>)>>>,
+}
+
+impl BackgroundTasks {
+    fn push(&self, name: &'static str, handle: tokio::task::JoinHandle<()>) {
+        if let Ok(mut tasks) = self.tasks.lock() {
+            tasks.push((name, handle));
+        }
+    }
+
+    fn spawn<F>(&self, name: &'static str, future: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.push(name, tokio::spawn(future));
+    }
+
+    fn len(&self) -> usize {
+        self.tasks
+            .lock()
+            .map(|tasks| tasks.len())
+            .unwrap_or_default()
+    }
+
+    async fn shutdown(&self, timeout: Duration) {
+        let owned = self
+            .tasks
+            .lock()
+            .map(|mut tasks| std::mem::take(&mut *tasks))
+            .unwrap_or_default();
+        let deadline = std::time::Instant::now() + timeout;
+        for (name, handle) in owned {
+            handle.abort();
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            match tokio::time::timeout(remaining, handle).await {
+                Ok(Ok(())) => info!(task = name, "background task stopped"),
+                Ok(Err(error)) if error.is_cancelled() => {
+                    info!(task = name, "background task aborted")
+                }
+                Ok(Err(error)) => warn!(task = name, error = %error, "background task panicked"),
+                Err(_) => warn!(task = name, "background task join timed out"),
+            }
+        }
+    }
+}
+
 /// Application builder - orchestrates the full initialization sequence
 ///
 /// This struct holds all intermediate state during server startup
@@ -48,15 +99,16 @@ pub struct AppBuilder {
     configuration: Option<Arc<Configuration>>,
     otel_config: Option<OtelConfig>,
     _logging_guard: Option<startup::LoggingGuard>,
-    _system_stats_handle: Option<tokio::task::JoinHandle<()>>,
-    _rate_limit_cleanup_handle: Option<tokio::task::JoinHandle<()>>,
+    background_tasks: BackgroundTasks,
+    startup_complete: Arc<AtomicBool>,
 
     // Phase 2: Deployment mode
     deployment_mode: DeploymentMode,
     is_console_remote: bool,
 
-    // Phase 2.5: Plugin manager
-    plugin_manager: Option<batata_plugin::spi::PluginManager>,
+    // Phase 2.5: Plugin manager. One shared instance is used by protocol
+    // adapters, config-change hooks, state reporting and shutdown.
+    plugin_manager: Option<Arc<batata_plugin::spi::PluginManager>>,
     #[cfg(feature = "consul")]
     consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>>,
     #[cfg(feature = "apollo")]
@@ -101,8 +153,8 @@ impl AppBuilder {
             configuration: None,
             otel_config: None,
             _logging_guard: None,
-            _system_stats_handle: None,
-            _rate_limit_cleanup_handle: None,
+            background_tasks: BackgroundTasks::default(),
+            startup_complete: Arc::new(AtomicBool::new(false)),
             deployment_mode: DeploymentMode::Merged,
             is_console_remote: false,
             plugin_manager: None,
@@ -143,7 +195,7 @@ impl AppBuilder {
         info!("[Phase 1] Loading configuration and initializing logging...");
 
         let configuration = Configuration::new()?;
-        validate_config(&configuration);
+        validate_config(&configuration)?;
 
         let logging_config = startup::LoggingConfig::from_config(
             configuration.log_dir(),
@@ -171,21 +223,24 @@ impl AppBuilder {
 
         crate::metrics::init_metrics();
 
-        let system_stats_handle = if configuration.metrics_system_stats_enabled() {
+        if configuration.metrics_system_stats_enabled() {
             let interval_secs = configuration.metrics_system_stats_interval_secs();
             tracing::info!(
                 "Starting system stats reporter with interval of {} seconds",
                 interval_secs
             );
-            Some(crate::metrics::start_system_stats_reporter(Some(
-                interval_secs,
-            )))
+            self.background_tasks.push(
+                "system-stats-reporter",
+                crate::metrics::start_system_stats_reporter(Some(interval_secs)),
+            );
         } else {
             tracing::info!("System stats reporter is disabled");
-            None
-        };
+        }
 
-        let rate_limit_cleanup_handle = crate::middleware::rate_limit::start_cleanup_task();
+        self.background_tasks.push(
+            "rate-limit-cleanup",
+            crate::middleware::rate_limit::start_cleanup_task(),
+        );
 
         // Initialize auth caches. Every auth cache in the process (token,
         // blacklist, roles, permissions, RBAC) is sized and switched from the
@@ -218,8 +273,6 @@ impl AppBuilder {
         self.configuration = Some(Arc::new(configuration));
         self.otel_config = Some(otel_config);
         self._logging_guard = Some(logging_guard);
-        self._system_stats_handle = system_stats_handle;
-        self._rate_limit_cleanup_handle = Some(rate_limit_cleanup_handle);
 
         info!("Phase 1 complete - configuration loaded, logging initialized");
         Ok(self)
@@ -312,7 +365,9 @@ impl AppBuilder {
         // Collect plugin CFs before creating RocksDB
         let plugin_cf_names = plugin_manager.collect_plugin_column_families();
 
-        self.plugin_manager = Some(plugin_manager);
+        // Wrap once here. Later phases register built-in plugins through
+        // `Arc::get_mut` before this Arc is shared with AppState.
+        self.plugin_manager = Some(Arc::new(plugin_manager));
         self.plugin_cf_names = plugin_cf_names;
 
         info!("Phase 2 complete - plugins registered");
@@ -537,19 +592,32 @@ impl AppBuilder {
         let control_plugin_for_self = control_plugin.clone();
         let auth_plugin_for_self = auth_plugin.clone();
 
-        // Initialize plugin manager with built-in plugins
-        let mut plugin_manager = PluginManager::new();
-        // Register audit plugin
-        plugin_manager.register_config_change_v2(Arc::new(batata_plugin::AuditPlugin::new(
-            Arc::new(batata_plugin::InMemoryAuditLogStore::new(10000)),
-        )));
-        // Register webhook config change plugin (bridges config changes to webhook delivery)
-        let webhook_plugin: Arc<dyn batata_plugin::WebhookPlugin> =
-            Arc::new(batata_plugin::DefaultWebhookPlugin::new());
-        plugin_manager.register_config_change_v2(Arc::new(
-            batata_plugin::WebhookConfigChangePlugin::new(webhook_plugin),
-        ));
-        let plugin_manager = Arc::new(plugin_manager);
+        // Register built-in plugins on the same manager created in Phase 2.
+        // `Arc::get_mut` is valid here because AppState has not taken its
+        // reference yet; after this point the manager is immutable and shared.
+        {
+            let shared = self
+                .plugin_manager
+                .as_mut()
+                .expect("plugin manager must be created before services");
+            let plugin_manager = Arc::get_mut(shared)
+                .expect("plugin manager must not be shared before built-in registration");
+
+            // Register audit plugin
+            plugin_manager.register_config_change_v2(Arc::new(batata_plugin::AuditPlugin::new(
+                Arc::new(batata_plugin::InMemoryAuditLogStore::new(10000)),
+            )));
+            // Register webhook config change plugin (bridges config changes to webhook delivery)
+            let webhook_plugin: Arc<dyn batata_plugin::WebhookPlugin> =
+                Arc::new(batata_plugin::DefaultWebhookPlugin::new());
+            plugin_manager.register_config_change_v2(Arc::new(
+                batata_plugin::WebhookConfigChangePlugin::new(webhook_plugin),
+            ));
+        }
+        let plugin_manager = self
+            .plugin_manager
+            .clone()
+            .expect("plugin manager must be created before services");
 
         // Build app state
         let app_state = Arc::new(AppState {
@@ -578,12 +646,11 @@ impl AppBuilder {
             connection_manager: Arc::new(std::sync::OnceLock::new()),
         });
 
-        if !app_state.configuration.data_warmup() {
-            server_status.set_up();
-            info!("Server status: UP (data warmup disabled)");
-        } else {
-            info!("Server status: STARTING (data warmup enabled, waiting for subsystems)");
-        }
+        // Stay STARTING until the final startup barrier in Phase 12 (or the
+        // console-remote barrier in Phase 6). The gRPC status gate relies on
+        // this: UP must not be published before Raft, plugins and listeners
+        // are ready to serve traffic.
+        info!("Server status: STARTING (waiting for startup completion)");
 
         self.config_subscriber_manager = Some(config_subscriber_manager);
         self.naming_service_concrete = naming_service_concrete;
@@ -681,6 +748,7 @@ impl AppBuilder {
             graceful_shutdown,
             server_status,
             database_connection,
+            &self.startup_complete,
         )
         .await?;
 
@@ -810,6 +878,7 @@ impl AppBuilder {
             &self.health_check_manager,
             &self.naming_service_concrete,
             self.server_status.as_ref(),
+            &self.background_tasks,
         );
 
         // Start warmup poller
@@ -817,13 +886,15 @@ impl AppBuilder {
             app_state,
             server_status,
             persistence_ctx.server_member_manager.as_ref(),
+            self.startup_complete.clone(),
+            &self.background_tasks,
         );
 
         // Start MCP index refresh
-        start_mcp_index_refresh(ai_services, app_state);
+        start_mcp_index_refresh(ai_services, app_state, &self.background_tasks);
 
         // Start the AI resource search index consumer
-        start_ai_search_index_consumer(app_state);
+        start_ai_search_index_consumer(app_state, &self.background_tasks);
 
         info!("Phase 8 complete - background tasks started");
         Ok(self)
@@ -961,13 +1032,15 @@ impl AppBuilder {
                 ),
             );
 
+            let broadcast_tasks = self.background_tasks.clone();
             batata_auth::service::rbac_cache::set_peer_invalidator(Arc::new(
                 move |kind: &str, target: &str| {
                     let broadcaster = broadcaster.clone();
                     let kind = kind.to_owned();
                     let target = target.to_owned();
-
-                    tokio::spawn(async move { broadcaster.broadcast(&kind, &target).await });
+                    broadcast_tasks.spawn("auth-cache-broadcast", async move {
+                        broadcaster.broadcast(&kind, &target).await
+                    });
                 },
             ));
 
@@ -989,7 +1062,10 @@ impl AppBuilder {
         let app_state = self.app_state.as_ref().unwrap();
         let grpc_servers = self.grpc_servers.as_ref().unwrap();
         let ai_services = self.ai_services.as_ref().unwrap().clone();
-        let plugin_manager = self.plugin_manager.as_ref().unwrap();
+        let plugin_manager = app_state
+            .plugin_manager
+            .as_ref()
+            .expect("shared plugin manager must be present in AppState");
         let graceful_shutdown = self.graceful_shutdown.as_ref().unwrap();
         let server_registry = self.server_registry.as_ref().unwrap();
         let encryption_service = self.encryption_service.as_ref().unwrap().clone();
@@ -1013,6 +1089,10 @@ impl AppBuilder {
             plugin_manager,
             graceful_shutdown,
             server_registry,
+            &self.startup_complete,
+            self.persistence_ctx
+                .as_ref()
+                .and_then(|ctx| ctx.server_member_manager.as_ref()),
         )
         .await?;
 
@@ -1031,7 +1111,7 @@ impl AppBuilder {
         let server_status = self.server_status.as_ref().unwrap();
         let graceful_shutdown = self.graceful_shutdown.as_ref().unwrap();
         let app_state = self.app_state.as_ref().unwrap();
-        let grpc_servers = self.grpc_servers.as_ref().unwrap();
+        let grpc_servers = self.grpc_servers.as_mut().unwrap();
         let xds_handle = self.xds_handle.take();
         let istio_mcp_handle = self.istio_mcp_handle.take();
         let persistence_ctx = self.persistence_ctx.as_ref().unwrap();
@@ -1047,6 +1127,8 @@ impl AppBuilder {
             persistence_ctx.server_member_manager.as_ref(),
             persistence_ctx.database_connection.clone(),
             server_registry,
+            &self.background_tasks,
+            self.health_check_manager.as_ref(),
         )
         .await;
 
@@ -1107,8 +1189,12 @@ impl Default for AppBuilder {
 // Helper functions (moved from main.rs)
 // ============================================================================
 
-/// Validate configuration and exit on fatal errors.
-fn validate_config(configuration: &Configuration) {
+/// Validate mandatory configuration.
+///
+/// Startup failures unwind through `AppBuilder::run()` like every other phase
+/// instead of calling `process::exit()` from library code. The process still
+/// exits nonzero via `main`, but guards and buffered state can unwind normally.
+fn validate_config(configuration: &Configuration) -> Result<(), Box<dyn std::error::Error>> {
     if configuration.auth_enabled() && configuration.token_secret_key().is_empty() {
         eprintln!(
             "FATAL: Authentication is enabled (batata.core.auth.enabled=true) but no JWT secret key is configured."
@@ -1116,7 +1202,7 @@ fn validate_config(configuration: &Configuration) {
         eprintln!(
             "Set 'batata.core.auth.plugin.default.token.secret.key' to a non-empty Base64-encoded secret."
         );
-        std::process::exit(1);
+        return Err("authentication enabled without a JWT secret key".into());
     }
 
     const DEFAULT_SECRET_KEYS: &[&str] = &[
@@ -1131,6 +1217,8 @@ fn validate_config(configuration: &Configuration) {
         eprintln!("Generate a new key with: openssl rand -base64 32");
         eprintln!("Set it via: batata.core.auth.plugin.default.token.secret.key=<your-key>");
     }
+
+    Ok(())
 }
 
 /// Initialize OAuth service if enabled.
@@ -1260,13 +1348,18 @@ fn start_health_checkers(
     health_check_manager: &Option<Arc<HealthCheckManager>>,
     naming_service: &Option<Arc<batata_naming::NamingService>>,
     server_status: Option<&Arc<ServerStatusManager>>,
+    tasks: &BackgroundTasks,
 ) {
     if let Some(hc_manager) = health_check_manager {
         let hc1 = hc_manager.clone();
-        tokio::spawn(async move { hc1.unhealthy_checker().start().await });
+        tasks.spawn("unhealthy-instance-checker", async move {
+            hc1.unhealthy_checker().start().await
+        });
 
         let hc2 = hc_manager.clone();
-        tokio::spawn(async move { hc2.expired_checker().start().await });
+        tasks.spawn("expired-instance-checker", async move {
+            hc2.expired_checker().start().await
+        });
 
         info!("Health check manager started (unhealthy/expired instance checkers)");
     }
@@ -1281,7 +1374,10 @@ fn start_health_checkers(
             Some(status) => cleaner.with_status(status.clone()),
             None => cleaner,
         };
-        tokio::spawn(async move { cleaner.start().await });
+        tasks.spawn(
+            "empty-service-cleaner",
+            async move { cleaner.start().await },
+        );
         info!("Empty service cleaner started");
     }
 }
@@ -1299,10 +1395,129 @@ fn start_health_checkers(
 ///
 /// When data warmup is disabled the readiness computation short-circuits to UP, matching
 /// Nacos `isReady()` which returns `true` when `!isDataWarmup()`.
+#[derive(Debug, PartialEq, Eq)]
+enum ReadinessDecision {
+    Up,
+    Down(Vec<String>),
+}
+
+/// Pure readiness computation shared by the poller and the final startup
+/// barrier. Keeping it pure makes the DB/Raft/Distro composition testable
+/// without binding ports or opening RocksDB.
+fn readiness_decision(
+    data_warmup: bool,
+    db_ready: bool,
+    raft_ready: bool,
+    raft_reason: Option<String>,
+    distro_ready: bool,
+) -> ReadinessDecision {
+    if !data_warmup {
+        return ReadinessDecision::Up;
+    }
+
+    let mut reasons = Vec::new();
+    if !db_ready {
+        reasons.push("database not ready".to_string());
+    }
+    if !raft_ready {
+        reasons.push(raft_reason.unwrap_or_else(|| "raft not ready".to_string()));
+    }
+    if !distro_ready {
+        reasons.push("distro initial data not loaded".to_string());
+    }
+
+    if reasons.is_empty() {
+        ReadinessDecision::Up
+    } else {
+        ReadinessDecision::Down(reasons)
+    }
+}
+
+/// Recompute server status from the live subsystem state.
+///
+/// Returns the resulting `is_up()` so the final startup barrier can log the
+/// same signal the poller will continue to maintain.
+#[allow(clippy::too_many_arguments)]
+async fn refresh_server_status(
+    status_mgr: &Arc<ServerStatusManager>,
+    console_ds: &Arc<dyn batata_console::ConsoleDataSource>,
+    raft_ref: &Option<Arc<batata_consistency::RaftNode>>,
+    is_standalone: bool,
+    server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
+    data_warmup: bool,
+    startup_complete: &AtomicBool,
+) -> bool {
+    // Operator override wins over everything (Nacos parity).
+    if let Some(overridden) = status_mgr.overridden() {
+        status_mgr.set_overridden(overridden);
+        status_mgr.set_error_msg(None).await;
+        return status_mgr.is_up();
+    }
+
+    // Before the final barrier the process is intentionally STARTING. The
+    // gRPC gate uses this to reject traffic while Raft/plugins/listeners are
+    // still coming up, matching Nacos `ApplicationUtils.isStarted()`.
+    if !startup_complete.load(Ordering::Acquire) {
+        return status_mgr.is_up();
+    }
+
+    let db_ready = console_ds.server_readiness().await;
+    let (raft_ready, raft_reason) = match raft_ref {
+        Some(raft) => raft.is_ready(),
+        None => (true, None),
+    };
+    let distro_ready = if is_standalone {
+        true
+    } else if let Some(smm) = server_member_manager {
+        smm.is_distro_initialized().await
+    } else {
+        true
+    };
+
+    match readiness_decision(data_warmup, db_ready, raft_ready, raft_reason, distro_ready) {
+        ReadinessDecision::Up => {
+            if !status_mgr.is_up() {
+                status_mgr.set_up();
+                info!("Server status: UP (all subsystems ready)");
+            }
+            status_mgr.set_error_msg(None).await;
+        }
+        ReadinessDecision::Down(reasons) => {
+            status_mgr.set_down();
+            status_mgr.set_error_msg(Some(reasons.join(", "))).await;
+        }
+    }
+
+    status_mgr.is_up()
+}
+
+/// Publish the final startup barrier and immediately evaluate status once so
+/// readiness does not wait for the next 5s poller tick.
+async fn complete_startup(
+    app_state: &Arc<AppState>,
+    server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
+    startup_complete: &AtomicBool,
+) {
+    startup_complete.store(true, Ordering::Release);
+    let up = refresh_server_status(
+        &app_state.server_status,
+        &app_state.console_datasource,
+        &app_state.raft_node,
+        app_state.configuration.is_standalone(),
+        server_member_manager,
+        app_state.configuration.data_warmup(),
+        startup_complete,
+    )
+    .await;
+    info!(up, "Final startup barrier complete");
+}
+
 fn start_warmup_poller(
     app_state: &Arc<AppState>,
     server_status: &Arc<ServerStatusManager>,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
+    startup_complete: Arc<AtomicBool>,
+    tasks: &BackgroundTasks,
 ) {
     let data_warmup = app_state.configuration.data_warmup();
 
@@ -1312,64 +1527,21 @@ fn start_warmup_poller(
     let is_standalone = app_state.configuration.is_standalone();
     let smm_clone = server_member_manager.cloned();
 
-    tokio::spawn(async move {
+    tasks.spawn("warmup-status-poller", async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
 
         loop {
             interval.tick().await;
-
-            // Operator override wins over everything (Nacos parity).
-            if let Some(overridden) = status_mgr.overridden() {
-                status_mgr.set_overridden(overridden);
-                status_mgr.set_error_msg(None).await;
-                continue;
-            }
-
-            // Data warmup disabled → always ready (Nacos `isReady()` short-circuit).
-            if !data_warmup {
-                if !status_mgr.is_up() {
-                    status_mgr.set_up();
-                    status_mgr.set_error_msg(None).await;
-                    info!("Server status: UP (data warmup disabled)");
-                }
-                continue;
-            }
-
-            let db_ready = console_ds.server_readiness().await;
-            let (raft_ready, raft_reason) = match &raft_ref {
-                Some(raft) => raft.is_ready(),
-                None => (true, None),
-            };
-
-            let distro_ready = if is_standalone {
-                true
-            } else if let Some(ref smm) = smm_clone {
-                smm.is_distro_initialized().await
-            } else {
-                true
-            };
-
-            if db_ready && raft_ready && distro_ready {
-                if !status_mgr.is_up() {
-                    status_mgr.set_up();
-                    status_mgr.set_error_msg(None).await;
-                    info!("Server status: UP (all subsystems ready)");
-                }
-            } else {
-                let mut reasons = Vec::new();
-                if !db_ready {
-                    reasons.push("database not ready".to_string());
-                }
-                if let Some(reason) = raft_reason {
-                    reasons.push(reason);
-                }
-                if !distro_ready {
-                    reasons.push("distro initial data not loaded".to_string());
-                }
-                let msg = reasons.join(", ");
-                status_mgr.set_down();
-                status_mgr.set_error_msg(Some(msg)).await;
-            }
+            refresh_server_status(
+                &status_mgr,
+                &console_ds,
+                &raft_ref,
+                is_standalone,
+                smm_clone.as_ref(),
+                data_warmup,
+                &startup_complete,
+            )
+            .await;
         }
     });
 
@@ -1377,14 +1549,18 @@ fn start_warmup_poller(
 }
 
 /// Start periodic MCP index refresh if persistence is available.
-fn start_mcp_index_refresh(ai_services: &AIServices, app_state: &Arc<AppState>) {
+fn start_mcp_index_refresh(
+    ai_services: &AIServices,
+    app_state: &Arc<AppState>,
+    tasks: &BackgroundTasks,
+) {
     if let Some(ref mcp_index) = ai_services.mcp_index
         && let Some(ref persist) = app_state.persistence
     {
         let index = mcp_index.clone();
         let persist = persist.clone();
 
-        tokio::spawn(async move {
+        tasks.spawn("mcp-index-refresh", async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 index.refresh(persist.as_ref()).await;
@@ -1399,7 +1575,7 @@ fn start_mcp_index_refresh(ai_services: &AIServices, app_state: &Arc<AppState>) 
 ///
 /// Polls durable `search_index` tasks and converges the relational index.
 /// Skipped when there is no local persistence (remote console deployments).
-fn start_ai_search_index_consumer(app_state: &Arc<AppState>) {
+fn start_ai_search_index_consumer(app_state: &Arc<AppState>, tasks: &BackgroundTasks) {
     let Some(ref persist) = app_state.persistence else {
         return;
     };
@@ -1407,7 +1583,7 @@ fn start_ai_search_index_consumer(app_state: &Arc<AppState>) {
     let consumer = batata_ai::search::consumer::AiResourceIndexConsumer::new(persist.clone());
     let interval_secs = batata_ai::search::consumer::DEFAULT_INTERVAL_SECONDS;
 
-    tokio::spawn(async move {
+    tasks.spawn("ai-search-index-consumer", async move {
         let mut timer = tokio::time::interval(Duration::from_secs(interval_secs));
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -1501,6 +1677,7 @@ async fn run_console_remote(
     graceful_shutdown: GracefulShutdown,
     server_status: Arc<ServerStatusManager>,
     database_connection: Option<sea_orm::DatabaseConnection>,
+    startup_complete: &AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let console_server_port = app_state.configuration.console_server_port();
     let console_context_path = app_state.configuration.console_server_context_path();
@@ -1512,13 +1689,17 @@ async fn run_console_remote(
     );
 
     let console_server = startup::console_server(
-        app_state,
+        app_state.clone(),
         None,
         ai_services,
         console_context_path,
         console_server_address,
         console_server_port,
     )?;
+
+    // Console-remote has no Raft/plugins, so the listener bind is the final
+    // barrier. This also fixes the historical mode that never set UP at all.
+    complete_startup(&app_state, None, startup_complete).await;
 
     tokio::select! {
         result = console_server => {
@@ -1540,6 +1721,83 @@ async fn run_console_remote(
     Ok(())
 }
 
+struct ManagedHttpServer {
+    name: &'static str,
+    state: batata_core::ServerStateTracker,
+    handle: actix_web::dev::ServerHandle,
+}
+
+/// Spawn an actix server as a tracked task and register its state so shutdown
+/// can observe the transition Running → Draining → Stopped.
+fn register_http_server(
+    name: &'static str,
+    server: actix_web::dev::Server,
+    state: batata_core::ServerStateTracker,
+    server_registry: &Arc<batata_core::ServerRegistry>,
+    tasks: &mut tokio::task::JoinSet<()>,
+) -> ManagedHttpServer {
+    let handle = server.handle();
+    state.set_running();
+    server_registry.register(name, batata_core::ServerType::Http, state.clone());
+    tasks.spawn(async move {
+        if let Err(error) = server.await {
+            error!(name, error = %error, "HTTP server stopped with error");
+        }
+    });
+    ManagedHttpServer {
+        name,
+        state,
+        handle,
+    }
+}
+
+/// Stop every HTTP listener gracefully and wait for their tasks to exit.
+///
+/// This replaces the old fixed sleep: `ServerHandle::stop(true)` stops
+/// accepting connections and waits for in-flight requests, and the task join
+/// is bounded by the configured drain timeout.
+async fn drain_http_servers(
+    servers: Vec<ManagedHttpServer>,
+    tasks: &mut tokio::task::JoinSet<()>,
+    timeout: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    for server in &servers {
+        server.state.set_draining();
+    }
+
+    let states: Vec<_> = servers
+        .iter()
+        .map(|server| (server.name, server.state.clone()))
+        .collect();
+
+    let mut stop_tasks = tokio::task::JoinSet::new();
+    for server in servers {
+        stop_tasks.spawn(async move {
+            server.handle.stop(true).await;
+            server.state.set_stopped();
+            info!(server = server.name, "HTTP server stopped gracefully");
+        });
+    }
+
+    let stop_drain = async { while stop_tasks.join_next().await.is_some() {} };
+    if tokio::time::timeout_at(deadline, stop_drain).await.is_err() {
+        warn!("HTTP graceful stop did not complete before the drain deadline");
+        stop_tasks.abort_all();
+        for (name, state) in states {
+            state.set_stopped();
+            warn!(server = name, "HTTP server forced to Stopped after timeout");
+        }
+    }
+
+    let task_drain = async { while tasks.join_next().await.is_some() {} };
+    if tokio::time::timeout_at(deadline, task_drain).await.is_err() {
+        warn!("HTTP server tasks did not exit before the drain deadline");
+        tasks.abort_all();
+    }
+}
+
 /// Start HTTP servers based on deployment type and wait for shutdown signal.
 #[allow(clippy::too_many_arguments)]
 async fn run_http_servers(
@@ -1550,9 +1808,11 @@ async fn run_http_servers(
     ai_services: AIServices,
     distro_for_http: Option<Arc<batata_core::service::distro::DistroProtocol>>,
     encryption_service: Arc<batata_config::service::encryption::ConfigEncryptionService>,
-    plugin_manager: &batata_plugin::spi::PluginManager,
+    plugin_manager: &Arc<PluginManager>,
     graceful_shutdown: &GracefulShutdown,
     server_registry: &Arc<batata_core::ServerRegistry>,
+    startup_complete: &AtomicBool,
+    server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let server_address = app_state.configuration.server_address();
     let server_main_port = app_state.configuration.server_main_port();
@@ -1561,8 +1821,8 @@ async fn run_http_servers(
         || matches!(deployment_mode, DeploymentMode::ServerWithMcp);
     let mcp_registry_port = app_state.configuration.mcp_registry_port();
 
-    let main_http_state = batata_core::ServerStateTracker::new();
-    let console_http_state = batata_core::ServerStateTracker::new();
+    let mut server_tasks = tokio::task::JoinSet::new();
+    let mut http_servers = Vec::new();
 
     match deployment_mode {
         DeploymentMode::Console => {
@@ -1577,14 +1837,13 @@ async fn run_http_servers(
                 console_server_port,
             )?;
 
-            tokio::select! {
-                result = console => {
-                    if let Err(e) = result { error!("Console server error: {}", e); }
-                }
-                _ = graceful_shutdown.wait_for_shutdown() => {
-                    info!("Console server shutting down gracefully");
-                }
-            }
+            http_servers.push(register_http_server(
+                "Console HTTP Server",
+                console,
+                batata_core::ServerStateTracker::new(),
+                server_registry,
+                &mut server_tasks,
+            ));
         }
         DeploymentMode::Server | DeploymentMode::ServerWithMcp => {
             info!(
@@ -1608,12 +1867,13 @@ async fn run_http_servers(
                 grpc_servers.cluster_client_manager().clone(),
             )?;
 
-            main_http_state.set_running();
-            server_registry.register(
+            http_servers.push(register_http_server(
                 "Main HTTP Server",
-                batata_core::ServerType::Http,
-                main_http_state.clone(),
-            );
+                main,
+                batata_core::ServerStateTracker::new(),
+                server_registry,
+                &mut server_tasks,
+            ));
 
             let plugin_servers = build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
@@ -1627,25 +1887,22 @@ async fn run_http_servers(
             plugin_manager.start_protocol_adapter_tasks().await?;
 
             for server in plugin_servers {
-                tokio::spawn(async move {
-                    if let Err(e) = server.await {
-                        error!("Plugin server error: {}", e);
-                    }
-                });
+                http_servers.push(register_http_server(
+                    "Plugin HTTP Server",
+                    server,
+                    batata_core::ServerStateTracker::new(),
+                    server_registry,
+                    &mut server_tasks,
+                ));
             }
-
-            tokio::select! {
-                result = async {
-                    tokio::try_join!(
-                        main,
-                        async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
-                    )
-                } => {
-                    if let Err(e) = result { error!("Server error: {}", e); }
-                }
-                _ = graceful_shutdown.wait_for_shutdown() => {
-                    info!("All servers shutting down gracefully");
-                }
+            if let Some(server) = mcp_registry_opt {
+                http_servers.push(register_http_server(
+                    "MCP Registry Server",
+                    server,
+                    batata_core::ServerStateTracker::new(),
+                    server_registry,
+                    &mut server_tasks,
+                ));
             }
         }
         DeploymentMode::Merged => {
@@ -1666,12 +1923,13 @@ async fn run_http_servers(
                 console_server_port,
             )?;
 
-            console_http_state.set_running();
-            server_registry.register(
+            http_servers.push(register_http_server(
                 "Console HTTP Server",
-                batata_core::ServerType::Http,
-                console_http_state.clone(),
-            );
+                console,
+                batata_core::ServerStateTracker::new(),
+                server_registry,
+                &mut server_tasks,
+            ));
 
             info!(
                 "Starting Batata main server on {}:{}",
@@ -1684,7 +1942,7 @@ async fn run_http_servers(
                 grpc_servers.config_change_notifier().clone(),
                 ai_services.clone(),
                 distro_for_http,
-                encryption_service,
+                encryption_service.clone(),
                 server_context_path,
                 server_address.clone(),
                 server_main_port,
@@ -1692,12 +1950,13 @@ async fn run_http_servers(
                 grpc_servers.cluster_client_manager().clone(),
             )?;
 
-            main_http_state.set_running();
-            server_registry.register(
+            http_servers.push(register_http_server(
                 "Main HTTP Server",
-                batata_core::ServerType::Http,
-                main_http_state.clone(),
-            );
+                main,
+                batata_core::ServerStateTracker::new(),
+                server_registry,
+                &mut server_tasks,
+            ));
 
             let plugin_servers = build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
@@ -1711,29 +1970,48 @@ async fn run_http_servers(
             plugin_manager.start_protocol_adapter_tasks().await?;
 
             for server in plugin_servers {
-                tokio::spawn(async move {
-                    if let Err(e) = server.await {
-                        error!("Plugin server error: {}", e);
-                    }
-                });
+                http_servers.push(register_http_server(
+                    "Plugin HTTP Server",
+                    server,
+                    batata_core::ServerStateTracker::new(),
+                    server_registry,
+                    &mut server_tasks,
+                ));
             }
-
-            tokio::select! {
-                result = async {
-                    tokio::try_join!(
-                        console,
-                        main,
-                        async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
-                    )
-                } => {
-                    if let Err(e) = result { error!("Server error: {}", e); }
-                }
-                _ = graceful_shutdown.wait_for_shutdown() => {
-                    info!("All servers shutting down gracefully");
-                }
+            if let Some(server) = mcp_registry_opt {
+                http_servers.push(register_http_server(
+                    "MCP Registry Server",
+                    server,
+                    batata_core::ServerStateTracker::new(),
+                    server_registry,
+                    &mut server_tasks,
+                ));
             }
         }
     }
+
+    complete_startup(app_state, server_member_manager, startup_complete).await;
+
+    let trigger = tokio::select! {
+        Some(result) = server_tasks.join_next() => {
+            if let Err(error) = result {
+                error!(error = %error, "HTTP server task failed");
+            }
+            "server-exit"
+        }
+        _ = graceful_shutdown.wait_for_shutdown() => {
+            info!("All servers shutting down gracefully");
+            "shutdown-signal"
+        }
+    };
+
+    info!(trigger, "Stopping HTTP server group");
+    drain_http_servers(
+        http_servers,
+        &mut server_tasks,
+        graceful_shutdown.drain_timeout(),
+    )
+    .await;
 
     Ok(())
 }
@@ -1743,7 +2021,7 @@ async fn run_http_servers(
 fn build_plugin_servers(
     app_state: &Arc<AppState>,
     grpc_servers: &startup::GrpcServers,
-    plugin_manager: &batata_plugin::spi::PluginManager,
+    plugin_manager: &Arc<PluginManager>,
 ) -> Result<Vec<actix_web::dev::Server>, Box<dyn std::error::Error>> {
     let mut servers = Vec::new();
     let server_address = app_state.configuration.server_address();
@@ -1809,16 +2087,19 @@ fn build_mcp_registry(
 }
 
 /// Execute graceful shutdown sequence with per-server state tracking.
+#[allow(clippy::too_many_arguments)]
 async fn graceful_shutdown_sequence(
     server_status: &Arc<ServerStatusManager>,
     graceful_shutdown: &GracefulShutdown,
     app_state: &Arc<AppState>,
-    grpc_servers: &startup::GrpcServers,
+    grpc_servers: &mut startup::GrpcServers,
     xds_handle: Option<XdsServerHandle>,
     istio_mcp_handle: Option<IstioMcpServerHandle>,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
     database_connection: Option<sea_orm::DatabaseConnection>,
     server_registry: &Arc<batata_core::ServerRegistry>,
+    background_tasks: &BackgroundTasks,
+    health_check_manager: Option<&Arc<HealthCheckManager>>,
 ) {
     let states = server_registry.health();
 
@@ -1840,11 +2121,12 @@ async fn graceful_shutdown_sequence(
         drain_timeout.as_secs()
     );
 
-    grpc_servers.shutdown();
-    info!("gRPC servers signaled to shut down");
-
-    let drain_sleep = drain_timeout.min(Duration::from_secs(5));
-    tokio::time::sleep(drain_sleep).await;
+    // The watch signal and task joins replace the old fixed sleep. Stopped
+    // state is published only after each gRPC listener task has exited (or the
+    // bounded deadline elapsed), which is the contract in
+    // `batata_core::ManagedServer::shutdown`.
+    grpc_servers.shutdown(drain_timeout).await;
+    info!("gRPC servers stopped");
 
     server_status.set_down();
     info!("Server status: DOWN");
@@ -1861,9 +2143,25 @@ async fn graceful_shutdown_sequence(
         info!("Istio MCP service stopped");
     }
 
-    if app_state.health_check_manager.is_some() {
-        info!("Health check manager will be stopped (background tasks cancelled on drop)");
+    if let Some(manager) = health_check_manager {
+        info!("Stopping health check manager...");
+        manager.shutdown().await;
+        info!("Health check manager stopped");
     }
+
+    if let Some(plugin_manager) = &app_state.plugin_manager {
+        info!("Shutting down protocol adapters...");
+        if let Err(error) = plugin_manager.shutdown_protocol_adapters().await {
+            warn!(error = %error, "Protocol adapter shutdown reported an error");
+        }
+        info!("Protocol adapters stopped");
+    }
+
+    info!(
+        tracked = background_tasks.len(),
+        "Stopping background tasks"
+    );
+    background_tasks.shutdown(drain_timeout).await;
 
     if let Some(smm) = server_member_manager
         && !app_state.configuration.is_standalone()
@@ -1901,4 +2199,157 @@ async fn graceful_shutdown_sequence(
             .map(|s| format!("{}={}", s.name, s.state))
             .collect::<Vec<_>>()
     );
+}
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+    use config::Config;
+
+    const SOURCE: &str = include_str!("app_builder.rs");
+
+    fn config_with_auth(secret: &str) -> Configuration {
+        let config = Config::builder()
+            .set_override("batata.core.auth.enabled", true)
+            .unwrap()
+            .set_override(
+                "batata.core.auth.plugin.default.token.secret.key",
+                secret.to_string(),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let typed = config.get("batata").unwrap_or_default();
+        Configuration { config, typed }
+    }
+
+    #[test]
+    fn invalid_config_returns_error_instead_of_exiting_process() {
+        let configuration = config_with_auth("");
+        let error = validate_config(&configuration).expect_err("empty JWT secret must fail");
+        assert!(
+            error.to_string().contains("JWT secret key"),
+            "error should stay actionable: {error}"
+        );
+    }
+
+    #[test]
+    fn configured_secret_passes_validation() {
+        let configuration = config_with_auth("a-valid-test-secret");
+        validate_config(&configuration).expect("configured secret must pass");
+    }
+
+    #[test]
+    fn readiness_decomposition_is_testable_without_runtime_resources() {
+        assert_eq!(
+            readiness_decision(false, false, false, None, false),
+            ReadinessDecision::Up,
+            "data warmup disabled matches Nacos isReady() short-circuit"
+        );
+        assert_eq!(
+            readiness_decision(true, true, true, None, true),
+            ReadinessDecision::Up
+        );
+        assert_eq!(
+            readiness_decision(
+                true,
+                false,
+                false,
+                Some("raft leader not elected".into()),
+                false
+            ),
+            ReadinessDecision::Down(vec![
+                "database not ready".into(),
+                "raft leader not elected".into(),
+                "distro initial data not loaded".into(),
+            ])
+        );
+        assert_eq!(
+            readiness_decision(true, true, false, None, true),
+            ReadinessDecision::Down(vec!["raft not ready".into()])
+        );
+    }
+
+    struct DropFlag(Arc<AtomicBool>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    #[tokio::test]
+    async fn background_task_tracker_aborts_and_joins_tasks() {
+        let tasks = BackgroundTasks::default();
+        let started = Arc::new(tokio::sync::Notify::new());
+        let started_for_task = started.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let drop_flag = DropFlag(dropped.clone());
+
+        tasks.spawn("loop", async move {
+            let _drop_flag = drop_flag;
+            started_for_task.notify_one();
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
+
+        started.notified().await;
+        assert_eq!(tasks.len(), 1);
+        tasks.shutdown(Duration::from_secs(1)).await;
+        assert_eq!(tasks.len(), 0);
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "tracked task future must actually be dropped during shutdown"
+        );
+    }
+
+    #[test]
+    fn startup_builds_exactly_one_shared_plugin_manager() {
+        // Split literals so the guard itself does not inflate the count.
+        let constructor = concat!("PluginManager", "::new()");
+        // Two feature-gated constructor arms exist in source, but exactly one
+        // compiles. The important guard is that `with_services` never creates
+        // a second manager.
+        assert_eq!(SOURCE.matches(constructor).count(), 2);
+        let services_start = SOURCE.find("pub async fn with_services").unwrap();
+        let services_end = SOURCE.find("pub async fn with_shutdown_and_ai").unwrap();
+        assert!(
+            !SOURCE[services_start..services_end].contains(constructor),
+            "protocol adapters and config-change plugins must share one manager"
+        );
+        assert!(
+            !SOURCE[services_start..services_end].contains("server_status.set_up()"),
+            "with_services must not publish UP before the final startup barrier"
+        );
+        assert!(SOURCE.contains(concat!("plugin_manager: Some(", "plugin_manager)")));
+        assert!(SOURCE.contains(concat!("plugin_manager.start_protocol_adapter", "_tasks()")));
+    }
+
+    #[test]
+    fn shutdown_uses_state_based_drain_instead_of_fixed_sleep() {
+        // Split literals so the guards do not inflate their own source scan.
+        assert!(!SOURCE.contains(concat!("drain", "_sleep")));
+        assert!(SOURCE.contains(concat!("grpc_servers.shutdown(", "drain_timeout).await")));
+        assert!(SOURCE.contains(concat!("server.handle.stop(", "true).await")));
+        assert!(SOURCE.contains(concat!("shutdown_", "protocol_adapters()")));
+        assert!(SOURCE.contains(concat!(
+            "background_tasks.shutdown(",
+            "drain_timeout).await"
+        )));
+
+        let barrier = concat!(
+            "complete_startup(app_state, server_member_manager, ",
+            "startup_complete).await;"
+        );
+        assert_eq!(
+            SOURCE.matches(barrier).count(),
+            1,
+            "all HTTP deployment modes must pass the common final barrier"
+        );
+
+        // Split literal so this guard does not reintroduce the forbidden call
+        // as a plain source string.
+        assert!(!SOURCE.contains(concat!("std::process::", "exit(")));
+    }
 }
