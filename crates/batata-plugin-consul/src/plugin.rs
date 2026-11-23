@@ -16,7 +16,7 @@ use rocksdb::DB;
 use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::registry::InstanceCheckConfig;
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
-use batata_plugin::{PluginStateProvider, ProtocolAdapterPlugin};
+use batata_plugin::{PluginStateProvider, ProtocolAdapterPlugin, context_keys};
 
 use crate::acl::AclService;
 use crate::agent::ConsulAgentService;
@@ -657,14 +657,48 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             self.dc_config.consul_version
         );
 
-        // Extract cluster context
-        let is_cluster = ctx.get::<bool>("is_cluster").map(|v| *v).unwrap_or(false);
-        let raft_node = ctx.get::<batata_consistency::RaftNode>("raft_node");
-        // ClusterManager is stored as Arc<Arc<dyn ClusterManager>> in the context;
-        // unwrap the outer Arc to get the inner Arc<dyn ClusterManager>.
-        let cluster_manager: Option<Arc<dyn batata_common::ClusterManager>> = ctx
-            .get::<Arc<dyn batata_common::ClusterManager>>("cluster_manager")
-            .map(|arc_arc| (*arc_arc).clone());
+        // Extract cluster context. Missing or wrong-typed dependencies are
+        // startup errors, not a silent downgrade to standalone/in-memory mode.
+        let is_cluster = *ctx.get_required::<bool>(context_keys::IS_CLUSTER)?;
+        let raft_node = ctx.get::<batata_consistency::RaftNode>(context_keys::RAFT_NODE);
+        if is_cluster && raft_node.is_none() {
+            return Err(anyhow::anyhow!(
+                "Consul cluster mode requires '{}' for replicated state",
+                context_keys::RAFT_NODE
+            ));
+        }
+
+        // Prefer the normalized single-Arc value. The legacy double-Arc key is
+        // still accepted so older producers keep working.
+        let cluster_manager: Option<Arc<dyn batata_common::ClusterManager>> =
+            match ctx.get_shared_required::<dyn batata_common::ClusterManager>(
+                context_keys::CLUSTER_MANAGER_TYPED,
+            ) {
+                Ok(manager) => Some(manager),
+                Err(typed_error) => {
+                    match ctx.get::<Arc<dyn batata_common::ClusterManager>>(
+                        context_keys::CLUSTER_MANAGER,
+                    ) {
+                        Some(legacy) => {
+                            tracing::warn!(
+                                "Using legacy double-Arc '{}' key ({}); producers should insert '{}'",
+                                context_keys::CLUSTER_MANAGER,
+                                typed_error,
+                                context_keys::CLUSTER_MANAGER_TYPED
+                            );
+                            Some((*legacy).clone())
+                        }
+                        None if is_cluster => {
+                            return Err(anyhow::anyhow!(
+                                "Consul cluster mode requires '{}': {}",
+                                context_keys::CLUSTER_MANAGER_TYPED,
+                                typed_error
+                            ));
+                        }
+                        None => None,
+                    }
+                }
+            };
 
         // Create Consul naming store and result handler.
         //
@@ -686,12 +720,12 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
 
         let mut inner = if is_cluster {
             self.init_cluster(
-                raft_node,
+                raft_node.clone(),
                 consul_naming_store,
                 consul_registry,
                 (*consul_index_provider).clone(),
             )
-            .await
+            .await?
         } else {
             tracing::info!("Consul services using in-memory storage (standalone/console mode)");
             self.build_inner_standalone(
@@ -712,17 +746,16 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // thread this via `ConsulPluginInner` rather than constructing the
         // chain here because the reactor itself is created later inside
         // `start_background_tasks`.
-        if let Some(distro) =
-            ctx.get::<batata_core::service::distro::DistroProtocol>("distro_protocol")
-        {
-            inner.distro_protocol = Some(distro.clone());
-        }
+        if is_cluster {
+            inner.distro_protocol = Some(
+                ctx.get_required::<batata_core::service::distro::DistroProtocol>(
+                    context_keys::DISTRO_PROTOCOL,
+                )?,
+            );
 
-        // Pick up the RaftNode handle so the reactor wiring (later in
-        // start_background_tasks) can install the Raft replicator + apply
-        // hook on the registry. Cluster mode only.
-        if let Some(raft) = ctx.get::<batata_consistency::RaftNode>("raft_node") {
-            inner.raft_node_for_health = Some(raft.clone());
+            // The reactor wiring (later in start_background_tasks) installs the
+            // Raft replicator + apply hook on the registry.
+            inner.raft_node_for_health = raft_node;
         }
 
         // Wire ConsulResultHandler to session/kv/check_index for:
@@ -1151,16 +1184,11 @@ impl ConsulPlugin {
         consul_naming_store: Arc<crate::naming_store::ConsulNamingStore>,
         consul_registry: Arc<InstanceCheckRegistry>,
         index_provider: ConsulTableIndex,
-    ) -> ConsulPluginInner {
+    ) -> anyhow::Result<ConsulPluginInner> {
         let Some(core_raft) = raft_node else {
-            tracing::error!(
-                "Core Raft node not available for Consul cluster mode, falling back to in-memory"
-            );
-            return self.build_inner_standalone(
-                consul_naming_store,
-                consul_registry,
-                index_provider,
-            );
+            return Err(anyhow::anyhow!(
+                "Core Raft node not available for Consul cluster mode"
+            ));
         };
 
         // Reuse the caller-supplied table index so it stays shared with the
@@ -1176,11 +1204,9 @@ impl ConsulPlugin {
         let apply_hook_slot = plugin_handler.apply_hook();
 
         if let Err(e) = core_raft.register_plugin(plugin_handler).await {
-            tracing::error!(
-                "Failed to register Consul Raft plugin: {}, falling back to in-memory",
-                e
-            );
-            return self.build_inner_standalone(consul_naming_store, consul_registry, table_index);
+            return Err(anyhow::anyhow!(
+                "Failed to register Consul Raft plugin: {e}"
+            ));
         }
         tracing::info!("Consul Raft plugin handler registered with core Raft");
 
@@ -1224,7 +1250,7 @@ impl ConsulPlugin {
         // so we only need to replay what was already committed.
         replay_catalog_from_db(&db, &consul_naming_store);
 
-        self.build_inner_cluster(
+        Ok(self.build_inner_cluster(
             consul_naming_store,
             consul_registry,
             db,
@@ -1232,7 +1258,7 @@ impl ConsulPlugin {
             table_index,
             connect_ca,
             lock_delay,
-        )
+        ))
     }
 }
 
@@ -1334,7 +1360,8 @@ mod tests {
     async fn test_consul_plugin_lifecycle() {
         let plugin = create_test_plugin();
         assert_eq!(ProtocolAdapterPlugin::name(&plugin), "consul-compatibility");
-        let ctx = batata_plugin::PluginContext::new();
+        let mut ctx = batata_plugin::PluginContext::new();
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(false));
         assert!(plugin.init(&ctx).await.is_ok());
         assert!(plugin.shutdown().await.is_ok());
         assert_eq!(plugin.default_port(), 8500);
@@ -1365,7 +1392,8 @@ mod tests {
         let plugin = ConsulPlugin::from_plugin_config(config);
 
         // Initialize with empty context (standalone mode)
-        let ctx = batata_plugin::PluginContext::new();
+        let mut ctx = batata_plugin::PluginContext::new();
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(false));
         assert!(plugin.init(&ctx).await.is_ok());
 
         // inner is now initialized
@@ -1475,7 +1503,8 @@ mod tests {
     async fn test_consul_plugin_double_init_legacy() {
         // Legacy constructor already initializes inner; init() should be a no-op
         let plugin = create_test_plugin();
-        let ctx = batata_plugin::PluginContext::new();
+        let mut ctx = batata_plugin::PluginContext::new();
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(false));
         assert!(plugin.init(&ctx).await.is_ok());
         // Should not panic or error
     }
@@ -1567,6 +1596,85 @@ mod tests {
         assert!(bridge_rx.try_recv().is_ok());
         assert!(grpc_rx.try_recv().is_ok());
         assert!(plugin.xds_shutdown_txs.lock().unwrap().is_empty());
+    }
+
+    fn create_uninitialized_plugin() -> ConsulPlugin {
+        ConsulPlugin::from_plugin_config(ConsulPluginConfig {
+            enabled: true,
+            dc_config: ConsulDatacenterConfig::new("dc1".to_string()),
+            ..ConsulPluginConfig::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn init_requires_typed_is_cluster() {
+        let plugin = create_uninitialized_plugin();
+        let mut ctx = batata_plugin::PluginContext::new();
+
+        let err = plugin
+            .init(&ctx)
+            .await
+            .expect_err("a missing is_cluster key must fail startup");
+        assert!(
+            err.to_string().contains(context_keys::IS_CLUSTER),
+            "the error must name the missing dependency: {err}"
+        );
+
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(1_u32));
+        let err = plugin
+            .init(&ctx)
+            .await
+            .expect_err("a wrong is_cluster type must fail startup");
+        assert!(
+            err.to_string().contains("expected"),
+            "the error must distinguish wrong type from missing: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cluster_init_fails_fast_without_raft_node() {
+        let plugin = create_uninitialized_plugin();
+        let mut ctx = batata_plugin::PluginContext::new();
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(true));
+
+        let err = plugin
+            .init(&ctx)
+            .await
+            .expect_err("cluster mode must never silently fall back to in-memory storage");
+        assert!(
+            err.to_string().contains(context_keys::RAFT_NODE),
+            "the error must name the missing Raft dependency: {err}"
+        );
+        assert!(
+            plugin.inner.get().is_none(),
+            "a failed cluster init must not publish a degraded inner plugin"
+        );
+    }
+
+    #[tokio::test]
+    async fn standalone_init_accepts_typed_and_legacy_cluster_manager() {
+        let manager: Arc<dyn batata_common::ClusterManager> =
+            Arc::new(crate::route::tests::TestClusterManager::new());
+
+        let mut typed_ctx = batata_plugin::PluginContext::new();
+        typed_ctx.insert(context_keys::IS_CLUSTER, Arc::new(false));
+        typed_ctx.insert_shared(context_keys::CLUSTER_MANAGER_TYPED, manager.clone());
+        let typed = create_uninitialized_plugin();
+        typed.init(&typed_ctx).await.expect("typed key must work");
+        assert!(typed.inner().cluster_manager.is_some());
+
+        let mut legacy_ctx = batata_plugin::PluginContext::new();
+        legacy_ctx.insert(context_keys::IS_CLUSTER, Arc::new(false));
+        legacy_ctx.insert(context_keys::CLUSTER_MANAGER, Arc::new(manager));
+        let legacy = create_uninitialized_plugin();
+        legacy
+            .init(&legacy_ctx)
+            .await
+            .expect("legacy double-Arc key must still work");
+        assert!(
+            legacy.inner().cluster_manager.is_some(),
+            "the legacy key must be unwrapped into the single-Arc field"
+        );
     }
 
     fn create_test_plugin() -> ConsulPlugin {

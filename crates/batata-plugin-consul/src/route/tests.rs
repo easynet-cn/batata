@@ -30,12 +30,12 @@ use crate::snapshot::ConsulSnapshotService;
 /// Reports a single local member so the cluster-aware Consul handlers
 /// (e.g. `/v1/agent/members`, `/v1/status/leader`) behave like a
 /// standalone deployment.
-struct TestClusterManager {
+pub(crate) struct TestClusterManager {
     address: String,
 }
 
 impl TestClusterManager {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             address: "127.0.0.1:8848".to_string(),
         }

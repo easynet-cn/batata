@@ -64,6 +64,9 @@ pub use spi::ProtocolAdapterPlugin;
 /// Plugin initialization context (re-exported from spi)
 pub use spi::PluginContext;
 
+/// Typed dependency keys and context errors (re-exported from spi)
+pub use spi::{PluginContextError, SharedDependency, context_keys};
+
 /// Plugin naming store trait and error type (re-exported from spi)
 pub use spi::{PluginNamingStore, PluginNamingStoreError};
 

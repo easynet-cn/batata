@@ -4,11 +4,13 @@
 //! services and configuration needed across the application.
 
 /// `app_context` module.
+#[cfg(test)]
 pub mod app_context;
 /// `deployment_mode` module.
 pub mod deployment_mode;
 
 /// Re-exported item.
+#[cfg(test)]
 pub use app_context::AppContext;
 /// Re-exported item.
 pub use deployment_mode::DeploymentMode;

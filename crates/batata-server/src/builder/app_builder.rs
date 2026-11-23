@@ -29,6 +29,7 @@ use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_plugin::Plugin as _;
 #[cfg(any(feature = "consul", feature = "apollo"))]
 use batata_plugin::ProtocolAdapterPlugin as _;
+use batata_plugin::context_keys;
 use batata_plugin::spi::PluginManager;
 use batata_server_common::ServerStatusManager;
 use tracing::{error, info, warn};
@@ -951,6 +952,42 @@ impl AppBuilder {
     // Phase 11: Initialize protocol adapter plugins
     // ========================================================================
 
+    /// Validate the typed dependencies required by built-in protocol adapters.
+    ///
+    /// This is a producer-side gate: a missing or wrong-typed dependency is a
+    /// startup error rather than a silent runtime downgrade in an adapter.
+    fn validate_plugin_context(
+        ctx: &batata_plugin::PluginContext,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!(
+            dependencies = ?ctx.describe(),
+            "Validating plugin context dependencies"
+        );
+
+        let is_cluster = *ctx.get_required::<bool>(context_keys::IS_CLUSTER)?;
+        let storage_mode = *ctx
+            .get_required::<batata_persistence::model::StorageMode>(context_keys::STORAGE_MODE)?;
+
+        if storage_mode == batata_persistence::model::StorageMode::ExternalDb {
+            ctx.get_required::<sea_orm::DatabaseConnection>(context_keys::DATABASE)?;
+        } else {
+            ctx.get_required::<rocksdb::DB>(context_keys::ROCKS_DB)?;
+        }
+
+        if is_cluster {
+            ctx.get_required::<batata_consistency::RaftNode>(context_keys::RAFT_NODE)?;
+            ctx.get_shared_required::<dyn batata_common::ClusterManager>(
+                context_keys::CLUSTER_MANAGER_TYPED,
+            )?;
+            ctx.get_required::<batata_core::service::distro::DistroProtocol>(
+                context_keys::DISTRO_PROTOCOL,
+            )?;
+        }
+
+        info!("Plugin context dependencies validated");
+        Ok(())
+    }
+
     /// Initialize protocol adapter plugins
     pub async fn with_plugin_init(self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 11] Initializing protocol adapter plugins...");
@@ -961,28 +998,39 @@ impl AppBuilder {
         let plugin_manager = self.plugin_manager.as_ref().unwrap();
         let is_cluster = !app_state.configuration.is_standalone() && !self.is_console_remote;
 
-        // Build plugin context
+        // Build plugin context. All known keys come from `context_keys` so the
+        // producer and the adapters cannot drift on string literals.
         let mut plugin_ctx = batata_plugin::PluginContext::new();
-        plugin_ctx.insert("is_cluster", Arc::new(is_cluster));
+        plugin_ctx.insert(context_keys::IS_CLUSTER, Arc::new(is_cluster));
 
         // Inject storage mode and database connection for plugins that need them (e.g. Apollo)
         let storage_mode = app_state.configuration.persistence_mode();
-        plugin_ctx.insert("storage_mode", Arc::new(storage_mode));
+        plugin_ctx.insert(context_keys::STORAGE_MODE, Arc::new(storage_mode));
         if let Some(ref db) = persistence_ctx.database_connection {
-            plugin_ctx.insert("db", Arc::new(db.clone()));
+            plugin_ctx.insert(context_keys::DATABASE, Arc::new(db.clone()));
         }
         if let Some(ref rdb) = persistence_ctx.rocks_db {
-            plugin_ctx.insert("rocks_db", rdb.clone());
+            plugin_ctx.insert(context_keys::ROCKS_DB, rdb.clone());
         }
         if let Some(ref raft) = app_state.raft_node {
-            plugin_ctx.insert("raft_node", raft.clone());
+            plugin_ctx.insert(context_keys::RAFT_NODE, raft.clone());
         }
         if let Some(ref cm) = persistence_ctx.cluster_manager {
-            plugin_ctx.insert("cluster_manager", Arc::new(cm.clone()));
+            let cm = cm.clone();
+            // Keep the legacy double-Arc key for older readers while exposing
+            // a normalized single-Arc value to typed consumers. Any downcasts
+            // need a sized type, hence the generic SharedDependency wrapper.
+            plugin_ctx.insert(context_keys::CLUSTER_MANAGER, Arc::new(cm.clone()));
+            plugin_ctx.insert_shared(context_keys::CLUSTER_MANAGER_TYPED, cm);
         }
         if is_cluster {
-            plugin_ctx.insert("distro_protocol", grpc_servers.distro_protocol().clone());
+            plugin_ctx.insert(
+                context_keys::DISTRO_PROTOCOL,
+                grpc_servers.distro_protocol().clone(),
+            );
         }
+
+        Self::validate_plugin_context(&plugin_ctx)?;
 
         // Initialize all plugins
         plugin_manager.init_protocol_adapters(&plugin_ctx).await?;
@@ -2351,5 +2399,90 @@ mod phase_tests {
         // Split literal so this guard does not reintroduce the forbidden call
         // as a plain source string.
         assert!(!SOURCE.contains(concat!("std::process::", "exit(")));
+    }
+
+    #[test]
+    fn plugin_context_has_one_producer_and_typed_validation_gate() {
+        let constructor = concat!("batata_plugin::PluginContext::", "new()");
+        assert_eq!(
+            SOURCE.matches(constructor).count(),
+            1,
+            "only AppBuilder may produce the protocol-adapter PluginContext"
+        );
+        assert!(
+            SOURCE.contains(concat!("Self::validate_plugin_context(&", "plugin_ctx)?;")),
+            "the producer must validate typed dependencies before adapter init"
+        );
+        let runtime_source = &SOURCE[..SOURCE.find("mod phase_tests").unwrap()];
+        assert_eq!(
+            runtime_source
+                .matches("context_keys::CLUSTER_MANAGER_TYPED")
+                .count(),
+            2,
+            "the typed cluster manager key must be both validated and inserted"
+        );
+        for raw_key in [
+            concat!("\"is_", "cluster\""),
+            concat!("\"storage_", "mode\""),
+            concat!("\"raft_", "node\""),
+            concat!("\"cluster_", "manager\""),
+            concat!("\"distro_", "protocol\""),
+        ] {
+            assert!(
+                !SOURCE.contains(raw_key),
+                "known context keys must come from context_keys, not string literals: {raw_key}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_parallel_framework_is_test_only() {
+        const LIB_SOURCE: &str = include_str!("../lib.rs");
+        const BUILDER_SOURCE: &str = include_str!("mod.rs");
+        const CONTEXT_SOURCE: &str = include_str!("../context/mod.rs");
+        const REGISTRY_SOURCE: &str = include_str!("../registry/mod.rs");
+
+        for marker in [
+            "#[cfg(test)]\npub mod initializer;",
+            "#[cfg(test)]\npub mod lifecycle;",
+        ] {
+            assert!(
+                LIB_SOURCE.contains(marker),
+                "legacy startup module must not be compiled into production: {marker}"
+            );
+        }
+
+        for module in [
+            "config_builder",
+            "persistence_builder",
+            "server_builder",
+            "service_builder",
+        ] {
+            let marker = format!("#[cfg(test)]\npub mod {module};");
+            assert!(
+                BUILDER_SOURCE.contains(&marker),
+                "legacy builder must be test-only: {module}"
+            );
+        }
+
+        assert!(
+            CONTEXT_SOURCE.contains("#[cfg(test)]\npub mod app_context;"),
+            "legacy AppContext must be test-only"
+        );
+
+        for module in ["server_registry", "service_registry"] {
+            let marker = format!("#[cfg(test)]\npub mod {module};");
+            assert!(
+                REGISTRY_SOURCE.contains(&marker),
+                "legacy registry must be test-only: {module}"
+            );
+        }
+
+        let orphan =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lifecycle/server_trait.rs");
+        assert!(
+            !orphan.exists(),
+            "the undeclared lifecycle/server_trait.rs orphan must stay deleted"
+        );
     }
 }

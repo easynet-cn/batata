@@ -15,4 +15,4 @@ pub fn routes() -> actix_web::Scope {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

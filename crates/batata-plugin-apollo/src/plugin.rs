@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use batata_plugin::{PluginContext, PluginStateProvider, ProtocolAdapterPlugin};
+use batata_plugin::{PluginContext, PluginStateProvider, ProtocolAdapterPlugin, context_keys};
 
 use crate::model::config::{ApolloPluginConfig, AuthConfig};
 use crate::persistence::{
@@ -108,12 +108,14 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
 
         tracing::info!("Initializing Apollo compatibility plugin");
 
-        let storage_mode = ctx.get::<batata_persistence::model::StorageMode>("storage_mode");
-        let db = ctx.get::<sea_orm::DatabaseConnection>("db");
-        let rocks_db = ctx.get::<rocksdb::DB>("rocks_db");
+        let is_cluster = *ctx.get_required::<bool>(context_keys::IS_CLUSTER)?;
+        let storage_mode = *ctx
+            .get_required::<batata_persistence::model::StorageMode>(context_keys::STORAGE_MODE)?;
+        let db = ctx.get::<sea_orm::DatabaseConnection>(context_keys::DATABASE);
+        let rocks_db = ctx.get::<rocksdb::DB>(context_keys::ROCKS_DB);
 
         let persistence: Arc<dyn ApolloPersistenceService> = match storage_mode {
-            Some(mode) if *mode == batata_persistence::model::StorageMode::ExternalDb => {
+            batata_persistence::model::StorageMode::ExternalDb => {
                 let db_conn =
                     db.ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
@@ -131,7 +133,9 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
                 // and route all writes through it so IDs are derived
                 // deterministically from the Raft log index and replicated to
                 // every replica (instead of the standalone local AtomicI64).
-                if let Some(raft_node) = ctx.get::<batata_consistency::RaftNode>("raft_node") {
+                if let Some(raft_node) =
+                    ctx.get::<batata_consistency::RaftNode>(context_keys::RAFT_NODE)
+                {
                     use crate::raft::{ApolloRaftWriter, register_apollo_raft};
                     register_apollo_raft(&raft_node)
                         .await
@@ -140,6 +144,11 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
                     tracing::info!(
                         "Apollo plugin running in cluster mode (Raft-replicated writes)"
                     );
+                } else if is_cluster {
+                    return Err(anyhow::anyhow!(
+                        "Apollo cluster mode requires '{}' for replicated writes",
+                        context_keys::RAFT_NODE
+                    ));
                 } else {
                     tracing::info!("Apollo plugin running in standalone mode (local RocksDB)");
                 }
@@ -356,6 +365,32 @@ mod tests {
                 .await
                 .is_ok(),
             "heartbeat task must be aborted on shutdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn init_rejects_missing_and_wrong_typed_storage_mode() {
+        let mut missing = PluginContext::new();
+        missing.insert(context_keys::IS_CLUSTER, Arc::new(false));
+        let err = ApolloPlugin::from_plugin_config(ApolloPluginConfig::default())
+            .init(&missing)
+            .await
+            .expect_err("a missing storage mode must not silently select embedded persistence");
+        assert!(
+            err.to_string().contains(context_keys::STORAGE_MODE),
+            "the error must name the offending dependency: {err}"
+        );
+
+        let mut wrong = PluginContext::new();
+        wrong.insert(context_keys::IS_CLUSTER, Arc::new(false));
+        wrong.insert(context_keys::STORAGE_MODE, Arc::new("embedded"));
+        let err = ApolloPlugin::from_plugin_config(ApolloPluginConfig::default())
+            .init(&wrong)
+            .await
+            .expect_err("a wrong storage mode type must not be treated as absent");
+        assert!(
+            err.to_string().contains("expected"),
+            "the error must distinguish wrong type from missing: {err}"
         );
     }
 }

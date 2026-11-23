@@ -4,7 +4,7 @@
 //! Each plugin type has a trait that implementations must satisfy.
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// Plugin lifecycle and metadata
@@ -366,17 +366,79 @@ pub struct TpsCheckResult {
     pub limit: u64,
 }
 
+/// Canonical names for the infrastructure dependencies passed to protocol
+/// adapters. Dynamic extensions may still use arbitrary keys, but built-in
+/// producers and consumers must use these constants.
+pub mod context_keys {
+    /// `Arc<bool>`; whether the server is in cluster mode.
+    pub const IS_CLUSTER: &str = "is_cluster";
+    /// `Arc<batata_persistence::model::StorageMode>`.
+    pub const STORAGE_MODE: &str = "storage_mode";
+    /// `Arc<sea_orm::DatabaseConnection>`; present for ExternalDb mode.
+    pub const DATABASE: &str = "db";
+    /// `Arc<rocksdb::DB>`; present for embedded mode.
+    pub const ROCKS_DB: &str = "rocks_db";
+    /// `Arc<batata_consistency::RaftNode>`; present in cluster mode.
+    pub const RAFT_NODE: &str = "raft_node";
+    /// Legacy `Arc<Arc<dyn ClusterManager>>` kept for older readers.
+    pub const CLUSTER_MANAGER: &str = "cluster_manager";
+    /// Normalized `Arc<dyn ClusterManager>` for typed readers.
+    pub const CLUSTER_MANAGER_TYPED: &str = "cluster_manager_typed";
+    /// `Arc<batata_core::service::distro::DistroProtocol>`; cluster mode only.
+    pub const DISTRO_PROTOCOL: &str = "distro_protocol";
+}
+
+/// A missing or wrong-typed required plugin context dependency.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum PluginContextError {
+    /// The key was not inserted at all.
+    #[error("required plugin context key '{key}' is missing")]
+    Missing {
+        /// Canonical context key.
+        key: String,
+    },
+    /// The key exists but holds a different concrete type.
+    #[error("plugin context key '{key}' has type '{actual}', expected '{expected}'")]
+    WrongType {
+        /// Canonical context key.
+        key: String,
+        /// Type requested by the caller.
+        expected: &'static str,
+        /// Type actually inserted by the producer.
+        actual: &'static str,
+    },
+}
+
+struct ContextValue {
+    value: Arc<dyn Any + Send + Sync>,
+    type_name: &'static str,
+}
+
+/// A sized wrapper for injecting a possibly unsized shared dependency
+/// (typically `Arc<dyn Trait>`) through `PluginContext`.
+///
+/// `Any` downcasts require a sized concrete type, so a bare trait object
+/// cannot be stored directly. This wrapper keeps the SPI generic while letting
+/// producers expose a single `Arc<dyn Trait>` instead of a double `Arc`.
+#[derive(Clone)]
+pub struct SharedDependency<T: ?Sized + Send + Sync + 'static>(pub Arc<T>);
+
+impl<T: ?Sized + Send + Sync + 'static> SharedDependency<T> {
+    /// Wrap a shared dependency for insertion into a [`PluginContext`].
+    pub fn new(value: Arc<T>) -> Self {
+        Self(value)
+    }
+}
+
 /// Context provided to protocol adapter plugins during initialization.
 ///
 /// Carries server resources as type-erased `Any` trait objects to avoid
-/// coupling the plugin SPI to specific infrastructure crates.
-///
-/// Well-known keys:
-/// - `"raft_node"`: `Arc<batata_consistency::RaftNode>` (only in cluster mode)
-/// - `"configuration"`: `Arc<Configuration>`
-/// - `"is_cluster"`: `Arc<bool>`
+/// coupling the plugin SPI to specific infrastructure crates. Known keys are
+/// named in [`context_keys`]; [`PluginContext::get_required`] distinguishes a
+/// missing key from a wrong concrete type instead of collapsing both into
+/// `None`.
 pub struct PluginContext {
-    extensions: HashMap<String, Arc<dyn Any + Send + Sync>>,
+    extensions: HashMap<String, ContextValue>,
 }
 
 impl PluginContext {
@@ -389,19 +451,78 @@ impl PluginContext {
 
     /// Insert a typed value into the context.
     pub fn insert<T: Send + Sync + 'static>(&mut self, key: &str, value: Arc<T>) {
-        self.extensions.insert(key.to_string(), value);
+        self.extensions.insert(
+            key.to_string(),
+            ContextValue {
+                value,
+                type_name: std::any::type_name::<T>(),
+            },
+        );
     }
 
     /// Get a typed reference from the context. Returns None if key missing or wrong type.
     pub fn get<T: Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
         self.extensions
             .get(key)
-            .and_then(|v| v.clone().downcast::<T>().ok())
+            .and_then(|entry| entry.value.clone().downcast::<T>().ok())
+    }
+
+    /// Get a required typed dependency, distinguishing missing from wrong-type.
+    pub fn get_required<T: Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Arc<T>, PluginContextError> {
+        match self.extensions.get(key) {
+            None => Err(PluginContextError::Missing {
+                key: key.to_string(),
+            }),
+            Some(entry) => {
+                entry
+                    .value
+                    .clone()
+                    .downcast::<T>()
+                    .map_err(|_| PluginContextError::WrongType {
+                        key: key.to_string(),
+                        expected: std::any::type_name::<T>(),
+                        actual: entry.type_name,
+                    })
+            }
+        }
+    }
+
+    /// Insert a shared possibly-unsized dependency (for example
+    /// `Arc<dyn ClusterManager>`) without forcing producers into a double Arc.
+    pub fn insert_shared<T: ?Sized + Send + Sync + 'static>(&mut self, key: &str, value: Arc<T>) {
+        self.insert(key, Arc::new(SharedDependency::new(value)));
+    }
+
+    /// Get a shared dependency inserted with [`PluginContext::insert_shared`].
+    pub fn get_shared<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
+        self.get::<SharedDependency<T>>(key)
+            .map(|wrapper| wrapper.0.clone())
+    }
+
+    /// Required variant of [`PluginContext::get_shared`].
+    pub fn get_shared_required<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Arc<T>, PluginContextError> {
+        self.get_required::<SharedDependency<T>>(key)
+            .map(|wrapper| wrapper.0.clone())
     }
 
     /// Check if a key exists.
     pub fn contains(&self, key: &str) -> bool {
         self.extensions.contains_key(key)
+    }
+
+    /// Describe all inserted keys and their concrete type names for startup
+    /// validation logs. The result is key-sorted so log output is stable.
+    pub fn describe(&self) -> BTreeMap<String, &'static str> {
+        self.extensions
+            .iter()
+            .map(|(key, entry)| (key.clone(), entry.type_name))
+            .collect()
     }
 }
 
@@ -1225,6 +1346,85 @@ mod tests {
             *order.lock().expect("shutdown order mutex poisoned"),
             vec!["late", "early"],
             "teardown must be the reverse of startup priority"
+        );
+    }
+
+    #[test]
+    fn plugin_context_required_value_distinguishes_missing_and_wrong_type() {
+        let mut ctx = PluginContext::new();
+
+        assert_eq!(
+            ctx.get_required::<bool>(context_keys::IS_CLUSTER),
+            Err(PluginContextError::Missing {
+                key: context_keys::IS_CLUSTER.to_string(),
+            }),
+            "an absent required dependency must be named explicitly"
+        );
+
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(1_u32));
+        assert!(
+            ctx.contains(context_keys::IS_CLUSTER),
+            "wrong-type values must still be visible as present"
+        );
+        assert!(
+            ctx.get::<bool>(context_keys::IS_CLUSTER).is_none(),
+            "legacy getter must preserve its previous None-on-mismatch behavior"
+        );
+        assert_eq!(
+            ctx.get_required::<bool>(context_keys::IS_CLUSTER),
+            Err(PluginContextError::WrongType {
+                key: context_keys::IS_CLUSTER.to_string(),
+                expected: "bool",
+                actual: "u32",
+            }),
+            "a wrong concrete type must not be reported as missing"
+        );
+    }
+
+    #[test]
+    fn plugin_context_describe_reports_stable_key_type_map() {
+        let mut ctx = PluginContext::new();
+        ctx.insert(context_keys::STORAGE_MODE, Arc::new("embedded".to_string()));
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(true));
+
+        let described = ctx.describe();
+        assert_eq!(
+            described.keys().cloned().collect::<Vec<_>>(),
+            vec![
+                context_keys::IS_CLUSTER.to_string(),
+                context_keys::STORAGE_MODE.to_string(),
+            ],
+            "descriptions must be lexicographically ordered for stable logs"
+        );
+        assert_eq!(described[context_keys::IS_CLUSTER], "bool");
+        assert_eq!(
+            described[context_keys::STORAGE_MODE],
+            "alloc::string::String"
+        );
+    }
+
+    #[test]
+    fn plugin_context_shared_dependency_supports_trait_objects() {
+        trait Greeter: Send + Sync {
+            fn greet(&self) -> &'static str;
+        }
+        struct Hello;
+        impl Greeter for Hello {
+            fn greet(&self) -> &'static str {
+                "hello"
+            }
+        }
+
+        let mut ctx = PluginContext::new();
+        ctx.insert_shared("greeter", Arc::new(Hello) as Arc<dyn Greeter>);
+
+        let greeter = ctx
+            .get_shared_required::<dyn Greeter>("greeter")
+            .expect("a shared trait object must be retrievable");
+        assert_eq!(greeter.greet(), "hello");
+        assert!(
+            ctx.get_shared::<dyn Greeter>("missing").is_none(),
+            "optional shared lookup must stay None on a missing key"
         );
     }
 }
