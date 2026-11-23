@@ -57,6 +57,7 @@ pub fn register_raft_resource_provider() {
 /// Should be called once at application startup
 pub fn init_metrics() {
     register_raft_resource_provider();
+    crate::builder::lifecycle_timing::LifecycleTimeline::describe_metrics();
     // HTTP request metrics
     describe_counter!(
         "http_requests_total",

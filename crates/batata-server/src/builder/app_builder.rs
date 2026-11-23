@@ -32,8 +32,12 @@ use batata_plugin::ProtocolAdapterPlugin as _;
 use batata_plugin::context_keys;
 use batata_plugin::spi::PluginManager;
 use batata_server_common::ServerStatusManager;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
+use super::lifecycle_timing::{
+    LifecycleKind, LifecycleTimeline, finish_startup_phase, mode_label, phases, shutdown_summary,
+    startup_summary, storage_label,
+};
 use crate::context::DeploymentMode;
 use crate::model::common::{AppState, Configuration, DEPLOYMENT_TYPE_CONSOLE};
 use crate::startup::{
@@ -41,11 +45,48 @@ use crate::startup::{
     PersistenceIstioMcpConfigProvider, XdsServerHandle, start_istio_mcp_service, start_xds_service,
 };
 
+type TrackedTasks = Vec<(&'static str, tokio::task::JoinHandle<()>)>;
+
+/// Inner task registry. Aborting here (rather than in `BackgroundTasks::drop`)
+/// means cleanup fires only when the last clone is dropped — a short-lived
+/// clone must not kill tasks still owned by the server.
+struct TaskRegistry(std::sync::Mutex<TrackedTasks>);
+
+impl Default for TaskRegistry {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(Vec::new()))
+    }
+}
+
+impl TaskRegistry {
+    fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, TrackedTasks>> {
+        self.0.lock()
+    }
+}
+
+impl Drop for TaskRegistry {
+    fn drop(&mut self) {
+        // Last-owner cleanup for a failed startup: `?` unwinds AppBuilder, the
+        // final BackgroundTasks clone drops, and this aborts any task that
+        // graceful shutdown never got to (JoinHandle drop alone only detaches).
+        // On a successful shutdown `shutdown()` already mem::take'd the vec, so
+        // this is a no-op.
+        if let Ok(tasks) = self.0.get_mut() {
+            for (name, handle) in tasks.drain(..) {
+                if !handle.is_finished() {
+                    handle.abort();
+                    debug!(task = name, "aborted background task on startup cleanup");
+                }
+            }
+        }
+    }
+}
+
 /// Tracks tokio tasks owned by the server startup path so shutdown can cancel
 /// and join them instead of relying on runtime teardown.
 #[derive(Clone, Default)]
 struct BackgroundTasks {
-    tasks: Arc<std::sync::Mutex<Vec<(&'static str, tokio::task::JoinHandle<()>)>>>,
+    tasks: Arc<TaskRegistry>,
 }
 
 impl BackgroundTasks {
@@ -102,6 +143,9 @@ pub struct AppBuilder {
     _logging_guard: Option<startup::LoggingGuard>,
     background_tasks: BackgroundTasks,
     startup_complete: Arc<AtomicBool>,
+    /// Shared phase timeline; cloned into HTTP/shutdown helpers that outlive a
+    /// mutable `self` phase chain.
+    timeline: LifecycleTimeline,
 
     // Phase 2: Deployment mode
     deployment_mode: DeploymentMode,
@@ -156,6 +200,7 @@ impl AppBuilder {
             _logging_guard: None,
             background_tasks: BackgroundTasks::default(),
             startup_complete: Arc::new(AtomicBool::new(false)),
+            timeline: LifecycleTimeline::new(),
             deployment_mode: DeploymentMode::Merged,
             is_console_remote: false,
             plugin_manager: None,
@@ -750,6 +795,7 @@ impl AppBuilder {
             server_status,
             database_connection,
             &self.startup_complete,
+            &self.timeline,
         )
         .await?;
 
@@ -1141,6 +1187,7 @@ impl AppBuilder {
             self.persistence_ctx
                 .as_ref()
                 .and_then(|ctx| ctx.server_member_manager.as_ref()),
+            &self.timeline,
         )
         .await?;
 
@@ -1177,10 +1224,20 @@ impl AppBuilder {
             server_registry,
             &self.background_tasks,
             self.health_check_manager.as_ref(),
+            &self.timeline,
         )
         .await;
 
         info!("Phase 13 complete - graceful shutdown finished");
+        let total_ms = self.timeline.record_total(LifecycleKind::Shutdown);
+        let phases_recorded = self.timeline.snapshot().len();
+        info!(
+            phase = "shutdown.total",
+            duration_ms = total_ms,
+            phases = phases_recorded,
+            "{}",
+            shutdown_summary(total_ms)
+        );
     }
 
     // ========================================================================
@@ -1189,36 +1246,38 @@ impl AppBuilder {
 
     /// Run the complete server lifecycle (all phases)
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let builder = AppBuilder::new()
-            .with_config_and_logging()
-            .await?
-            .with_plugins()
-            .await?
-            .with_persistence()
-            .await?
-            .with_services()
-            .await?
-            .with_shutdown_and_ai()
-            .await?;
+        // The builder owns the timeline so helpers started inside a phase can
+        // keep recording after `self` is moved into the next phase.
+        let seed = AppBuilder::new();
+        let timeline = seed.timeline.clone();
+
+        macro_rules! startup_phase {
+            ($phase:expr, $future:expr) => {{
+                let mut timer = timeline.begin($phase, LifecycleKind::Startup);
+                finish_startup_phase(&mut timer, $future.await)?
+            }};
+        }
+
+        let builder = startup_phase!(phases::CONFIG, seed.with_config_and_logging());
+        let builder = startup_phase!(phases::PLUGINS_REGISTER, builder.with_plugins());
+        let builder = startup_phase!(phases::PERSISTENCE, builder.with_persistence());
+        let builder = startup_phase!(phases::SERVICES, builder.with_services());
+        let builder = startup_phase!(phases::SHUTDOWN_AI, builder.with_shutdown_and_ai());
 
         // Check for console-remote early return
-        if builder.check_console_remote().await?.is_some() {
+        if startup_phase!(phases::CONSOLE_REMOTE, builder.check_console_remote()).is_some() {
             info!("Batata server shutdown complete (console-remote mode)");
             return Ok(());
         }
 
-        let mut builder = builder
-            .with_grpc_servers()
-            .await?
-            .with_background_tasks()
-            .await?
-            .with_cluster_init()
-            .await?
-            .with_xds()
-            .await?
-            .with_plugin_init()
-            .await?;
+        let builder = startup_phase!(phases::GRPC, builder.with_grpc_servers());
+        let builder = startup_phase!(phases::BACKGROUND_TASKS, builder.with_background_tasks());
+        let builder = startup_phase!(phases::CLUSTER_INIT, builder.with_cluster_init());
+        let builder = startup_phase!(phases::XDS, builder.with_xds());
+        let mut builder = startup_phase!(phases::PLUGINS_INIT, builder.with_plugin_init());
 
+        // `run_http_servers` spans the whole serving lifetime, so its own
+        // internal timers separate bind, drain and shutdown from uptime.
         builder.run_http_servers().await?;
         builder.graceful_shutdown().await;
 
@@ -1549,7 +1608,9 @@ async fn complete_startup(
     app_state: &Arc<AppState>,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
     startup_complete: &AtomicBool,
+    timeline: &LifecycleTimeline,
 ) {
+    let mut barrier = timeline.begin(phases::STARTUP_BARRIER, LifecycleKind::Startup);
     startup_complete.store(true, Ordering::Release);
     let up = refresh_server_status(
         &app_state.server_status,
@@ -1561,7 +1622,23 @@ async fn complete_startup(
         startup_complete,
     )
     .await;
+    barrier.ok();
     info!(up, "Final startup barrier complete");
+
+    // Nacos parity: log one total cost with deployment mode and storage after
+    // the readiness barrier, not when the listener bind merely returns.
+    let total_ms = timeline.record_total(LifecycleKind::Startup);
+    let mode = mode_label(app_state.configuration.is_standalone());
+    let storage = storage_label(app_state.configuration.persistence_mode());
+    info!(
+        phase = "startup.total",
+        duration_ms = total_ms,
+        mode = mode,
+        storage = storage,
+        up = up,
+        "{}",
+        startup_summary(mode, storage, total_ms)
+    );
 }
 
 fn start_warmup_poller(
@@ -1730,6 +1807,7 @@ async fn run_console_remote(
     server_status: Arc<ServerStatusManager>,
     database_connection: Option<sea_orm::DatabaseConnection>,
     startup_complete: &AtomicBool,
+    timeline: &LifecycleTimeline,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let console_server_port = app_state.configuration.console_server_port();
     let console_context_path = app_state.configuration.console_server_context_path();
@@ -1751,15 +1829,17 @@ async fn run_console_remote(
 
     // Console-remote has no Raft/plugins, so the listener bind is the final
     // barrier. This also fixes the historical mode that never set UP at all.
-    complete_startup(&app_state, None, startup_complete).await;
+    complete_startup(&app_state, None, startup_complete, timeline).await;
 
     tokio::select! {
         result = console_server => {
+            timeline.mark_shutdown();
             if let Err(e) = result {
                 error!("Console server error: {}", e);
             }
         }
         _ = graceful_shutdown.wait_for_shutdown() => {
+            timeline.mark_shutdown();
             info!("Console server shutting down gracefully");
         }
     }
@@ -1769,6 +1849,14 @@ async fn run_console_remote(
     if let Some(db) = database_connection {
         let _ = tokio::time::timeout(Duration::from_secs(5), db.close()).await;
     }
+
+    let total_ms = timeline.record_total(LifecycleKind::Shutdown);
+    info!(
+        phase = "shutdown.total",
+        duration_ms = total_ms,
+        "{}",
+        shutdown_summary(total_ms)
+    );
 
     Ok(())
 }
@@ -1865,7 +1953,9 @@ async fn run_http_servers(
     server_registry: &Arc<batata_core::ServerRegistry>,
     startup_complete: &AtomicBool,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
+    timeline: &LifecycleTimeline,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut bind_timer = timeline.begin(phases::HTTP_BIND, LifecycleKind::Startup);
     let server_address = app_state.configuration.server_address();
     let server_main_port = app_state.configuration.server_main_port();
     let server_context_path = app_state.configuration.server_context_path();
@@ -2042,28 +2132,33 @@ async fn run_http_servers(
         }
     }
 
-    complete_startup(app_state, server_member_manager, startup_complete).await;
+    complete_startup(app_state, server_member_manager, startup_complete, timeline).await;
+    bind_timer.ok();
 
     let trigger = tokio::select! {
         Some(result) = server_tasks.join_next() => {
+            timeline.mark_shutdown();
             if let Err(error) = result {
                 error!(error = %error, "HTTP server task failed");
             }
             "server-exit"
         }
         _ = graceful_shutdown.wait_for_shutdown() => {
+            timeline.mark_shutdown();
             info!("All servers shutting down gracefully");
             "shutdown-signal"
         }
     };
 
     info!(trigger, "Stopping HTTP server group");
+    let mut drain_timer = timeline.begin(phases::HTTP_DRAIN, LifecycleKind::Shutdown);
     drain_http_servers(
         http_servers,
         &mut server_tasks,
         graceful_shutdown.drain_timeout(),
     )
     .await;
+    drain_timer.ok();
 
     Ok(())
 }
@@ -2152,7 +2247,17 @@ async fn graceful_shutdown_sequence(
     server_registry: &Arc<batata_core::ServerRegistry>,
     background_tasks: &BackgroundTasks,
     health_check_manager: Option<&Arc<HealthCheckManager>>,
+    timeline: &LifecycleTimeline,
 ) {
+    macro_rules! shutdown_phase {
+        ($phase:expr, $body:block) => {{
+            let mut timer = timeline.begin($phase, LifecycleKind::Shutdown);
+            let result = $body;
+            timer.ok();
+            result
+        }};
+    }
+
     let states = server_registry.health();
 
     info!(
@@ -2177,70 +2282,88 @@ async fn graceful_shutdown_sequence(
     // state is published only after each gRPC listener task has exited (or the
     // bounded deadline elapsed), which is the contract in
     // `batata_core::ManagedServer::shutdown`.
-    grpc_servers.shutdown(drain_timeout).await;
-    info!("gRPC servers stopped");
+    shutdown_phase!(phases::GRPC, {
+        grpc_servers.shutdown(drain_timeout).await;
+        info!("gRPC servers stopped");
+    });
 
     server_status.set_down();
     info!("Server status: DOWN");
 
-    if let Some(handle) = xds_handle {
-        info!("Stopping xDS service...");
-        handle.shutdown().await;
-        info!("xDS service stopped");
-    }
-
-    if let Some(handle) = istio_mcp_handle {
-        info!("Stopping Istio MCP service...");
-        handle.shutdown().await;
-        info!("Istio MCP service stopped");
-    }
-
-    if let Some(manager) = health_check_manager {
-        info!("Stopping health check manager...");
-        manager.shutdown().await;
-        info!("Health check manager stopped");
-    }
-
-    if let Some(plugin_manager) = &app_state.plugin_manager {
-        info!("Shutting down protocol adapters...");
-        if let Err(error) = plugin_manager.shutdown_protocol_adapters().await {
-            warn!(error = %error, "Protocol adapter shutdown reported an error");
+    shutdown_phase!(phases::XDS, {
+        if let Some(handle) = xds_handle {
+            info!("Stopping xDS service...");
+            handle.shutdown().await;
+            info!("xDS service stopped");
         }
-        info!("Protocol adapters stopped");
-    }
+    });
 
-    info!(
-        tracked = background_tasks.len(),
-        "Stopping background tasks"
-    );
-    background_tasks.shutdown(drain_timeout).await;
-
-    if let Some(smm) = server_member_manager
-        && !app_state.configuration.is_standalone()
-    {
-        info!("Stopping cluster manager...");
-        smm.stop().await;
-        info!("Cluster manager stopped");
-    }
-
-    if let Some(ref raft_node) = app_state.raft_node {
-        info!("Shutting down Raft node...");
-        match tokio::time::timeout(Duration::from_secs(10), raft_node.shutdown()).await {
-            Ok(Ok(())) => info!("Raft node shutdown complete"),
-            Ok(Err(e)) => error!("Raft node shutdown error: {}", e),
-            Err(_) => error!("Raft node shutdown timed out after 10s"),
+    shutdown_phase!(phases::ISTIO_MCP, {
+        if let Some(handle) = istio_mcp_handle {
+            info!("Stopping Istio MCP service...");
+            handle.shutdown().await;
+            info!("Istio MCP service stopped");
         }
-    }
+    });
 
-    if let Some(db) = database_connection {
-        let db_timeout = app_state.configuration.shutdown_db_close_timeout_secs();
-        info!("Closing database connections (timeout: {}s)...", db_timeout);
-        match tokio::time::timeout(Duration::from_secs(db_timeout), db.close()).await {
-            Ok(Ok(())) => info!("Database connections closed"),
-            Ok(Err(e)) => error!("Error closing database connections: {}", e),
-            Err(_) => error!("Database close timed out after {}s", db_timeout),
+    shutdown_phase!(phases::HEALTH_CHECK, {
+        if let Some(manager) = health_check_manager {
+            info!("Stopping health check manager...");
+            manager.shutdown().await;
+            info!("Health check manager stopped");
         }
-    }
+    });
+
+    shutdown_phase!(phases::PLUGINS_SHUTDOWN, {
+        if let Some(plugin_manager) = &app_state.plugin_manager {
+            info!("Shutting down protocol adapters...");
+            if let Err(error) = plugin_manager.shutdown_protocol_adapters().await {
+                warn!(error = %error, "Protocol adapter shutdown reported an error");
+            }
+            info!("Protocol adapters stopped");
+        }
+    });
+
+    shutdown_phase!(phases::BACKGROUND_TASKS, {
+        info!(
+            tracked = background_tasks.len(),
+            "Stopping background tasks"
+        );
+        background_tasks.shutdown(drain_timeout).await;
+    });
+
+    shutdown_phase!(phases::CLUSTER_MANAGER, {
+        if let Some(smm) = server_member_manager
+            && !app_state.configuration.is_standalone()
+        {
+            info!("Stopping cluster manager...");
+            smm.stop().await;
+            info!("Cluster manager stopped");
+        }
+    });
+
+    shutdown_phase!(phases::RAFT, {
+        if let Some(ref raft_node) = app_state.raft_node {
+            info!("Shutting down Raft node...");
+            match tokio::time::timeout(Duration::from_secs(10), raft_node.shutdown()).await {
+                Ok(Ok(())) => info!("Raft node shutdown complete"),
+                Ok(Err(e)) => error!("Raft node shutdown error: {}", e),
+                Err(_) => error!("Raft node shutdown timed out after 10s"),
+            }
+        }
+    });
+
+    shutdown_phase!(phases::DATABASE, {
+        if let Some(db) = database_connection {
+            let db_timeout = app_state.configuration.shutdown_db_close_timeout_secs();
+            info!("Closing database connections (timeout: {}s)...", db_timeout);
+            match tokio::time::timeout(Duration::from_secs(db_timeout), db.close()).await {
+                Ok(Ok(())) => info!("Database connections closed"),
+                Ok(Err(e)) => error!("Error closing database connections: {}", e),
+                Err(_) => error!("Database close timed out after {}s", db_timeout),
+            }
+        }
+    });
 
     let final_states = server_registry.health();
     info!(
@@ -2446,6 +2569,105 @@ mod phase_tests {
         );
     }
 
+    #[tokio::test]
+    async fn last_owner_drop_aborts_tasks_left_by_failed_startup() {
+        // `?` on any phase after background tasks start drops AppBuilder. The
+        // final BackgroundTasks clone must abort tasks graceful shutdown never
+        // reached (JoinHandle drop alone would only detach them).
+        let started = Arc::new(tokio::sync::Notify::new());
+        let started_for_task = started.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let drop_flag = DropFlag(dropped.clone());
+
+        {
+            let tasks = BackgroundTasks::default();
+            tasks.spawn("orphaned-by-startup-failure", async move {
+                let _drop_flag = drop_flag;
+                started_for_task.notify_one();
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+            });
+            started.notified().await;
+            assert_eq!(tasks.len(), 1);
+        } // last (and only) owner drops here
+
+        // Abort is scheduled synchronously; yield so the runtime processes it.
+        for _ in 0..16 {
+            if dropped.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "dropping the last BackgroundTasks owner must abort leftover tasks"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_a_non_final_clone_keeps_server_tasks_alive() {
+        // with_plugin_init clones BackgroundTasks into a process-lifetime
+        // global. A short-lived clone dropping must not abort tasks the server
+        // still owns — hence abort lives in TaskRegistry::drop (last owner).
+        let started = Arc::new(tokio::sync::Notify::new());
+        let started_for_task = started.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let drop_flag = DropFlag(dropped.clone());
+
+        let tasks = BackgroundTasks::default();
+        tasks.spawn("server-owned", async move {
+            let _drop_flag = drop_flag;
+            started_for_task.notify_one();
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
+        started.notified().await;
+
+        let short_lived = tasks.clone();
+        drop(short_lived);
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !dropped.load(Ordering::Acquire),
+            "dropping a non-final BackgroundTasks clone must not abort server tasks"
+        );
+
+        // Explicit shutdown still tears the task down.
+        tasks.shutdown(Duration::from_secs(1)).await;
+        assert_eq!(tasks.len(), 0);
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "explicit shutdown must abort the task"
+        );
+    }
+
+    #[test]
+    fn startup_failure_cleanup_is_last_owner_abort_in_task_registry() {
+        // Source guard: abort belongs in TaskRegistry::drop, not in
+        // BackgroundTasks (which is Clone), so a stray clone cannot kill tasks.
+        assert!(
+            SOURCE.contains("impl Drop for TaskRegistry"),
+            "last-owner abort must live in TaskRegistry::drop"
+        );
+        assert!(
+            SOURCE.contains("handle.abort()"),
+            "cleanup must abort leftover task handles"
+        );
+        assert!(
+            SOURCE.contains("tasks: Arc<TaskRegistry>"),
+            "BackgroundTasks must share the registry via Arc for last-owner semantics"
+        );
+        let drop_start = SOURCE.find("impl Drop for TaskRegistry").unwrap();
+        let clone_boundary = SOURCE.find("impl BackgroundTasks").unwrap();
+        assert!(
+            SOURCE[drop_start..clone_boundary].contains("handle.abort()"),
+            "the abort must be inside TaskRegistry::drop"
+        );
+    }
+
     #[test]
     fn startup_builds_exactly_one_shared_plugin_manager() {
         // Split literals so the guard itself does not inflate the count.
@@ -2482,7 +2704,7 @@ mod phase_tests {
 
         let barrier = concat!(
             "complete_startup(app_state, server_member_manager, ",
-            "startup_complete).await;"
+            "startup_complete, timeline).await;"
         );
         assert_eq!(
             SOURCE.matches(barrier).count(),
@@ -2639,5 +2861,108 @@ mod phase_tests {
                 "{listener} must be joined before its state is STOPPED"
             );
         }
+    }
+
+    #[test]
+    fn startup_phases_are_timed_and_total_is_reported_with_mode_and_storage() {
+        let run_start = SOURCE.find("pub async fn run()").unwrap();
+        let run_end = SOURCE.find("impl Default for AppBuilder").unwrap();
+        let run = &SOURCE[run_start..run_end];
+
+        assert_eq!(
+            run.matches("startup_phase!(").count(),
+            11,
+            "every fallible startup phase must go through the timed wrapper"
+        );
+        assert!(
+            SOURCE.contains("finish_startup_phase(&mut timer, $future.await)?"),
+            "startup wrapper must record the real Ok/Err outcome"
+        );
+        assert!(
+            SOURCE.contains("startup_summary(mode, storage, total_ms)"),
+            "total startup log must mirror Nacos started-successfully shape"
+        );
+        assert!(
+            SOURCE.contains("mode_label(app_state.configuration.is_standalone())"),
+            "startup summary must carry the deployment mode label"
+        );
+        assert!(
+            SOURCE.contains(concat!(
+                "storage_label(app_state.configuration.",
+                "persistence_mode())"
+            )),
+            "startup summary must carry the embedded/external storage label"
+        );
+        assert!(
+            SOURCE.contains("let mut barrier = timeline.begin(phases::STARTUP_BARRIER"),
+            "the readiness barrier must be a measured startup phase"
+        );
+    }
+
+    #[test]
+    fn shutdown_stages_have_individual_timers_and_one_total() {
+        let seq_start = SOURCE
+            .find("async fn graceful_shutdown_sequence(")
+            .expect("shutdown sequence must exist");
+        let seq_end = SOURCE.find("#[cfg(test)]").unwrap();
+        let sequence = &SOURCE[seq_start..seq_end];
+
+        for phase in [
+            "phases::GRPC",
+            "phases::XDS",
+            "phases::ISTIO_MCP",
+            "phases::HEALTH_CHECK",
+            "phases::PLUGINS_SHUTDOWN",
+            "phases::BACKGROUND_TASKS",
+            "phases::CLUSTER_MANAGER",
+            "phases::RAFT",
+            "phases::DATABASE",
+        ] {
+            assert!(
+                sequence.contains(&format!("shutdown_phase!({phase},")),
+                "shutdown stage must be timed: {phase}"
+            );
+        }
+        assert_eq!(
+            sequence.matches("shutdown_phase!(").count(),
+            9,
+            "each shutdown stage must be timed exactly once"
+        );
+        let mark = concat!("timeline.mark_", "shutdown()");
+        assert_eq!(
+            SOURCE.matches(mark).count(),
+            4,
+            "console/server signal and server-exit triggers must start the shutdown clock once"
+        );
+        assert!(
+            SOURCE.contains("shutdown_summary(total_ms)"),
+            "shutdown total must be logged with elapsed milliseconds"
+        );
+    }
+
+    #[test]
+    fn lifecycle_metrics_are_described_and_emitted() {
+        const METRICS: &str = include_str!("../metrics.rs");
+        const TIMING: &str = include_str!("lifecycle_timing.rs");
+
+        for name in [
+            "batata_server_lifecycle_phase_duration_seconds",
+            "batata_server_lifecycle_total_duration_seconds",
+            "batata_server_lifecycle_phase_failures_total",
+        ] {
+            assert!(TIMING.contains(name), "metric must exist: {name}");
+        }
+        assert!(
+            METRICS.contains("LifecycleTimeline::describe_metrics()"),
+            "metric descriptions must be registered by init_metrics()"
+        );
+        assert!(
+            TIMING.contains(".record(ms as f64 / 1000.0)"),
+            "phase histogram must receive the measured duration"
+        );
+        assert!(
+            TIMING.contains(".increment(1)"),
+            "failed phases must increment the failure counter"
+        );
     }
 }

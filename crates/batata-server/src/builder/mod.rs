@@ -6,5 +6,8 @@
 /// `app_builder` module.
 pub mod app_builder;
 
+/// Shared startup/shutdown phase timing (logs + metrics only).
+pub(crate) mod lifecycle_timing;
+
 /// Re-exported item.
 pub use app_builder::AppBuilder;
