@@ -503,6 +503,7 @@ impl Default for ServerOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     /// Test server for unit testing
     struct TestServer {
@@ -566,6 +567,71 @@ mod tests {
 
         async fn shutdown(&self) -> Result<(), ServerError> {
             self.state.set_draining();
+            self.state.set_stopped();
+            Ok(())
+        }
+    }
+
+    struct OrderServer {
+        name: String,
+        server_type: ServerType,
+        priority: u32,
+        state: ServerStateTracker,
+        starts: Arc<Mutex<Vec<String>>>,
+        shutdowns: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl OrderServer {
+        fn new(
+            name: &str,
+            server_type: ServerType,
+            priority: u32,
+            starts: Arc<Mutex<Vec<String>>>,
+            shutdowns: Arc<Mutex<Vec<String>>>,
+        ) -> Self {
+            Self {
+                name: name.to_string(),
+                server_type,
+                priority,
+                state: ServerStateTracker::new(),
+                starts,
+                shutdowns,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ManagedServer for OrderServer {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn server_type(&self) -> ServerType {
+            self.server_type
+        }
+
+        fn start_priority(&self) -> u32 {
+            self.priority
+        }
+
+        fn state(&self) -> &ServerStateTracker {
+            &self.state
+        }
+
+        async fn start(&self) -> Result<(), ServerError> {
+            self.starts
+                .lock()
+                .expect("start-order mutex poisoned")
+                .push(self.name.clone());
+            self.state.set_running();
+            Ok(())
+        }
+
+        async fn shutdown(&self) -> Result<(), ServerError> {
+            self.shutdowns
+                .lock()
+                .expect("shutdown-order mutex poisoned")
+                .push(self.name.clone());
             self.state.set_stopped();
             Ok(())
         }
@@ -749,5 +815,296 @@ mod tests {
             reason: "address already in use".to_string(),
         };
         assert!(err.to_string().contains("0.0.0.0:8848"));
+    }
+
+    #[test]
+    fn server_registry_starts_empty() {
+        let registry = ServerRegistry::new();
+        assert_eq!(registry.server_count(), 0);
+        assert!(registry.health().is_empty());
+        assert!(registry.all_running());
+    }
+
+    #[test]
+    fn server_registry_reports_registered_tracker_states() {
+        let registry = ServerRegistry::new();
+        let main = ServerStateTracker::new();
+        main.set_running();
+        let raft = ServerStateTracker::new();
+        raft.set_stopped();
+
+        registry.register("main", ServerType::Http, main);
+        registry.register("raft", ServerType::Raft, raft);
+
+        assert_eq!(registry.server_count(), 2);
+        let health = registry.health();
+        assert_eq!(health[0].name, "main");
+        assert_eq!(health[0].server_type, "HTTP");
+        assert_eq!(health[0].state, "RUNNING");
+        assert!(health[0].healthy);
+        assert_eq!(health[1].name, "raft");
+        assert_eq!(health[1].server_type, "Raft");
+        assert_eq!(health[1].state, "STOPPED");
+        assert!(!health[1].healthy);
+        assert!(!registry.all_running());
+    }
+
+    #[tokio::test]
+    async fn orchestrator_starts_servers_in_declared_priority_order() {
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let shutdowns = Arc::new(Mutex::new(Vec::new()));
+        let mut orchestrator = ServerOrchestrator::new();
+
+        orchestrator.register(Arc::new(OrderServer::new(
+            "C",
+            ServerType::Http,
+            30,
+            starts.clone(),
+            shutdowns.clone(),
+        )));
+        orchestrator.register(Arc::new(OrderServer::new(
+            "A",
+            ServerType::Raft,
+            10,
+            starts.clone(),
+            shutdowns.clone(),
+        )));
+        orchestrator.register(Arc::new(OrderServer::new(
+            "B",
+            ServerType::Grpc,
+            20,
+            starts.clone(),
+            shutdowns,
+        )));
+
+        orchestrator
+            .start_all()
+            .await
+            .expect("startup must succeed");
+        assert_eq!(
+            *starts.lock().expect("start-order mutex poisoned"),
+            vec!["A", "B", "C"]
+        );
+    }
+
+    #[tokio::test]
+    async fn orchestrator_shuts_down_servers_in_reverse_priority_order() {
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let shutdowns = Arc::new(Mutex::new(Vec::new()));
+        let mut orchestrator = ServerOrchestrator::new();
+
+        for (name, server_type, priority) in [
+            ("C", ServerType::Http, 30),
+            ("A", ServerType::Raft, 10),
+            ("B", ServerType::Grpc, 20),
+        ] {
+            orchestrator.register(Arc::new(OrderServer::new(
+                name,
+                server_type,
+                priority,
+                starts.clone(),
+                shutdowns.clone(),
+            )));
+        }
+
+        orchestrator
+            .start_all()
+            .await
+            .expect("startup must succeed");
+        orchestrator
+            .shutdown_all()
+            .await
+            .expect("shutdown must succeed");
+        assert_eq!(
+            *shutdowns.lock().expect("shutdown-order mutex poisoned"),
+            vec!["C", "B", "A"]
+        );
+    }
+
+    #[test]
+    fn server_registry_preserves_registration_order() {
+        let registry = ServerRegistry::new();
+        for name in ["first", "second", "third"] {
+            registry.register(name, ServerType::Http, ServerStateTracker::new());
+        }
+        let names = registry
+            .health()
+            .into_iter()
+            .map(|info| info.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn server_registry_health_tracks_live_state_transitions() {
+        let registry = ServerRegistry::new();
+        let tracker = ServerStateTracker::new();
+        registry.register("main", ServerType::Http, tracker.clone());
+
+        assert_eq!(registry.health()[0].state, "CREATED");
+        tracker.set_running();
+        assert_eq!(registry.health()[0].state, "RUNNING");
+        assert!(registry.health()[0].healthy);
+        tracker.set_draining();
+        assert_eq!(registry.health()[0].state, "DRAINING");
+        assert!(!registry.health()[0].healthy);
+    }
+
+    #[test]
+    fn server_registry_all_running_requires_every_tracker() {
+        let registry = ServerRegistry::new();
+        let first = ServerStateTracker::new();
+        let second = ServerStateTracker::new();
+        registry.register("first", ServerType::Http, first.clone());
+        registry.register("second", ServerType::Grpc, second.clone());
+
+        assert!(!registry.all_running());
+        first.set_running();
+        assert!(!registry.all_running());
+        second.set_running();
+        assert!(registry.all_running());
+    }
+
+    #[test]
+    fn server_registry_health_reports_background_server_type() {
+        let registry = ServerRegistry::new();
+        registry.register(
+            "health-checker",
+            ServerType::Background,
+            ServerStateTracker::new(),
+        );
+        assert_eq!(registry.health()[0].server_type, "Background");
+    }
+
+    #[test]
+    fn server_registry_allows_duplicate_server_names() {
+        let registry = ServerRegistry::new();
+        registry.register("probe", ServerType::Http, ServerStateTracker::new());
+        registry.register("probe", ServerType::Grpc, ServerStateTracker::new());
+        assert_eq!(registry.server_count(), 2);
+        assert_eq!(registry.health().len(), 2);
+    }
+
+    #[test]
+    fn server_registry_server_count_matches_health_len() {
+        let registry = ServerRegistry::new();
+        for name in ["a", "b", "c"] {
+            registry.register(name, ServerType::Raft, ServerStateTracker::new());
+        }
+        assert_eq!(registry.server_count(), registry.health().len());
+    }
+
+    #[tokio::test]
+    async fn server_registry_sync_health_view_has_no_async_error() {
+        let registry = ServerRegistry::new();
+        let tracker = ServerStateTracker::new();
+        tracker.set_error("async-only failure".to_string()).await;
+        registry.register("failed", ServerType::Grpc, tracker);
+        assert_eq!(registry.health()[0].error, None);
+    }
+
+    #[test]
+    fn server_state_failed_is_terminal_and_not_running() {
+        assert_eq!(ServerState::Failed.to_string(), "FAILED");
+        assert!(!ServerState::Failed.is_running());
+
+        let tracker = ServerStateTracker::new();
+        tracker.set_failed();
+        assert_eq!(tracker.state(), ServerState::Failed);
+        assert!(!tracker.is_running());
+    }
+
+    #[test]
+    fn server_state_tracker_unknown_atomic_value_defaults_created() {
+        let tracker = ServerStateTracker::new();
+        tracker.state.store(200, Ordering::Relaxed);
+        assert_eq!(tracker.state(), ServerState::Created);
+        assert!(!tracker.is_running());
+    }
+
+    #[test]
+    fn server_registry_health_reflects_failed_state() {
+        let registry = ServerRegistry::new();
+        let tracker = ServerStateTracker::new();
+        tracker.set_failed();
+        registry.register("broken", ServerType::Raft, tracker);
+
+        let health = registry.health();
+        assert_eq!(health.len(), 1);
+        assert_eq!(health[0].state, "FAILED");
+        assert!(!health[0].healthy);
+        assert!(!registry.all_running());
+    }
+
+    #[test]
+    fn server_type_hash_set_has_four_distinct_entries() {
+        let all = [
+            ServerType::Http,
+            ServerType::Grpc,
+            ServerType::Raft,
+            ServerType::Background,
+        ];
+        let types = std::collections::HashSet::from(all);
+        assert_eq!(types.len(), 4);
+        assert!(types.contains(&ServerType::Grpc));
+        assert!(types.contains(&ServerType::Background));
+
+        let labels = all.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(labels, vec!["HTTP", "gRPC", "Raft", "Background"]);
+    }
+
+    #[test]
+    fn server_error_shutdown_failed_display() {
+        let error = ServerError::ShutdownFailed {
+            name: "Raft".to_string(),
+            reason: "join timed out".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Server 'Raft' failed to shutdown: join timed out"
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_server_health_check_default_follows_state() {
+        let server = TestServer::new("probe", ServerType::Http, 10);
+        assert!(!server.health_check().await);
+
+        server.start().await.expect("start must succeed");
+        assert!(server.health_check().await);
+
+        server.shutdown().await.expect("shutdown must succeed");
+        assert!(!server.health_check().await);
+    }
+
+    #[test]
+    fn server_orchestrator_empty_has_zero_count_and_snapshot() {
+        let orchestrator = ServerOrchestrator::new();
+        assert_eq!(orchestrator.server_count(), 0);
+        assert!(orchestrator.state_snapshot().is_empty());
+        assert!(orchestrator.all_running());
+    }
+
+    #[test]
+    fn server_orchestrator_server_count_matches_snapshot_len() {
+        let mut orchestrator = ServerOrchestrator::new();
+        for name in ["a", "b", "c"] {
+            orchestrator.register(Arc::new(TestServer::new(name, ServerType::Grpc, 10)));
+        }
+        assert_eq!(orchestrator.server_count(), 3);
+        assert_eq!(orchestrator.state_snapshot().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn server_orchestrator_health_includes_tracker_error() {
+        let mut orchestrator = ServerOrchestrator::new();
+        let server = Arc::new(TestServer::new("s1", ServerType::Grpc, 10));
+        server.state().set_error("bind failed".to_string()).await;
+        orchestrator.register(server);
+
+        let health = orchestrator.health().await;
+        assert_eq!(health.len(), 1);
+        assert_eq!(health[0].error, Some("bind failed".to_string()));
+        assert!(!health[0].healthy);
     }
 }

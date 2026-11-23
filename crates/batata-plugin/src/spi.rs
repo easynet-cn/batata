@@ -1427,4 +1427,110 @@ mod tests {
             "optional shared lookup must stay None on a missing key"
         );
     }
+
+    #[test]
+    fn plugin_context_new_is_empty() {
+        let ctx = PluginContext::new();
+        assert!(ctx.describe().is_empty());
+        assert!(!ctx.contains(context_keys::IS_CLUSTER));
+        assert!(ctx.get::<bool>(context_keys::IS_CLUSTER).is_none());
+    }
+
+    #[test]
+    fn plugin_context_insert_overwrites_same_key() {
+        let mut ctx = PluginContext::new();
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(true));
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(false));
+        assert!(
+            !*ctx
+                .get_required::<bool>(context_keys::IS_CLUSTER)
+                .expect("latest value must win")
+        );
+    }
+
+    #[test]
+    fn plugin_context_supports_multiple_distinct_keys() {
+        let mut ctx = PluginContext::new();
+        ctx.insert(context_keys::IS_CLUSTER, Arc::new(true));
+        ctx.insert("retry_count", Arc::new(3_u32));
+        ctx.insert(context_keys::STORAGE_MODE, Arc::new("embedded".to_string()));
+
+        assert!(*ctx.get_required::<bool>(context_keys::IS_CLUSTER).unwrap());
+        assert_eq!(*ctx.get_required::<u32>("retry_count").unwrap(), 3);
+        assert_eq!(ctx.describe().len(), 3);
+    }
+
+    #[test]
+    fn plugin_context_optional_get_stays_none_on_wrong_type() {
+        let mut ctx = PluginContext::new();
+        ctx.insert("retry_count", Arc::new(3_u32));
+
+        assert!(ctx.get::<bool>("retry_count").is_none());
+        assert_eq!(*ctx.get::<u32>("retry_count").unwrap(), 3);
+    }
+
+    #[test]
+    fn plugin_context_required_error_display_is_actionable() {
+        let missing = PluginContextError::Missing {
+            key: context_keys::RAFT_NODE.to_string(),
+        };
+        let message = missing.to_string();
+        assert!(message.contains(context_keys::RAFT_NODE));
+        assert!(message.contains("missing"));
+
+        let wrong = PluginContextError::WrongType {
+            key: context_keys::STORAGE_MODE.to_string(),
+            expected: "bool",
+            actual: "u32",
+        };
+        let message = wrong.to_string();
+        assert!(message.contains(context_keys::STORAGE_MODE));
+        assert!(message.contains("expected"));
+        assert!(message.contains("has type"));
+    }
+
+    #[test]
+    fn plugin_context_missing_shared_dependency_is_reported() {
+        trait Marker: Send + Sync {}
+
+        let ctx = PluginContext::new();
+        assert!(ctx.get_shared::<dyn Marker>("missing").is_none());
+        assert!(
+            matches!(
+                ctx.get_shared_required::<dyn Marker>("missing"),
+                Err(PluginContextError::Missing { ref key }) if key == "missing"
+            ),
+            "a missing shared dependency must preserve the canonical key"
+        );
+    }
+
+    #[test]
+    fn plugin_context_shared_wrong_type_is_distinguished() {
+        trait First: Send + Sync {}
+        trait Second: Send + Sync {}
+        struct OnlyFirst;
+        impl First for OnlyFirst {}
+
+        let mut ctx = PluginContext::new();
+        ctx.insert_shared("dep", Arc::new(OnlyFirst) as Arc<dyn First>);
+
+        assert!(
+            matches!(
+                ctx.get_shared_required::<dyn Second>("dep"),
+                Err(PluginContextError::WrongType { .. })
+            ),
+            "a trait-object mismatch must not be reported as missing"
+        );
+    }
+
+    #[test]
+    fn plugin_context_describe_reports_inserted_concrete_types() {
+        let mut ctx = PluginContext::new();
+        ctx.insert("flag", Arc::new(true));
+        ctx.insert("count", Arc::new(7_u64));
+
+        let described = ctx.describe();
+        assert_eq!(described["flag"], "bool");
+        assert_eq!(described["count"], "u64");
+    }
 }

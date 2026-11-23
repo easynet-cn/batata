@@ -1250,7 +1250,11 @@ fn validate_config(configuration: &Configuration) -> Result<(), Box<dyn std::err
         eprintln!(
             "Set 'batata.core.auth.plugin.default.token.secret.key' to a non-empty Base64-encoded secret."
         );
-        return Err("authentication enabled without a JWT secret key".into());
+        return Err(concat!(
+            "authentication enabled without JWT secret key: ",
+            "batata.core.auth.plugin.default.token.secret.key"
+        )
+        .into());
     }
 
     const DEFAULT_SECRET_KEYS: &[&str] = &[
@@ -2257,8 +2261,12 @@ mod phase_tests {
     const SOURCE: &str = include_str!("app_builder.rs");
 
     fn config_with_auth(secret: &str) -> Configuration {
+        config_with_auth_settings(true, secret)
+    }
+
+    fn config_with_auth_settings(enabled: bool, secret: &str) -> Configuration {
         let config = Config::builder()
-            .set_override("batata.core.auth.enabled", true)
+            .set_override("batata.core.auth.enabled", enabled)
             .unwrap()
             .set_override(
                 "batata.core.auth.plugin.default.token.secret.key",
@@ -2285,6 +2293,92 @@ mod phase_tests {
     fn configured_secret_passes_validation() {
         let configuration = config_with_auth("a-valid-test-secret");
         validate_config(&configuration).expect("configured secret must pass");
+    }
+
+    #[test]
+    fn empty_jwt_secret_error_names_exact_configuration_key() {
+        let error = validate_config(&config_with_auth(""))
+            .expect_err("empty JWT secret must remain a startup error");
+        let message = error.to_string();
+        assert!(
+            message.contains("authentication enabled"),
+            "error must explain the failing condition: {message}"
+        );
+        assert!(
+            message.contains("batata.core.auth.plugin.default.token.secret.key"),
+            "error must name the exact setting operators need to change: {message}"
+        );
+    }
+
+    #[test]
+    fn auth_disabled_accepts_empty_jwt_secret() {
+        let configuration = config_with_auth_settings(false, "");
+        validate_config(&configuration).expect("auth-disabled startup must not require a secret");
+    }
+
+    #[test]
+    fn known_default_jwt_secret_is_advisory() {
+        let configuration =
+            config_with_auth_settings(true, "NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm");
+        validate_config(&configuration).expect("default secret must warn, not fail startup");
+    }
+
+    #[test]
+    fn config_validation_returns_error_without_exiting_process() {
+        let start = SOURCE.find("fn validate_config(").unwrap();
+        let end = SOURCE.find("/// Initialize OAuth service").unwrap();
+        let body = &SOURCE[start..end];
+
+        assert!(
+            body.contains("Result<(), Box<dyn std::error::Error>>"),
+            "config validation must unwind errors through AppBuilder::run()"
+        );
+        assert!(
+            !body.contains(concat!("std::process::", "exit(")),
+            "library code must never terminate the process directly"
+        );
+    }
+
+    #[test]
+    fn console_remote_persistence_context_has_no_local_resources() {
+        let ctx = crate::startup::persistence::PersistenceContext::empty();
+        assert!(ctx.database_connection.is_none());
+        assert!(ctx.server_member_manager.is_none());
+        assert!(ctx.cluster_manager.is_none());
+        assert!(ctx.persistence.is_none());
+        assert!(ctx.rocks_db.is_none());
+        assert!(ctx.raft_node.is_none());
+
+        const PERSISTENCE_SOURCE: &str = include_str!("../startup/persistence.rs");
+        let start = PERSISTENCE_SOURCE
+            .find("pub fn empty() -> Self")
+            .expect("empty persistence context must exist");
+        let end = PERSISTENCE_SOURCE[start..]
+            .find("\n    }")
+            .expect("empty persistence context boundary must exist")
+            + start;
+        assert_eq!(
+            PERSISTENCE_SOURCE[start..end].matches(": None,").count(),
+            6,
+            "console-remote mode must declare every local resource as absent"
+        );
+    }
+
+    #[test]
+    fn persistence_initialization_branches_on_console_remote_mode() {
+        let runtime_source = &SOURCE[..SOURCE.find("mod phase_tests").unwrap()];
+        let start = runtime_source
+            .find("pub async fn with_persistence")
+            .expect("production persistence phase must exist");
+        let end = runtime_source[start..]
+            .find("// Phase 4:")
+            .expect("persistence phase boundary must exist")
+            + start;
+        let body = &runtime_source[start..end];
+
+        assert!(body.contains("if self.is_console_remote"));
+        assert!(body.contains("PersistenceContext::empty()"));
+        assert!(body.contains("init_persistence("));
     }
 
     #[test]
@@ -2395,10 +2489,6 @@ mod phase_tests {
             1,
             "all HTTP deployment modes must pass the common final barrier"
         );
-
-        // Split literal so this guard does not reintroduce the forbidden call
-        // as a plain source string.
-        assert!(!SOURCE.contains(concat!("std::process::", "exit(")));
     }
 
     #[test]
@@ -2442,13 +2532,16 @@ mod phase_tests {
         const CONTEXT_SOURCE: &str = include_str!("../context/mod.rs");
         const REGISTRY_SOURCE: &str = include_str!("../registry/mod.rs");
 
-        for marker in [
-            "#[cfg(test)]\npub mod initializer;",
-            "#[cfg(test)]\npub mod lifecycle;",
-        ] {
+        for module in ["initializer", "lifecycle"] {
             assert!(
-                LIB_SOURCE.contains(marker),
-                "legacy startup module must not be compiled into production: {marker}"
+                !LIB_SOURCE.contains(&format!("pub mod {module};")),
+                "legacy startup module must stay deleted: {module}"
+            );
+            let path =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/{module}"));
+            assert!(
+                !path.exists(),
+                "legacy startup source must stay deleted: {module}"
             );
         }
 
@@ -2458,23 +2551,39 @@ mod phase_tests {
             "server_builder",
             "service_builder",
         ] {
-            let marker = format!("#[cfg(test)]\npub mod {module};");
             assert!(
-                BUILDER_SOURCE.contains(&marker),
-                "legacy builder must be test-only: {module}"
+                !BUILDER_SOURCE.contains(&format!("pub mod {module};")),
+                "legacy builder must not be declared: {module}"
+            );
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("src/builder/{module}.rs"));
+            assert!(
+                !path.exists(),
+                "legacy builder source must stay deleted: {module}"
             );
         }
 
         assert!(
-            CONTEXT_SOURCE.contains("#[cfg(test)]\npub mod app_context;"),
-            "legacy AppContext must be test-only"
+            !CONTEXT_SOURCE.contains("pub mod app_context;"),
+            "legacy AppContext must stay deleted"
+        );
+        assert!(
+            !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/context/app_context.rs")
+                .exists(),
+            "legacy AppContext source must stay deleted"
         );
 
         for module in ["server_registry", "service_registry"] {
-            let marker = format!("#[cfg(test)]\npub mod {module};");
             assert!(
-                REGISTRY_SOURCE.contains(&marker),
-                "legacy registry must be test-only: {module}"
+                !REGISTRY_SOURCE.contains(&format!("pub mod {module};")),
+                "legacy registry must not be declared: {module}"
+            );
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("src/registry/{module}.rs"));
+            assert!(
+                !path.exists(),
+                "legacy registry source must stay deleted: {module}"
             );
         }
 
@@ -2484,5 +2593,51 @@ mod phase_tests {
             !orphan.exists(),
             "the undeclared lifecycle/server_trait.rs orphan must stay deleted"
         );
+    }
+
+    #[test]
+    fn grpc_shutdown_publishes_draining_before_stopped() {
+        const SOURCE: &str = include_str!("../startup/grpc.rs");
+        let shutdown = SOURCE
+            .split("pub async fn shutdown(&mut self, timeout: Duration)")
+            .nth(1)
+            .expect("GrpcServers::shutdown must exist")
+            .split("/// Get naming service")
+            .next()
+            .expect("shutdown method boundary must exist");
+
+        let first_draining = shutdown
+            .find("set_draining()")
+            .expect("shutdown must publish draining state");
+        let first_stopped = shutdown
+            .find("set_stopped()")
+            .expect("shutdown must publish stopped state");
+        assert!(
+            first_draining < first_stopped,
+            "gRPC state must be DRAINING before STOPPED so health checks drain first"
+        );
+    }
+
+    #[test]
+    fn grpc_shutdown_joins_each_listener_before_marking_stopped() {
+        const SOURCE: &str = include_str!("../startup/grpc.rs");
+        for listener in ["sdk_server", "cluster_server", "raft_server"] {
+            let handle = format!("self.{listener}.take()");
+            let stopped = match listener {
+                "sdk_server" => "self.sdk_state.set_stopped()",
+                "cluster_server" => "self.cluster_state.set_stopped()",
+                _ => "self.raft_state.set_stopped()",
+            };
+            let take = SOURCE
+                .find(&handle)
+                .unwrap_or_else(|| panic!("{listener} handle must be taken on shutdown"));
+            let state = SOURCE
+                .find(stopped)
+                .unwrap_or_else(|| panic!("{listener} state must be published stopped"));
+            assert!(
+                take < state,
+                "{listener} must be joined before its state is STOPPED"
+            );
+        }
     }
 }

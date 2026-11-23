@@ -518,5 +518,3 @@ pub const HOME_KEY: &str = "batata.home";
 
 /// Property for the main server port.
 pub const SERVER_PORT_PROPERTY: &str = "batata.server.main.port";
-/// Default main server port.
-pub const DEFAULT_SERVER_PORT: i32 = 8849;

@@ -2653,7 +2653,42 @@ mod tests {
     #[test]
     fn test_typed_server_port_default() {
         let cfg = build_config(vec![]);
-        assert_eq!(cfg.server_main_port(), 8849);
+        assert_eq!(cfg.server_main_port(), 8848);
+    }
+
+    #[test]
+    fn typed_server_port_default_matches_application_yml_without_orphan_constant() {
+        // The shipped config file is the contract; the typed default must agree with it.
+        const APPLICATION_YML: &str = include_str!("../../../../conf/application.yml");
+        let declared: i64 = APPLICATION_YML
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("batata.server.main.port:")
+                    .map(|value| {
+                        value
+                            .trim()
+                            .parse::<i64>()
+                            .expect("main port must be numeric")
+                    })
+            })
+            .expect("application.yml must declare batata.server.main.port");
+        assert_eq!(
+            declared, 8848,
+            "shipped config main port must stay 8848 (matches Nacos upstream)"
+        );
+        assert_eq!(
+            build_config(vec![]).server_main_port() as i64,
+            declared,
+            "typed default must match the shipped application.yml"
+        );
+
+        // The old unused mirror constant (8849) must not come back.
+        const CONSTANTS: &str = include_str!("constants.rs");
+        assert!(
+            !CONSTANTS.contains("DEFAULT_SERVER_PORT"),
+            "unused DEFAULT_SERVER_PORT constant must stay removed"
+        );
     }
 
     #[test]
@@ -3706,7 +3741,7 @@ batata.server.main.port: 8888
         let typed: typed_config::BatataTypedConfig = config.get("batata").unwrap_or_default();
 
         // Server
-        assert_eq!(typed.server.main.port, 8849);
+        assert_eq!(typed.server.main.port, 8848);
         assert_eq!(typed.server.context_path, None);
         assert_eq!(typed.server.address, None);
         // Console
@@ -3772,6 +3807,67 @@ batata.server.main.port: 8888
         assert_eq!(
             cfg.cluster_server_port(),
             8848 + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
+        );
+    }
+
+    #[test]
+    fn xds_config_struct_aggregates_all_typed_defaults() {
+        let xds = build_config(vec![]).xds_config();
+        assert!(!xds.enabled);
+        assert_eq!(xds.port, 15010);
+        assert_eq!(xds.server_id, "batata-xds-server");
+        assert_eq!(xds.sync_interval_ms, 5000);
+        assert!(xds.generate_listeners);
+        assert!(xds.generate_routes);
+        assert_eq!(xds.default_listener_port, 15001);
+        assert!(!xds.tls_enabled);
+        assert!(xds.tls_cert_path.is_none());
+        assert!(xds.tls_key_path.is_none());
+    }
+
+    #[test]
+    fn xds_config_struct_reflects_runtime_overrides() {
+        let xds = build_config(vec![
+            ("batata.mesh.xds.enabled", true.into()),
+            ("batata.mesh.xds.port", 16010_i64.into()),
+            ("batata.mesh.xds.server.id", "custom-xds".into()),
+            ("batata.mesh.xds.sync.interval.ms", 250_i64.into()),
+        ])
+        .xds_config();
+        assert!(xds.enabled);
+        assert_eq!(xds.port, 16010);
+        assert_eq!(xds.server_id, "custom-xds");
+        assert_eq!(xds.sync_interval_ms, 250);
+    }
+
+    #[test]
+    fn xds_default_listener_port_differs_from_bind_port() {
+        let xds = build_config(vec![]).xds_config();
+        assert_ne!(xds.default_listener_port, xds.port);
+        assert_eq!(xds.port, 15010);
+        assert_eq!(xds.default_listener_port, 15001);
+    }
+
+    #[test]
+    fn grpc_ports_shift_together_with_main_port() {
+        let baseline = build_config(vec![]);
+        let shifted = build_config(vec![("batata.server.main.port", 9000_i64.into())]);
+        let delta = 9000 - baseline.server_main_port() as i64;
+        assert_eq!(
+            shifted.sdk_server_port() as i64 - baseline.sdk_server_port() as i64,
+            delta
+        );
+        assert_eq!(
+            shifted.cluster_server_port() as i64 - baseline.cluster_server_port() as i64,
+            delta
+        );
+        assert_eq!(
+            baseline.sdk_server_port(),
+            baseline.server_main_port() + SDK_GRPC_PORT_DEFAULT_OFFSET
+        );
+        assert_eq!(
+            baseline.cluster_server_port(),
+            baseline.server_main_port() + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
         );
     }
 
@@ -4192,7 +4288,7 @@ batata.server.main.port: 8888
         let cfg = build_config(vec![]);
 
         // Server
-        assert_eq!(cfg.server_main_port(), 8849); // typed default
+        assert_eq!(cfg.server_main_port(), 8848); // typed default
         assert_eq!(cfg.server_address(), "0.0.0.0");
         assert_eq!(cfg.server_context_path(), "nacos");
 

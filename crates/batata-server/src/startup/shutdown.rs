@@ -190,4 +190,78 @@ mod tests {
         let result = run_with_shutdown(task, rx).await;
         assert!(result.is_none());
     }
+
+    #[tokio::test]
+    async fn shutdown_signal_broadcast_reaches_multiple_subscribers() {
+        let signal = ShutdownSignal::new();
+        let mut first = signal.subscribe();
+        let mut second = signal.subscribe();
+
+        signal.shutdown();
+
+        let first_result = tokio::time::timeout(Duration::from_millis(100), first.recv()).await;
+        let second_result = tokio::time::timeout(Duration::from_millis(100), second.recv()).await;
+        assert!(first_result.expect("first subscriber timed out").is_ok());
+        assert!(second_result.expect("second subscriber timed out").is_ok());
+    }
+
+    #[tokio::test]
+    async fn shutdown_signal_clone_shares_broadcast() {
+        let signal = ShutdownSignal::new();
+        let clone = signal.clone();
+        let mut receiver = signal.subscribe();
+
+        clone.shutdown();
+
+        let result = tokio::time::timeout(Duration::from_millis(100), receiver.recv()).await;
+        assert!(result.expect("cloned signal did not broadcast").is_ok());
+    }
+
+    #[test]
+    fn graceful_shutdown_drain_timeout_is_exposed() {
+        let signal = ShutdownSignal::new();
+        let timeout = Duration::from_millis(1234);
+        let graceful = GracefulShutdown::new(signal, timeout);
+        assert_eq!(graceful.drain_timeout(), timeout);
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_signal_returns_working_clone() {
+        let signal = ShutdownSignal::new();
+        let graceful = GracefulShutdown::new(signal.clone(), Duration::from_secs(1));
+        let mut receiver = signal.subscribe();
+
+        graceful.signal().shutdown();
+
+        let result = tokio::time::timeout(Duration::from_millis(100), receiver.recv()).await;
+        assert!(
+            result
+                .expect("graceful signal clone did not broadcast")
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_wait_returns_after_signal() {
+        let signal = ShutdownSignal::new();
+        let graceful = GracefulShutdown::new(signal.clone(), Duration::from_millis(250));
+        let signal_clone = signal.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            signal_clone.shutdown();
+        });
+
+        tokio::time::timeout(Duration::from_millis(100), graceful.wait_for_shutdown())
+            .await
+            .expect("wait_for_shutdown did not return after the signal");
+    }
+
+    #[tokio::test]
+    async fn run_with_shutdown_completes_future_on_normal_finish() {
+        let signal = ShutdownSignal::new();
+        let rx = signal.subscribe();
+
+        let result = run_with_shutdown(async { 42 }, rx).await;
+        assert_eq!(result, Some(42));
+    }
 }

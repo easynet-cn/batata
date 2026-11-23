@@ -26,12 +26,6 @@ pub mod console; // Console web interface
 pub mod context; // Application context types
 /// `error` module.
 pub mod error; // Error handling and types
-/// `initializer` module.
-#[cfg(test)]
-pub mod initializer; // Legacy trait-driven startup; test-only characterization
-/// `lifecycle` module.
-#[cfg(test)]
-pub mod lifecycle; // Legacy server lifecycle; test-only characterization
 /// `metrics` module.
 pub mod metrics; // Metrics and observability
 /// `middleware` module.

@@ -51,7 +51,7 @@ fn default_rocksdb_compression() -> Option<String> {
 
 // --- i64 defaults ---
 fn default_server_port() -> i64 {
-    8849
+    8848
 }
 fn default_http_keep_alive() -> i64 {
     75
