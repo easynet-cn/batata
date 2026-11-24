@@ -1194,6 +1194,23 @@ impl UserTokenPersistence for EmbeddedApolloPersistence {
             .collect())
     }
 
+    async fn revoke_user_token(&self, id: i64, operator: &str) -> anyhow::Result<()> {
+        let store = self.store(CF_APOLLO_USER_TOKEN);
+        let mut model = store
+            .scan_all::<apollo_user_token::Model>()?
+            .into_iter()
+            .find(|m| m.id == id)
+            .ok_or_else(|| anyhow::anyhow!("User token not found: {}", id))?;
+        if model.revoked_at.is_none() {
+            model.revoked_at = Some(Utc::now().naive_utc());
+            model.revoked_by = Some(operator.to_string());
+            model.data_change_last_modified_by = Some(operator.to_string());
+            model.data_change_last_time = Some(Utc::now().naive_utc());
+        }
+        store.put(format!("prefix:{}", model.token_prefix).as_bytes(), &model)?;
+        Ok(())
+    }
+
     async fn delete_user_token(&self, id: i64) -> anyhow::Result<()> {
         let store = self.store(CF_APOLLO_USER_TOKEN);
         let mut model = store

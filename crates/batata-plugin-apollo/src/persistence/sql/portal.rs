@@ -1361,6 +1361,24 @@ impl UserTokenPersistence for SqlApolloPersistence {
             .await?)
     }
 
+    async fn revoke_user_token(&self, id: i64, operator: &str) -> anyhow::Result<()> {
+        let db = &self.db;
+        let model = apollo_user_token::Entity::find_by_id(id)
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("User token not found: {}", id))?;
+        if model.revoked_at.is_none() {
+            let mut active_model: apollo_user_token::ActiveModel = model.into();
+            let now = Utc::now().naive_utc();
+            active_model.revoked_at = Set(Some(now));
+            active_model.revoked_by = Set(Some(operator.to_string()));
+            active_model.data_change_last_modified_by = Set(Some(operator.to_string()));
+            active_model.data_change_last_time = Set(Some(now));
+            active_model.update(db).await?;
+        }
+        Ok(())
+    }
+
     async fn delete_user_token(&self, id: i64) -> anyhow::Result<()> {
         let db = &self.db;
         let model = apollo_user_token::Entity::find_by_id(id)

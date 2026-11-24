@@ -585,6 +585,9 @@ impl<T: ApolloPersistenceService + ?Sized> UserTokenPersistence for Arc<T> {
     ) -> anyhow::Result<Vec<crate::entity::apollo_user_token::Model>> {
         UserTokenPersistence::list_user_tokens(&**self, user_id).await
     }
+    async fn revoke_user_token(&self, id: i64, operator: &str) -> anyhow::Result<()> {
+        UserTokenPersistence::revoke_user_token(&**self, id, operator).await
+    }
     async fn delete_user_token(&self, id: i64) -> anyhow::Result<()> {
         UserTokenPersistence::delete_user_token(&**self, id).await
     }

@@ -245,7 +245,11 @@ pub trait UserTokenPersistence {
         &self,
         user_id: &str,
     ) -> anyhow::Result<Vec<apollo_user_token::Model>>;
-    /// Soft-deletes a token by id.
+    /// Revokes a token in place (`revoked_at`/`revoked_by`) without deleting
+    /// the row, matching upstream `UserTokenService.revokeToken`. The row stays
+    /// listable with status `REVOKED` and revocation is idempotent.
+    async fn revoke_user_token(&self, id: i64, operator: &str) -> anyhow::Result<()>;
+    /// Soft-deletes a token by id (upstream `deleteToken`).
     async fn delete_user_token(&self, id: i64) -> anyhow::Result<()>;
 }
 

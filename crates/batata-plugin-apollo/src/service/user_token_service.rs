@@ -21,15 +21,76 @@ pub const TOKEN_PREFIX: &str = "apollo_pat_";
 const TOKEN_PREFIX_BYTES: usize = 6;
 const TOKEN_SECRET_BYTES: usize = 24;
 
+/// Expiry policy for issued user tokens.
+///
+/// Upstream `PortalConfig.userTokenDefaultExpireDays()` defaults to 90 and
+/// `userTokenMaxExpireDays()` to 365. `resolveExpires` rejects non-future and
+/// over-limit expirations instead of silently clamping them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserTokenPolicy {
+    /// Expiry applied when the caller omitted one.
+    pub default_expire_days: i64,
+    /// Largest accepted expiry, measured from issuance time.
+    pub max_expire_days: i64,
+}
+
+impl Default for UserTokenPolicy {
+    fn default() -> Self {
+        Self {
+            default_expire_days: 90,
+            max_expire_days: 365,
+        }
+    }
+}
+
+impl UserTokenPolicy {
+    /// Resolves and validates an expiration against this policy.
+    pub fn resolve_expires(
+        &self,
+        requested: Option<batata_common::datetime::DateTimeUtc>,
+    ) -> anyhow::Result<batata_common::datetime::DateTimeUtc> {
+        if self.default_expire_days <= 0 || self.max_expire_days <= 0 {
+            anyhow::bail!("user token expiry policy must be positive");
+        }
+        let now = batata_common::datetime::Utc::now();
+        let expires = requested.unwrap_or_else(|| {
+            now + batata_common::datetime::Duration::days(self.default_expire_days)
+        });
+        if expires <= now {
+            anyhow::bail!("Token expires must be in the future");
+        }
+        let latest = now + batata_common::datetime::Duration::days(self.max_expire_days);
+        if expires > latest {
+            anyhow::bail!(
+                "Token expires exceeds max allowed days:{}",
+                self.max_expire_days
+            );
+        }
+        Ok(expires)
+    }
+}
+
 /// Service for issuing and validating portal user tokens.
 pub struct UserTokenService {
     persistence: std::sync::Arc<dyn ApolloPersistenceService>,
+    policy: UserTokenPolicy,
 }
 
 impl UserTokenService {
-    /// Builds a new `UserTokenService`.
+    /// Builds a new `UserTokenService` with the upstream default policy.
     pub fn new(persistence: std::sync::Arc<dyn ApolloPersistenceService>) -> Self {
-        Self { persistence }
+        Self::with_policy(persistence, UserTokenPolicy::default())
+    }
+
+    /// Builds a service with an explicit expiry policy.
+    pub fn with_policy(
+        persistence: std::sync::Arc<dyn ApolloPersistenceService>,
+        policy: UserTokenPolicy,
+    ) -> Self {
+        Self {
+            persistence,
+            policy,
+        }
     }
 
     /// Generates a random plaintext token and stores only its prefix + hash.
@@ -91,9 +152,7 @@ impl UserTokenService {
         );
         let token = format!("{}{}_{}", TOKEN_PREFIX, prefix, secret);
         let hash = sha256_hex(&token);
-        let expires = expires.unwrap_or_else(|| {
-            batata_common::datetime::Utc::now() + batata_common::datetime::Duration::days(365)
-        });
+        let expires = self.policy.resolve_expires(expires)?;
         let model = <dyn UserTokenPersistence>::create_user_token(
             &*self.persistence,
             user_id,
@@ -182,8 +241,13 @@ impl UserTokenService {
         <dyn UserTokenPersistence>::list_user_tokens(&*self.persistence, user_id).await
     }
 
-    /// Revokes (soft-deletes) a token by id.
-    pub async fn revoke(&self, id: i64) -> anyhow::Result<()> {
+    /// Revokes a token in place, matching upstream `revokeToken`.
+    pub async fn revoke(&self, id: i64, operator: &str) -> anyhow::Result<()> {
+        <dyn UserTokenPersistence>::revoke_user_token(&*self.persistence, id, operator).await
+    }
+
+    /// Soft-deletes a token by id, matching upstream `deleteToken`.
+    pub async fn delete(&self, id: i64) -> anyhow::Result<()> {
         <dyn UserTokenPersistence>::delete_user_token(&*self.persistence, id).await
     }
 }

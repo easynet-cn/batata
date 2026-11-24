@@ -1,8 +1,12 @@
 mod common;
 
 use actix_web::{App, http::StatusCode, test, web};
+use batata_common::datetime::{DateTimeExt, Duration, NaiveDateTimeExt, Utc};
+use batata_plugin_apollo::api::dto::UserDTO;
 use batata_plugin_apollo::model::config::AuthConfig;
-use batata_plugin_apollo::service::{AuditLogService, UserTokenService};
+use batata_plugin_apollo::service::{
+    AuditLogService, UserService, UserTokenPolicy, UserTokenService,
+};
 use serde_json::{Value, json};
 
 fn auth_config(openapi_auth_enabled: bool) -> web::Data<AuthConfig> {
@@ -10,6 +14,18 @@ fn auth_config(openapi_auth_enabled: bool) -> web::Data<AuthConfig> {
         openapi_auth_enabled,
         ..AuthConfig::default()
     })
+}
+
+fn portal_user(username: &str) -> UserDTO {
+    UserDTO {
+        id: None,
+        username: username.to_string(),
+        password: "pw".to_string(),
+        email: None,
+        enabled: true,
+        data_change_created_by: None,
+        data_change_created_time: None,
+    }
 }
 
 #[tokio::test]
@@ -417,4 +433,528 @@ async fn placeholder_authorization_token_is_ignored_when_global_auth_is_disabled
     .await
     .expect("placeholder token must not be rejected when auth is disabled");
     assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn disabling_the_owner_immediately_invalidates_an_issued_pat() {
+    let persistence = common::make_embedded_persistence().await;
+    let users = UserService::new(persistence.clone());
+    users.create(portal_user("agent-owner")).await.unwrap();
+    let (token, _) = UserTokenService::new(persistence.clone())
+        .create("agent-owner", "owner-pat", "agent-owner", None)
+        .await
+        .unwrap();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence))
+            .app_data(auth_config(true))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/whoami")
+            .insert_header(("X-Apollo-Token", token.clone()))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "enabled owner is admitted"
+    );
+
+    users.set_enabled("agent-owner", false).await.unwrap();
+    let result = test::try_call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/whoami")
+            .insert_header(("X-Apollo-Token", token))
+            .to_request(),
+    )
+    .await;
+    let error = result.expect_err("disabled owner must invalidate the token");
+    assert!(error.to_string().contains("disabled"), "{error}");
+}
+
+#[tokio::test]
+async fn created_token_is_bound_to_delegating_user_and_lists_real_scope() {
+    let persistence = common::make_embedded_persistence().await;
+    UserService::new(persistence.clone())
+        .create(portal_user("agent-owner"))
+        .await
+        .unwrap();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence))
+            .app_data(auth_config(true))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/openapi/v1/user/login")
+            .set_json(json!({ "username": "agent-owner", "password": "pw" }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let login: Value = test::read_body_json(response).await;
+    let parent = login["tokenValue"].as_str().unwrap();
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/openapi/v1/user-tokens")
+            .insert_header(("X-Apollo-Token", parent))
+            .set_json(json!({
+                "name": "child",
+                "userId": "apollo",
+                "scopes": "{\"operations\":[\"config:read\"],\"appIds\":[\"app-a\"]}"
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let created: Value = test::read_body_json(response).await;
+    assert_eq!(
+        created["model"]["userId"], "agent-owner",
+        "upstream binds the token to the delegating user, not the request body"
+    );
+    let child_id = created["model"]["id"].as_i64().unwrap();
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens")
+            .insert_header(("X-Apollo-Token", parent))
+            .to_request(),
+    )
+    .await;
+    let listed: Value = test::read_body_json(response).await;
+    let child = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"].as_i64() == Some(child_id))
+        .expect("child token listed");
+    assert_eq!(child["operations"][0], "config:read");
+    assert_eq!(child["appIds"][0], "app-a");
+}
+
+#[tokio::test]
+async fn rotation_preserves_scope_rate_limit_expiry_and_owner() {
+    let persistence = common::make_embedded_persistence().await;
+    let service = UserTokenService::new(persistence.clone());
+    let expires = Utc::now() + Duration::days(10);
+    let (old_token, old_model) = service
+        .create_with_options(
+            "apollo",
+            "restricted",
+            "apollo",
+            Some(expires),
+            r#"{"operations":["config:read"],"envs":["DEV"]}"#,
+            3,
+        )
+        .await
+        .unwrap();
+    let persistence_check = persistence.clone();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence))
+            .app_data(auth_config(true))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/openapi/v1/user-tokens/{}/rotate", old_model.id))
+            .insert_header(("X-Apollo-Token", old_token.clone()))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let rotated: Value = test::read_body_json(response).await;
+    assert_eq!(rotated["model"]["userId"], "apollo");
+    assert_eq!(rotated["model"]["name"], "restricted");
+    assert_eq!(rotated["model"]["rateLimit"], 3);
+    let new_id = rotated["model"]["id"].as_i64().unwrap();
+    let new_token = rotated["tokenValue"].as_str().unwrap();
+    let persisted = UserTokenService::new(persistence_check)
+        .list("apollo")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|token| token.id == new_id)
+        .expect("rotated token persisted");
+    assert_eq!(
+        persisted.expires, old_model.expires,
+        "rotation must not refresh expiry"
+    );
+    assert_eq!(persisted.rate_limit, 3);
+    assert_eq!(persisted.user_id, "apollo");
+    assert_eq!(
+        persisted.scopes.as_deref(),
+        Some(r#"{"operations":["config:read"],"envs":["DEV"]}"#)
+    );
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/current")
+            .insert_header(("X-Apollo-Token", new_token))
+            .to_request(),
+    )
+    .await;
+    let current: Value = test::read_body_json(response).await;
+    assert_eq!(current["operations"][0], "config:read");
+    assert_eq!(current["rateLimit"], 3);
+    assert_eq!(current["allOperations"], false);
+    assert_eq!(current["allEnvs"], false);
+    assert_eq!(current["envs"][0], "DEV");
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/users")
+            .insert_header(("X-Apollo-Token", new_token))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "rotation must not grant user management"
+    );
+
+    let result = test::try_call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/whoami")
+            .insert_header(("X-Apollo-Token", old_token))
+            .to_request(),
+    )
+    .await;
+    assert!(result.is_err(), "the rotated-out token must stop working");
+}
+
+#[tokio::test]
+async fn a_token_cannot_revoke_another_users_token() {
+    let persistence = common::make_embedded_persistence().await;
+    let users = UserService::new(persistence.clone());
+    users.create(portal_user("alice")).await.unwrap();
+    users.create(portal_user("bob")).await.unwrap();
+    let service = UserTokenService::new(persistence.clone());
+    let (alice_token, alice_model) = service
+        .create("alice", "alice-pat", "alice", None)
+        .await
+        .unwrap();
+    let (bob_token, _) = service.create("bob", "bob-pat", "bob", None).await.unwrap();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence))
+            .app_data(auth_config(true))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!(
+                "/openapi/v1/user-tokens/{}/revoke",
+                alice_model.id
+            ))
+            .insert_header(("X-Apollo-Token", bob_token))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/whoami")
+            .insert_header(("X-Apollo-Token", alice_token))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "the other owner's token stays active"
+    );
+}
+
+#[tokio::test]
+async fn rotation_rejects_an_inactive_token() {
+    let persistence = common::make_embedded_persistence().await;
+    let service = UserTokenService::new(persistence.clone());
+    let (_revoked_token, model) = service
+        .create("apollo", "revoked", "apollo", None)
+        .await
+        .unwrap();
+    let (operator_token, _) = service
+        .create("apollo", "operator", "apollo", None)
+        .await
+        .unwrap();
+    service.revoke(model.id, "apollo").await.unwrap();
+    // The revoked credential cannot authenticate; rotate through another PAT
+    // of the same owner, as upstream would through a Portal session.
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence))
+            .app_data(auth_config(true))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/openapi/v1/user-tokens/{}/rotate", model.id))
+            .insert_header(("X-Apollo-Token", operator_token))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let error: Value = test::read_body_json(response).await;
+    assert_eq!(error["message"], "Token is not active");
+}
+
+#[tokio::test]
+async fn capability_document_lists_only_actions_allowed_by_the_token() {
+    let persistence = common::make_embedded_persistence().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence.clone()))
+            .app_data(auth_config(true))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/openapi/v1/user/login")
+            .set_json(json!({ "username": "apollo", "password": "apollo" }))
+            .to_request(),
+    )
+    .await;
+    let login: Value = test::read_body_json(response).await;
+    let admin_token = login["tokenValue"].as_str().unwrap();
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/capabilities")
+            .insert_header(("X-Apollo-Token", admin_token))
+            .to_request(),
+    )
+    .await;
+    let options: Value = test::read_body_json(response).await;
+    assert_eq!(options["tokenSupported"], true);
+    assert_eq!(options["defaultExpireDays"], 90);
+    assert_eq!(options["maxExpireDays"], 365);
+    let operations = options["operations"].as_array().unwrap();
+    for expected in [
+        "config:read",
+        "config:modify",
+        "config:release",
+        "app:create",
+        "user:manage",
+        "system:admin",
+    ] {
+        assert!(
+            operations.iter().any(|op| op == expected),
+            "missing {expected}"
+        );
+    }
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/whoami")
+            .insert_header(("X-Apollo-Token", admin_token))
+            .to_request(),
+    )
+    .await;
+    let admin: Value = test::read_body_json(response).await;
+    let actions = admin["actions"].as_array().expect("actions catalog");
+    assert!(actions.len() >= 60, "catalog too small: {}", actions.len());
+    let ids: Vec<&str> = actions.iter().map(|a| a["id"].as_str().unwrap()).collect();
+    for expected in [
+        "item.list",
+        "release.create",
+        "user.create",
+        "access-key.create",
+        "branch.merge",
+    ] {
+        assert!(ids.contains(&expected), "catalog missing {expected}");
+    }
+    for action in actions {
+        assert!(action["method"].is_string());
+        assert!(action["path"].as_str().unwrap().starts_with("/openapi/v1/"));
+        assert!(action["grantedOperations"].is_array());
+        assert!(action["resourceScope"].is_string());
+        assert!(action["description"].is_string());
+    }
+
+    let restricted = UserTokenService::new(persistence)
+        .create_with_scope(
+            "apollo",
+            "read-only",
+            "apollo",
+            None,
+            r#"{"operations":["config:read"]}"#,
+        )
+        .await
+        .unwrap()
+        .0;
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens/whoami")
+            .insert_header(("X-Apollo-Token", restricted))
+            .to_request(),
+    )
+    .await;
+    let limited: Value = test::read_body_json(response).await;
+    let ids: Vec<&str> = limited["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"item.list"));
+    for forbidden in [
+        "item.create",
+        "release.create",
+        "user.create",
+        "access-key.create",
+    ] {
+        assert!(
+            !ids.contains(&forbidden),
+            "read token must not see {forbidden}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn token_expiry_policy_is_configurable_and_enforced() {
+    let persistence = common::make_embedded_persistence().await;
+    let default_policy = UserTokenPolicy::default();
+    assert_eq!(default_policy.default_expire_days, 90);
+    assert_eq!(default_policy.max_expire_days, 365);
+    let (_, default_model) = UserTokenService::new(persistence.clone())
+        .create("apollo", "default-expiry", "apollo", None)
+        .await
+        .unwrap();
+    let default_now = Utc::now().timestamp();
+    let default_expires = default_model.expires.and_utc().timestamp();
+    assert!(
+        default_expires >= default_now + 89 * 86_400
+            && default_expires <= default_now + 91 * 86_400,
+        "upstream default expiry is 90 days: {default_expires}"
+    );
+
+    let service = UserTokenService::with_policy(
+        persistence.clone(),
+        UserTokenPolicy {
+            default_expire_days: 10,
+            max_expire_days: 20,
+        },
+    );
+    let (_, model) = service
+        .create("apollo", "short", "apollo", None)
+        .await
+        .unwrap();
+    let now = Utc::now().timestamp();
+    let expires = model.expires.and_utc().timestamp();
+    assert!(
+        expires >= now + 9 * 86_400 && expires <= now + 11 * 86_400,
+        "expires={expires}"
+    );
+
+    let error = service
+        .create(
+            "apollo",
+            "too-long",
+            "apollo",
+            Some(Utc::now() + Duration::days(30)),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("exceeds max allowed days:20"),
+        "{error}"
+    );
+    let error = service
+        .create(
+            "apollo",
+            "past",
+            "apollo",
+            Some(Utc::now() - Duration::days(1)),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("must be in the future"),
+        "{error}"
+    );
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(persistence.clone()))
+            .app_data(web::Data::new(AuthConfig {
+                user_token_default_expire_days: 11,
+                user_token_max_expire_days: 21,
+                ..AuthConfig::default()
+            }))
+            .configure(batata_plugin_apollo::route::configure_routes),
+    )
+    .await;
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/openapi/v1/user-tokens")
+            .set_json(json!({ "name": "configured" }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let created: Value = test::read_body_json(response).await;
+    let id = created["model"]["id"].as_i64().unwrap();
+    let configured = service
+        .list("apollo")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|token| token.id == id)
+        .expect("configured token persisted");
+    let configured_expiry = configured.expires.and_utc().timestamp();
+    let now = Utc::now().timestamp();
+    assert!(
+        configured_expiry >= now + 10 * 86_400 && configured_expiry <= now + 12 * 86_400,
+        "configured default was ignored: {configured_expiry}"
+    );
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens")
+            .to_request(),
+    )
+    .await;
+    let listed: Value = test::read_body_json(response).await;
+    let entry = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"].as_i64() == Some(id))
+        .unwrap();
+    let expires_text = entry["expires"].as_str().unwrap();
+    assert!(expires_text.contains("T"), "{expires_text}");
 }

@@ -15,6 +15,7 @@
 //! - `consumer_auth` provides the SHA-256 signing used both by the filter and
 //!   by `ConsumerTokenService` when issuing a token to a new consumer.
 
+pub mod action_catalog;
 pub mod consumer_auth;
 pub mod permission;
 pub mod role;

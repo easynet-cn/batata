@@ -243,6 +243,14 @@ where
                         .ok_or_else(|| {
                             actix_web::error::ErrorUnauthorized("User token owner no longer exists")
                         })?;
+                    // Upstream `UserTokenService.authenticate` rejects tokens whose
+                    // owner was disabled, so a disabled account cannot keep acting
+                    // through a previously issued PAT.
+                    if !user.enabled {
+                        return Err(actix_web::error::ErrorUnauthorized(
+                            "User token owner is disabled",
+                        ));
+                    }
                     if let Err(error) = UserTokenAuditService::new(arc.clone())
                         .record(NewUserTokenAudit {
                             token_id: Some(model.id),

@@ -95,4 +95,4 @@ pub use role_service::RoleService;
 pub use search_service::SearchService;
 pub use server_config_service::ServerConfigService;
 pub use user_service::UserService;
-pub use user_token_service::UserTokenService;
+pub use user_token_service::{UserTokenPolicy, UserTokenService};

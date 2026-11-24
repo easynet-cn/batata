@@ -114,6 +114,14 @@ pub struct AuthConfig {
     /// endpoint; set `APOLLO_OPENAPI_AUTH_ENABLED=true` to enforce
     /// consumer tokens (and user tokens on portal-management paths).
     pub openapi_auth_enabled: bool,
+    /// Default lifetime of a newly issued user token, in days.
+    ///
+    /// Upstream `user.token.defaultExpireDays` defaults to 90.
+    pub user_token_default_expire_days: i64,
+    /// Maximum lifetime accepted for a user token, in days.
+    ///
+    /// Upstream `user.token.maxExpireDays` defaults to 365.
+    pub user_token_max_expire_days: i64,
 }
 
 impl Default for AuthConfig {
@@ -124,6 +132,8 @@ impl Default for AuthConfig {
             portal_signature: "apollo-portal-signature".to_string(),
             admin_access_control_enabled: false,
             openapi_auth_enabled: false,
+            user_token_default_expire_days: 90,
+            user_token_max_expire_days: 365,
         }
     }
 }
@@ -137,6 +147,8 @@ impl AuthConfig {
     /// - `APOLLO_PORTAL_SIGNATURE` — the consumer-token signing salt.
     /// - `APOLLO_OPENAPI_AUTH_ENABLED` — `true` to enforce consumer / user
     ///   tokens on `/openapi/v1` (default `false`, i.e. openapi stays open).
+    /// - `APOLLO_USER_TOKEN_DEFAULT_EXPIRE_DAYS` / `APOLLO_USER_TOKEN_MAX_EXPIRE_DAYS`
+    ///   — token lifetime policy (defaults 90 / 365, matching upstream).
     pub fn from_env() -> Self {
         let mut cfg = AuthConfig::default();
         if let Ok(raw) = std::env::var("APOLLO_ADMIN_SERVICE_ACCESS_TOKENS") {
@@ -161,7 +173,30 @@ impl AuthConfig {
                 "1" | "true" | "yes" | "on"
             );
         }
+        if let Ok(days) = std::env::var("APOLLO_USER_TOKEN_DEFAULT_EXPIRE_DAYS")
+            && let Ok(value) = days.trim().parse::<i64>()
+            && value > 0
+        {
+            cfg.user_token_default_expire_days = value;
+        }
+        if let Ok(days) = std::env::var("APOLLO_USER_TOKEN_MAX_EXPIRE_DAYS")
+            && let Ok(value) = days.trim().parse::<i64>()
+            && value > 0
+        {
+            cfg.user_token_max_expire_days = value;
+        }
+        if cfg.user_token_default_expire_days > cfg.user_token_max_expire_days {
+            cfg.user_token_default_expire_days = cfg.user_token_max_expire_days;
+        }
         cfg
+    }
+
+    /// Expiry policy used when issuing new user tokens.
+    pub fn user_token_policy(&self) -> crate::service::UserTokenPolicy {
+        crate::service::UserTokenPolicy {
+            default_expire_days: self.user_token_default_expire_days,
+            max_expire_days: self.user_token_max_expire_days,
+        }
     }
 
     /// Whether a presented admin-service token is accepted.
