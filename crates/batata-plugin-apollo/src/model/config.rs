@@ -50,33 +50,17 @@ impl Default for ApolloPluginConfig {
 impl ApolloPluginConfig {
     /// Builds an `ApolloPluginConfig` from a `config::Config` source.
     pub fn from_config(config: &config::Config) -> Self {
-        let enabled = config
-            .get_bool("batata.plugin.apollo.enabled")
-            .unwrap_or(false);
-        let port = config.get_int("batata.plugin.apollo.port").unwrap_or(8080) as u16;
-        let http_workers = {
-            let v = config
-                .get_int("batata.plugin.apollo.http.workers")
-                .unwrap_or(0) as usize;
-            if v == 0 {
-                let cpus = std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(4);
-                std::cmp::min(4, cpus / 2).max(2)
-            } else {
-                v
-            }
-        };
-
-        let version = config
-            .get_string("batata.plugin.apollo.version")
-            .unwrap_or_else(|_| default_apollo_version());
+        use batata_plugin::config::{plugin_bool, plugin_http_workers, plugin_int, plugin_string};
 
         Self {
-            enabled,
-            port,
-            http_workers,
-            version,
+            enabled: plugin_bool(config, "batata.plugin.apollo.enabled", false),
+            port: plugin_int(config, "batata.plugin.apollo.port", 8080) as u16,
+            http_workers: plugin_http_workers(config, "batata.plugin.apollo.http.workers"),
+            version: plugin_string(
+                config,
+                "batata.plugin.apollo.version",
+                default_apollo_version(),
+            ),
         }
     }
 }

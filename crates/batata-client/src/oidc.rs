@@ -239,11 +239,8 @@ impl OidcAuthProvider {
     /// Create a provider whose HTTP client honours the SDK TLS settings, so
     /// Discovery and token fetches work against a private-CA IdP.
     pub fn with_tls(config: OidcConfig, tls: &TlsOptions) -> anyhow::Result<Self> {
-        let builder = Client::builder()
-            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
-            .timeout(DEFAULT_READ_TIMEOUT)
-            .no_proxy();
-        let http = tls.apply_to_reqwest(builder)?.build()?;
+        let http =
+            crate::tls::build_direct_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, tls)?;
         Ok(Self {
             config,
             http,

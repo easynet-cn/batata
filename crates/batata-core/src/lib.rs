@@ -5,12 +5,9 @@
 //! - Connection management
 //! - Health checking
 //! - Task scheduling
-//! - Abstraction layer for multi-registry support
 
 #![warn(missing_docs)]
 
-/// Unified abstraction layer for service discovery, configuration, and health checking.
-pub mod abstraction;
 pub mod handler;
 /// Core data models and structures.
 pub mod model;

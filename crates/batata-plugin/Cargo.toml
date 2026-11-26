@@ -19,6 +19,7 @@ async-trait = { workspace = true }
 
 # Core types
 bytes = { workspace = true }
+config = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 

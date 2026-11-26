@@ -2752,7 +2752,6 @@ mod phase_tests {
         const LIB_SOURCE: &str = include_str!("../lib.rs");
         const BUILDER_SOURCE: &str = include_str!("mod.rs");
         const CONTEXT_SOURCE: &str = include_str!("../context/mod.rs");
-        const REGISTRY_SOURCE: &str = include_str!("../registry/mod.rs");
 
         for module in ["initializer", "lifecycle"] {
             assert!(
@@ -2797,10 +2796,6 @@ mod phase_tests {
         );
 
         for module in ["server_registry", "service_registry"] {
-            assert!(
-                !REGISTRY_SOURCE.contains(&format!("pub mod {module};")),
-                "legacy registry must not be declared: {module}"
-            );
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join(format!("src/registry/{module}.rs"));
             assert!(
@@ -2808,6 +2803,12 @@ mod phase_tests {
                 "legacy registry source must stay deleted: {module}"
             );
         }
+        assert!(
+            !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/registry")
+                .exists(),
+            "legacy registry module placeholder must stay deleted"
+        );
 
         let orphan =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lifecycle/server_trait.rs");

@@ -32,8 +32,6 @@ pub mod metrics; // Metrics and observability
 pub mod middleware; // HTTP middleware
 /// `model` module.
 pub mod model; // Data models and types
-/// `registry` module.
-pub mod registry; // Service and server registries
 /// `service` module.
 pub mod service; // Business services
 /// `startup` module.

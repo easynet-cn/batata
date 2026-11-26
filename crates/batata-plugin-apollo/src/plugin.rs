@@ -39,6 +39,46 @@ impl ApolloPlugin {
             .get()
             .expect("ApolloPlugin::init() must be called before accessing services")
     }
+
+    /// Store the heartbeat handle, aborting a stale loop before replacing it.
+    ///
+    /// Without the abort a restarted plugin could leave two loops running and
+    /// re-register services after `shutdown()` deregistered them.
+    fn store_heartbeat_task(&self, handle: tokio::task::JoinHandle<()>) {
+        let mut guard = self
+            .heartbeat_task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(stale) = guard.take() {
+            stale.abort();
+        }
+        *guard = Some(handle);
+    }
+
+    /// Spawn the database-discovery heartbeat loop.
+    ///
+    /// Upstream registers both roles from one process every
+    /// `apollo.service.registry.heartbeatIntervalInSecond` (default 10s).
+    fn spawn_heartbeat_loop(&self, persistence: Arc<dyn ApolloPersistenceService>) {
+        let port = self.config.port;
+        let heartbeat = tokio::spawn(async move {
+            let uri = std::env::var("APOLLO_SERVICE_REGISTRY_URI")
+                .unwrap_or_else(|_| format!("http://127.0.0.1:{}", port));
+            use crate::persistence::traits::ServiceRegistryPersistence;
+            loop {
+                for svc in ["apollo-configservice", "apollo-adminservice"] {
+                    if let Err(e) =
+                        ServiceRegistryPersistence::heartbeat(&*persistence, svc, &uri, "default")
+                            .await
+                    {
+                        tracing::warn!("service registry heartbeat failed for {}: {}", svc, e);
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        });
+        self.store_heartbeat_task(heartbeat);
+    }
 }
 
 #[async_trait::async_trait]
@@ -168,46 +208,10 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             .set(inner)
             .map_err(|_| anyhow::anyhow!("ApolloPlugin::init() called more than once"))?;
 
-        // Upstream database-discovery mode: heartbeat self-registration every
-        // apollo.service.registry.heartbeatIntervalInSecond (default 10s).
-        // batata serves BOTH configservice and adminservice roles in one
-        // process, so both service names are registered.
-        let hb_persistence = persistence.clone();
-        let port = self.config.port;
-        let heartbeat = tokio::spawn(async move {
-            let uri = std::env::var("APOLLO_SERVICE_REGISTRY_URI")
-                .unwrap_or_else(|_| format!("http://127.0.0.1:{}", port));
-            use crate::persistence::traits::ServiceRegistryPersistence;
-            loop {
-                for svc in ["apollo-configservice", "apollo-adminservice"] {
-                    if let Err(e) = ServiceRegistryPersistence::heartbeat(
-                        &*hb_persistence,
-                        svc,
-                        &uri,
-                        "default",
-                    )
-                    .await
-                    {
-                        tracing::warn!("service registry heartbeat failed for {}: {}", svc, e);
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            }
-        });
-
-        // Keep the handle so `shutdown()` can abort the loop. Without this the
-        // loop would keep running and re-register both services ~10s after we
-        // deregistered them. Abort any stale handle defensively.
-        let mut task_guard = self
-            .heartbeat_task
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(old) = task_guard.take() {
-            old.abort();
-        }
-        *task_guard = Some(heartbeat);
-        drop(task_guard);
-
+        // The database-discovery heartbeat is a background task, so it is
+        // started by `start_background_tasks()` once the protocol adapters
+        // have finished initializing. Keeping it out of `init()` preserves the
+        // SPI lifecycle contract (init only builds state).
         tracing::info!("Apollo compatibility plugin initialized successfully");
         Ok(())
     }
@@ -260,6 +264,13 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
 
     async fn start_background_tasks(&self) -> anyhow::Result<()> {
         tracing::info!("Starting Apollo background tasks...");
+        let Some(inner) = self.inner.get() else {
+            tracing::warn!(
+                "Apollo heartbeat not started: init() has not initialized persistence yet"
+            );
+            return Ok(());
+        };
+        self.spawn_heartbeat_loop(inner.persistence.clone());
         Ok(())
     }
 }
@@ -365,6 +376,67 @@ mod tests {
                 .await
                 .is_ok(),
             "heartbeat task must be aborted on shutdown"
+        );
+    }
+
+    /// Regression: moving the heartbeat from init() to
+    /// start_background_tasks() must preserve the abort-stale protection.
+    #[tokio::test]
+    async fn test_store_heartbeat_task_aborts_stale_loop() {
+        let plugin = ApolloPlugin::from_plugin_config(ApolloPluginConfig::default());
+
+        let (first_tx, first_rx) = tokio::sync::oneshot::channel::<()>();
+        let first = tokio::spawn(async move {
+            let _keep = first_tx;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+        plugin.store_heartbeat_task(first);
+
+        let (second_tx, second_rx) = tokio::sync::oneshot::channel::<()>();
+        let second = tokio::spawn(async move {
+            let _keep = second_tx;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+        plugin.store_heartbeat_task(second);
+
+        // The stale loop is gone; the replacement is still live.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), first_rx)
+                .await
+                .is_ok(),
+            "replacing the heartbeat handle must abort the stale loop"
+        );
+        assert!(
+            !plugin
+                .heartbeat_task
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("replacement handle must be stored")
+                .is_finished(),
+            "the replacement loop must not be aborted by the swap"
+        );
+
+        plugin.shutdown().await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), second_rx)
+                .await
+                .is_ok(),
+            "shutdown must abort the current loop"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_background_tasks_without_init_does_not_spawn() {
+        let plugin = ApolloPlugin::from_plugin_config(ApolloPluginConfig::default());
+        plugin.start_background_tasks().await.unwrap();
+        assert!(
+            plugin.heartbeat_task.lock().unwrap().is_none(),
+            "the heartbeat needs initialized persistence and must not start before init()"
         );
     }
 

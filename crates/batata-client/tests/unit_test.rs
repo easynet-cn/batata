@@ -127,14 +127,25 @@ fn test_config_basic_info_serialization() {
         app_name: "myapp".to_string(),
         create_time: 1234567890,
         modify_time: 1234567891,
+        desc: "my desc".to_string(),
+        config_tags: "alpha,beta".to_string(),
     };
 
     let json = serde_json::to_string(&info).unwrap();
+    assert!(
+        json.contains("\"id\":\"1\""),
+        "upstream encodes id as a string"
+    );
+    assert!(json.contains("\"desc\":\"my desc\""));
+    assert!(json.contains("\"configTags\":\"alpha,beta\""));
     let deserialized: ConfigBasicInfo = serde_json::from_str(&json).unwrap();
 
+    assert_eq!(deserialized.id, 1);
     assert_eq!(deserialized.data_id, info.data_id);
     assert_eq!(deserialized.group_name, info.group_name);
     assert_eq!(deserialized.md5, info.md5);
+    assert_eq!(deserialized.desc, info.desc);
+    assert_eq!(deserialized.config_tags, info.config_tags);
 }
 
 #[test]

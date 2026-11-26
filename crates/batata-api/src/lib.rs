@@ -32,6 +32,8 @@ pub mod model;
 pub mod naming;
 /// Remote API models.
 pub mod remote;
+/// Serde adapters for upstream-compatible wire formats.
+pub mod serde_ext;
 
 // Re-export commonly used types
 pub use model::*;

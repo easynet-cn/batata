@@ -85,6 +85,8 @@ fn convert_config_basic_info(
         app_name: v.app_name,
         create_time: v.create_time,
         modify_time: v.modify_time,
+        desc: v.desc,
+        config_tags: v.config_tags,
     }
 }
 
@@ -95,11 +97,9 @@ fn convert_config_gray_info(v: batata_maintainer_client::model::ConfigGrayInfo) 
         config_detail_info: ConfigDetailInfo {
             config_basic_info: convert_config_basic_info(v.config_detail_info.config_basic_info),
             content: v.config_detail_info.content,
-            desc: v.config_detail_info.desc,
             encrypted_data_key: v.config_detail_info.encrypted_data_key,
             create_user: v.config_detail_info.create_user,
             create_ip: v.config_detail_info.create_ip,
-            config_tags: v.config_detail_info.config_tags,
         },
         gray_name: v.gray_name,
         gray_rule: v.gray_rule,
@@ -207,11 +207,9 @@ fn convert_config_detail_info(
     ConfigDetailInfo {
         config_basic_info: convert_config_basic_info(v.config_basic_info),
         content: v.content,
-        desc: v.desc,
         encrypted_data_key: v.encrypted_data_key,
         create_user: v.create_user,
         create_ip: v.create_ip,
-        config_tags: v.config_tags,
     }
 }
 
@@ -1189,6 +1187,8 @@ mod tests {
             app_name: "app".into(),
             create_time: 1,
             modify_time: 2,
+            desc: "remote desc".into(),
+            config_tags: "t1,t2".into(),
         };
         let dst = convert_config_basic_info(src.clone());
         assert_eq!(dst.id, src.id);
@@ -1200,6 +1200,8 @@ mod tests {
         assert_eq!(dst.app_name, src.app_name);
         assert_eq!(dst.create_time, src.create_time);
         assert_eq!(dst.modify_time, src.modify_time);
+        assert_eq!(dst.desc, src.desc);
+        assert_eq!(dst.config_tags, src.config_tags);
     }
 
     #[test]
@@ -1208,30 +1210,38 @@ mod tests {
             config_basic_info: mc::ConfigBasicInfo {
                 id: 9,
                 data_id: "d".into(),
+                desc: "desc".into(),
+                config_tags: "tag1,tag2".into(),
                 ..Default::default()
             },
             content: "k: v".into(),
-            desc: "desc".into(),
             encrypted_data_key: "edk".into(),
             create_user: "u".into(),
             create_ip: "1.2.3.4".into(),
-            config_tags: "tag1,tag2".into(),
         };
         let dst = convert_config_detail_info(src.clone());
         assert_eq!(dst.config_basic_info.id, src.config_basic_info.id);
         assert_eq!(dst.config_basic_info.data_id, src.config_basic_info.data_id);
+        assert_eq!(dst.config_basic_info.desc, src.config_basic_info.desc);
+        assert_eq!(
+            dst.config_basic_info.config_tags,
+            src.config_basic_info.config_tags
+        );
         assert_eq!(dst.content, src.content);
-        assert_eq!(dst.desc, src.desc);
         assert_eq!(dst.encrypted_data_key, src.encrypted_data_key);
         assert_eq!(dst.create_user, src.create_user);
         assert_eq!(dst.create_ip, src.create_ip);
-        assert_eq!(dst.config_tags, src.config_tags);
     }
 
     #[test]
     fn convert_config_gray_info_preserves_nested_detail() {
         let src = mc::ConfigGrayInfo {
             config_detail_info: mc::ConfigDetailInfo {
+                config_basic_info: mc::ConfigBasicInfo {
+                    desc: "gray desc".into(),
+                    config_tags: "gray-tag".into(),
+                    ..Default::default()
+                },
                 content: "gray-content".into(),
                 ..Default::default()
             },
@@ -1240,6 +1250,11 @@ mod tests {
         };
         let dst = convert_config_gray_info(src.clone());
         assert_eq!(dst.config_detail_info.content, "gray-content");
+        assert_eq!(dst.config_detail_info.config_basic_info.desc, "gray desc");
+        assert_eq!(
+            dst.config_detail_info.config_basic_info.config_tags,
+            "gray-tag"
+        );
         assert_eq!(dst.gray_name, "beta");
         assert_eq!(dst.gray_rule, "expr");
     }

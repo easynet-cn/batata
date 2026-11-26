@@ -11,6 +11,8 @@
 //! TLS-terminating proxy), but custom CA / client identity PEMs are added to
 //! the reqwest client whenever they are configured.
 
+use std::time::Duration;
+
 use crate::error::{ClientError, Result};
 
 /// Normalized TLS settings shared by the gRPC and HTTP transports.
@@ -168,6 +170,24 @@ impl TlsOptions {
 
         Ok(builder)
     }
+}
+
+/// Build a reqwest client for direct server/auth/OIDC calls.
+///
+/// Every such call bypasses the system proxy (these endpoints are addressed
+/// directly) and must honour the SDK TLS settings, so the construction is
+/// shared instead of repeated at each call site. TLS validation errors are
+/// propagated rather than silently dropping the CA / client identity.
+pub(crate) fn build_direct_client(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    tls: &TlsOptions,
+) -> anyhow::Result<reqwest::Client> {
+    let builder = reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(read_timeout)
+        .no_proxy();
+    Ok(tls.apply_to_reqwest(builder)?.build()?)
 }
 
 async fn read_pem(path: &str, what: &str) -> Result<Vec<u8>> {
@@ -412,5 +432,45 @@ mod tests {
             .apply_to_reqwest(reqwest::Client::builder())
             .unwrap_err();
         assert!(err.to_string().contains("TLS CA certificate"));
+    }
+
+    #[test]
+    fn test_build_direct_client_propagates_tls_validation_error() {
+        let tls = TlsOptions {
+            client_cert_path: Some("client.pem".into()),
+            ..TlsOptions::default()
+        };
+        let err = build_direct_client(Duration::from_secs(1), Duration::from_secs(1), &tls)
+            .expect_err("an incomplete mTLS identity must not yield a usable client");
+        assert!(
+            err.to_string().contains("without a client key"),
+            "the original TLS validation error must survive the helper: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_direct_client_applies_read_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener must bind");
+        let addr = listener.local_addr().unwrap();
+        let stall = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+
+        let client = build_direct_client(
+            Duration::from_secs(1),
+            Duration::from_millis(50),
+            &TlsOptions::default(),
+        )
+        .expect("default TLS must build a client");
+        let err = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect_err("the stalled server must trip the configured read timeout");
+        assert!(err.is_timeout(), "expected a timeout, got: {err}");
+        stall.abort();
     }
 }

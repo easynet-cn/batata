@@ -13,6 +13,7 @@ documentation = "https://docs.rs/batata-maintainer-client"
 rust-version = "1.89"
 
 [dependencies]
+batata-api = { workspace = true }
 batata-client = { workspace = true }
 reqwest = { workspace = true, features = ["multipart"] }
 serde = { workspace = true }

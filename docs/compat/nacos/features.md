@@ -182,7 +182,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 
 | ID | HTTP action (base + path) | batata impl | Status | Tests | Notes |
 |----|----------------------------|-------------|--------|-------|-------|
-| F-NAC-CFG-011 | GET `.../config/list` | batata-config | 🟢 | | paged |
+| F-NAC-CFG-011 | GET `.../config/list` | batata-config | 🟢 | | paged; `ConfigBasicInfo` 11 fields incl. `desc`/`configTags`, string `id` |
 | F-NAC-CFG-012 | GET `.../config/searchDetail` | batata-config | 🟢 | | full-text search |
 | F-NAC-CFG-013 | GET `.../config` (dataId/group/namespaceId) | batata-config | 🟢 | | detail |
 | F-NAC-CFG-014 | POST `.../config` | batata-config | 🟢 | | publish/update |
@@ -274,7 +274,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 
 | ID | HTTP action | batata impl | Status | Tests | Notes |
 |----|-------------|-------------|--------|-------|-------|
-| F-NAC-ADM-CS-001 | POST/GET/PUT/DELETE `/v3/admin/cs/config` | batata-config/api/v3/admin | 🟢 | | CRUD + metadata update |
+| F-NAC-ADM-CS-001 | POST/GET/PUT/DELETE `/v3/admin/cs/config` | batata-config/api/v3/admin | 🟢 | | CRUD + metadata update; list items use upstream 11-field `ConfigBasicInfo` with string `id` |
 | F-NAC-ADM-CS-002 | DELETE `/v3/admin/cs/config/batchDelete` | batata-config | 🟢 | | batch delete |
 | F-NAC-ADM-CS-003 | GET/POST/DELETE `/v3/admin/cs/config/beta` | batata-config | 🟢 | | beta management |
 | F-NAC-ADM-CS-004 | POST/DELETE `/v3/admin/cs/config/gray` | batata-config | 🟢 | | gray (tag-based) management |

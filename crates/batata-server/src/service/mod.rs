@@ -32,12 +32,8 @@ pub mod connection_limit; // Connection limit checker for gRPC
 pub mod consul_event_handler; // Consul event broadcast handler
 /// `distro_handler` module.
 pub mod distro_handler; // Distro protocol gRPC handlers
-/// `encryption_manager` module.
-pub mod encryption_manager; // Encryption manager with hot reload
 /// `handler` module.
 pub mod handler; // Request handlers for gRPC communication
-/// `handler_macros` module.
-pub mod handler_macros; // gRPC handler macros and utilities
 /// `lock` module.
 pub mod lock; // In-memory distributed lock service
 /// `lock_handler` module.

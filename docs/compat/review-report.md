@@ -3563,3 +3563,61 @@ because ⛔ is not counted as ported. Apollo tally 175 🟢 / 0 🟡 / 22 ⚪ / 
 199; global 556 🟢 / 0 🟡 / 24 ⚪ / 6 ⛔ of 586; T-IDs unchanged at 1066 (no STORE
 T-IDs exist). Docs-only: no product code, tests, version, tag, or `batata-ui`
 change. `python3 scripts/compat_check.py` and `git diff --check` pass.
+
+### 37.48 `ConfigBasicInfo` aligned with upstream Nacos list response (2026-11-26)
+
+Upstream `ConfigBasicInfo.java` (develop `5d7de40a0`) has 11 fields: the nine
+already modeled by batata plus `desc` and `configTags` (added upstream in
+`ce3b2aceb`, PR #13963). Its `id` is a `Long` annotated with
+`@JsonFormat(shape = STRING)` to preserve large ids in JavaScript; upstream's
+own `ConfigInfoTest` deserializes `{"id":"1", ...}`. All four batata copies
+(`batata-client`, `batata-maintainer-client`, `batata-server-common`,
+`batata-config`) had nine fields and a numeric `id`, so list responses omitted
+metadata and could not consume a genuine upstream string id.
+
+**Implementation.** All four DTOs now carry `desc`/`configTags` with serde
+defaults and share `batata_api::serde_ext::string_i64`: ids are emitted as
+decimal strings and accepted from either a string or a number. Upstream
+`ConfigDetailInfo`/`ConfigHistoryBasicInfo` inherit `desc`/`configTags` rather
+than redeclaring them, so batata's flattened detail types now keep those fields
+only on `ConfigBasicInfo`; this prevents duplicate JSON keys and matches
+upstream inheritance. Storage-backed conversions populate both fields from
+`ConfigStorageData`, history conversions read them from `ext_info`, and SQL
+entity conversion maps `c_desc` (tag names are relation-table-only and stay
+empty on that path).
+
+**Verification.** New tests assert the exact string `id`, both inherited
+fields, single-occurrence flattening, `ext_info` fallback, and numeric-id
+backward compatibility. `cargo fmt --check`, `cargo check --workspace
+--all-targets`, targeted crate tests and `compat_check.py` pass. F-ID/T-ID
+counts unchanged; only the notes of `F-NAC-CFG-011` and `F-NAC-ADM-CS-001`
+were updated to record the field set. No version, tag, or `batata-ui` change.
+
+### 37.49 Java numeric/string coercion aligned for remaining config IDs (2026-11-26)
+
+Upstream confirmation: Nacos `ConfigBasicInfo.java:43-44`,
+`ConfigInfoBase.java:37-38`, `ConfigHistoryInfo.java:34-35` and
+`Capacity.java:34-35` annotate their ids with
+`@JsonFormat(shape = JsonFormat.Shape.STRING)`; the v3 API classes
+`ConfigDetailInfo`, `ConfigHistoryBasicInfo`, `ConfigHistoryDetailInfo` and
+`ConfigGrayInfo` inherit that string id. Conversely `ConfigCloneInfo.java:33`
+and `SameNamespaceCloneConfigBean.java:27` are plain Java `Long`s whose values
+come from those string ids, so Jackson coerces a numeric string into the
+wrapper on input. Rust/serde performs no such coercion without an adapter.
+
+**Implementation.** Added `batata_api::serde_ext::flex_i64` (JSON number on
+output, string or number on input) and applied `string_i64` to the remaining
+inherited/annotated ids in `batata-client` (`ConfigAllInfo`, `ConfigGrayInfo`,
+`ConfigHistoryBasicInfo`, `ConfigHistoryDetailInfo`) and `batata-config`
+(`ConfigInfoBase`, `ConfigGrayInfo`, `ConfigHistoryBasicInfo`,
+`ConfigHistoryDetailInfo`). Clone descriptors in `batata-api`,
+`batata-maintainer-client` and `batata-server-common` now accept both wire
+shapes while preserving upstream numeric output. Also corrected the
+`pagesAvailable` call sites that passed the already-computed page count as a
+page size.
+
+**Verification.** New tests cover exact string output, large-id precision,
+numeric backward compatibility, flex clone ids, and the list/history DTO
+shapes. `cargo fmt`, `cargo check`, targeted unit tests, clippy
+(`-D warnings`) and `compat_check.py` are required gates; no F-ID/T-ID,
+version, tag, or `batata-ui` change.

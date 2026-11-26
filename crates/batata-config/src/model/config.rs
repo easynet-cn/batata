@@ -82,7 +82,8 @@ pub struct ConfigRequestInfo {
 #[serde(rename_all = "camelCase")]
 /// `ConfigInfoBase` data model.
 pub struct ConfigInfoBase {
-    /// The `id` value.
+    /// The `id` value. Upstream `ConfigInfoBase` uses `@JsonFormat(shape = STRING)`.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The `data_id` value.
     pub data_id: String,
@@ -266,7 +267,8 @@ impl ConfigListenerInfo {
 #[serde(rename_all = "camelCase")]
 /// `ConfigHistoryInfo` data model.
 pub struct ConfigHistoryInfo {
-    /// The `id` value.
+    /// The `id` value. Upstream `ConfigHistoryInfo` uses `@JsonFormat(shape = STRING)`.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The `last_id` value.
     pub last_id: i64,
@@ -372,6 +374,11 @@ pub struct ConfigInfoWrapper {
     pub create_time: i64,
     /// The `modify_time` value.
     pub modify_time: i64,
+    /// The `desc` value.
+    pub desc: String,
+    /// The `configTags` value. Tag names live in a relation table and are not
+    /// present on a bare `config_info` row, so this stays empty for that path.
+    pub config_tags: String,
 }
 
 impl From<entity::config_info::Model> for ConfigInfoWrapper {
@@ -390,6 +397,8 @@ impl From<entity::config_info::Model> for ConfigInfoWrapper {
             modify_time: value
                 .gmt_modified
                 .map_or(0, |e| e.and_utc().timestamp_millis()),
+            desc: value.c_desc.unwrap_or_default(),
+            config_tags: String::new(),
         }
     }
 }
@@ -410,6 +419,8 @@ impl From<&entity::config_info::Model> for ConfigInfoWrapper {
             modify_time: value
                 .gmt_modified
                 .map_or(0, |e| e.and_utc().timestamp_millis()),
+            desc: value.c_desc.clone().unwrap_or_default(),
+            config_tags: String::new(),
         }
     }
 }
@@ -476,7 +487,8 @@ impl FromStr for ConfigType {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBasicInfo {
-    /// The `id` value.
+    /// The storage id; upstream emits it as a JSON string.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The `namespace_id` value.
     pub namespace_id: String,
@@ -494,6 +506,12 @@ pub struct ConfigBasicInfo {
     pub create_time: i64,
     /// The `modify_time` value.
     pub modify_time: i64,
+    /// The `desc` value.
+    #[serde(default)]
+    pub desc: String,
+    /// The `configTags` value.
+    #[serde(default)]
+    pub config_tags: String,
 }
 
 impl From<ConfigInfoWrapper> for ConfigBasicInfo {
@@ -508,6 +526,8 @@ impl From<ConfigInfoWrapper> for ConfigBasicInfo {
             app_name: value.app_name,
             create_time: value.create_time,
             modify_time: value.modify_time,
+            desc: value.desc,
+            config_tags: value.config_tags,
         }
     }
 }
@@ -522,7 +542,8 @@ impl From<entity::config_info::Model> for ConfigBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGrayInfo {
-    /// The `id` value.
+    /// The `id` value. Upstream v3 `ConfigGrayInfo` inherits the string id.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The `data_id` value.
     pub data_id: String,
@@ -582,7 +603,8 @@ impl From<ConfigInfoGrayWrapper> for ConfigGrayInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryBasicInfo {
-    /// The `id` value.
+    /// The `id` value. Upstream v3 `ConfigHistoryBasicInfo` inherits the string id.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The `data_id` value.
     pub data_id: String,
@@ -634,7 +656,8 @@ impl From<entity::his_config_info::Model> for ConfigHistoryBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
-    /// The `id` value.
+    /// The `id` value. Upstream v3 `ConfigHistoryDetailInfo` inherits the string id.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The `data_id` value.
     pub data_id: String,
@@ -700,6 +723,40 @@ impl From<entity::his_config_info::Model> for ConfigHistoryDetailInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_basic_info_matches_upstream_wire_shape() {
+        let info = ConfigBasicInfo {
+            id: 9,
+            desc: "d".to_string(),
+            config_tags: "t1".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["id"], serde_json::json!("9"));
+        assert_eq!(json["desc"], serde_json::json!("d"));
+        assert_eq!(json["configTags"], serde_json::json!("t1"));
+
+        let decoded: ConfigBasicInfo = serde_json::from_str(
+            r#"{"id":9,"namespaceId":"","groupName":"","dataId":"","md5":"","type":"","appName":"","createTime":0,"modifyTime":0}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded.id, 9);
+    }
+
+    #[test]
+    fn config_basic_info_from_wrapper_keeps_metadata() {
+        let wrapper = ConfigInfoWrapper {
+            id: Some(11),
+            desc: "wrapper desc".to_string(),
+            config_tags: "w1,w2".to_string(),
+            ..Default::default()
+        };
+        let basic: ConfigBasicInfo = wrapper.into();
+        assert_eq!(basic.id, 11);
+        assert_eq!(basic.desc, "wrapper desc");
+        assert_eq!(basic.config_tags, "w1,w2");
+    }
 
     #[test]
     fn test_config_form_default() {
@@ -832,30 +889,67 @@ mod tests {
         assert_eq!(form.r#type, "properties");
     }
 
-    /// Characterization test: `id` is a plain JSON number on the wire. The
-    /// `serde_as` / `DisplayFromStr` attributes that used to decorate these
-    /// fields never took effect (the derive ran before the attribute macro),
-    /// so removing `serde_with` must not change a single byte of output.
+    /// Upstream `ConfigHistoryInfo.id` is annotated with
+    /// `@JsonFormat(shape = STRING)`; batata must emit the same string shape
+    /// and still accept the earlier numeric form.
     #[test]
-    fn config_history_id_is_a_json_number() {
+    fn config_history_id_is_a_json_string() {
         let info = ConfigHistoryInfo {
             id: -3,
             ..Default::default()
         };
         let value = serde_json::to_value(&info).expect("serialize history");
-        assert_eq!(value["id"], serde_json::json!(-3));
-        assert!(value["id"].is_number(), "id must stay numeric");
+        assert_eq!(value["id"], serde_json::json!("-3"));
+        assert!(value["id"].is_string(), "id must be a JSON string");
 
         let round_trip: ConfigHistoryInfo =
-            serde_json::from_value(value).expect("deserialize numeric id");
+            serde_json::from_value(value).expect("deserialize string id");
         assert_eq!(round_trip.id, -3);
 
-        let mut string_id = serde_json::to_value(&info).unwrap();
-        string_id["id"] = serde_json::json!("-3");
-        assert!(
-            serde_json::from_value::<ConfigHistoryInfo>(string_id).is_err(),
-            "a string id must not decode into i64"
-        );
+        let mut numeric_id = serde_json::to_value(&info).unwrap();
+        numeric_id["id"] = serde_json::json!(-3);
+        let legacy: ConfigHistoryInfo =
+            serde_json::from_value(numeric_id).expect("legacy numeric id");
+        assert_eq!(legacy.id, -3);
+    }
+
+    #[test]
+    fn config_info_base_id_is_a_json_string() {
+        let base = ConfigInfoBase {
+            id: 862_926_428_394_491_904,
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&base).expect("serialize config base");
+        assert_eq!(value["id"], serde_json::json!("862926428394491904"));
+
+        let legacy: ConfigInfoBase =
+            serde_json::from_value(serde_json::json!({"id": 7, "dataId": "", "group": "", "content": "", "md5": "", "encryptedDataKey": ""}))
+                .expect("legacy numeric id");
+        assert_eq!(legacy.id, 7);
+    }
+
+    #[test]
+    fn config_detail_and_history_ids_match_upstream_wire_shape() {
+        let values = [
+            serde_json::to_value(ConfigHistoryBasicInfo {
+                id: 11,
+                ..Default::default()
+            })
+            .unwrap(),
+            serde_json::to_value(ConfigHistoryDetailInfo {
+                id: 11,
+                ..Default::default()
+            })
+            .unwrap(),
+            serde_json::to_value(ConfigGrayInfo {
+                id: 11,
+                ..Default::default()
+            })
+            .unwrap(),
+        ];
+        for value in values {
+            assert_eq!(value["id"], serde_json::json!("11"));
+        }
     }
 
     /// Same characterization for the optional id: `Some` is a number and

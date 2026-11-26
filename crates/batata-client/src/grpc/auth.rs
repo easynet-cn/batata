@@ -90,12 +90,9 @@ impl AuthProvider {
         password: &str,
         tls: &TlsOptions,
     ) -> Result<Self> {
-        let builder = Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .no_proxy(); // Skip system proxy for direct server communication
-        let builder = tls.apply_to_reqwest(builder)?;
-        let http_client = builder.build().map_err(|e| ClientError::Other(e.into()))?;
+        let http_client =
+            crate::tls::build_direct_client(Duration::from_secs(5), Duration::from_secs(10), tls)
+                .map_err(ClientError::Other)?;
 
         // Normalize context path: ensure it starts with "/" if non-empty, or is empty for root
         let normalized_context_path = if context_path.is_empty() || context_path == "/" {
@@ -140,13 +137,11 @@ impl AuthProvider {
     /// so the username/password fields stay empty and `get_token()` delegates
     /// to the provider on every call (which internally caches until refresh).
     pub fn with_oidc(oidc: OidcAuthProvider, tls: &TlsOptions) -> Result<Self> {
-        let builder = Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .no_proxy();
-        let http_client = tls.apply_to_reqwest(builder)?.build().map_err(|e| {
-            ClientError::Other(anyhow::anyhow!("failed to build OIDC auth client: {e}"))
-        })?;
+        let http_client =
+            crate::tls::build_direct_client(Duration::from_secs(5), Duration::from_secs(10), tls)
+                .map_err(|e| {
+                ClientError::Other(anyhow::anyhow!("failed to build OIDC auth client: {e}"))
+            })?;
         Ok(Self {
             http_client,
             server_addr: String::new(),

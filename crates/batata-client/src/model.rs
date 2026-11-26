@@ -59,7 +59,8 @@ pub struct Namespace {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBasicInfo {
-    /// Config ID.
+    /// Config ID. Upstream serializes this as a JSON string.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// Namespace ID.
     pub namespace_id: String,
@@ -77,14 +78,20 @@ pub struct ConfigBasicInfo {
     pub create_time: i64,
     /// Last modification timestamp (millis).
     pub modify_time: i64,
+    /// Config description.
+    #[serde(default)]
+    pub desc: String,
+    /// Comma-separated config tags.
+    #[serde(default)]
+    pub config_tags: String,
 }
 
 /// Full configuration info
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigAllInfo {
-    #[serde(default)]
-    /// Config ID.
+    /// Config ID. Upstream inherits `ConfigBasicInfo.id` (JSON string).
+    #[serde(default, with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// Config data ID.
     pub data_id: String,
@@ -141,8 +148,8 @@ pub struct ConfigAllInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGrayInfo {
-    #[serde(default)]
-    /// Gray config ID.
+    /// Gray config ID. Upstream `ConfigGrayInfo` inherits the string id.
+    #[serde(default, with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// Config data ID.
     pub data_id: String,
@@ -176,10 +183,13 @@ pub struct ConfigGrayInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryBasicInfo {
-    #[serde(default)]
     /// History record ID. Signed to match the server's `his_config_info.id`
     /// and the `nid` query parameter of `history_get` — the client used to
     /// model it as `u64`, which made the two ends of the same API disagree.
+    ///
+    /// Upstream v3 `ConfigHistoryBasicInfo` inherits `ConfigBasicInfo.id`,
+    /// which is serialized as a JSON string.
+    #[serde(default, with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// Config data ID.
     pub data_id: String,
@@ -216,9 +226,9 @@ pub struct ConfigHistoryBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
-    #[serde(default)]
     /// History record ID. Signed, for the same reason as
-    /// `ConfigHistoryBasicInfo::id`.
+    /// `ConfigHistoryBasicInfo::id`, and string-shaped like upstream v3.
+    #[serde(default, with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// Config data ID.
     pub data_id: String,
@@ -647,8 +657,14 @@ mod tests {
             ..Default::default()
         };
         let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains(r#""id":"1""#));
         assert!(json.contains("namespaceId"));
         assert!(json.contains("groupName"));
+
+        let decoded: ConfigBasicInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert!(decoded.desc.is_empty());
+        assert!(decoded.config_tags.is_empty());
     }
 
     #[test]
@@ -656,5 +672,46 @@ mod tests {
         let page: Page<ConfigBasicInfo> = Page::default();
         assert_eq!(page.total_count, 0);
         assert!(page.page_items.is_empty());
+    }
+
+    #[test]
+    fn inherited_config_ids_match_upstream_string_shape() {
+        let all = ConfigAllInfo {
+            id: 862_926_428_394_491_904,
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&all).unwrap()["id"],
+            serde_json::json!("862926428394491904")
+        );
+
+        let gray = ConfigGrayInfo {
+            id: 9,
+            ..Default::default()
+        };
+        let history = ConfigHistoryBasicInfo {
+            id: 9,
+            ..Default::default()
+        };
+        let history_detail = ConfigHistoryDetailInfo {
+            id: 9,
+            ..Default::default()
+        };
+        for value in [
+            serde_json::to_value(&gray).unwrap(),
+            serde_json::to_value(&history).unwrap(),
+            serde_json::to_value(&history_detail).unwrap(),
+        ] {
+            assert_eq!(value["id"], serde_json::json!("9"));
+        }
+
+        // Java/Jackson still accepts a numeric id; Rust SDK must do the same.
+        let legacy: ConfigHistoryDetailInfo = serde_json::from_value(serde_json::json!({
+            "id": 9,
+            "dataId": "app.yaml",
+            "groupName": "DEFAULT_GROUP"
+        }))
+        .unwrap();
+        assert_eq!(legacy.id, 9);
     }
 }

@@ -234,11 +234,11 @@ impl BatataHttpClient {
 
     /// Create a new HTTP client
     pub async fn new(config: HttpClientConfig) -> anyhow::Result<Self> {
-        let builder = Client::builder()
-            .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
-            .timeout(Duration::from_millis(config.read_timeout_ms))
-            .no_proxy(); // Skip system proxy for direct server communication
-        let client = config.tls.apply_to_reqwest(builder)?.build()?;
+        let client = crate::tls::build_direct_client(
+            Duration::from_millis(config.connect_timeout_ms),
+            Duration::from_millis(config.read_timeout_ms),
+            &config.tls,
+        )?;
 
         let use_identity = config.has_server_identity();
 
@@ -270,11 +270,11 @@ impl BatataHttpClient {
 
     /// Create a client without initial authentication (for testing)
     pub fn new_without_auth(config: HttpClientConfig) -> anyhow::Result<Self> {
-        let builder = Client::builder()
-            .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
-            .timeout(Duration::from_millis(config.read_timeout_ms))
-            .no_proxy();
-        let client = config.tls.apply_to_reqwest(builder)?.build()?;
+        let client = crate::tls::build_direct_client(
+            Duration::from_millis(config.connect_timeout_ms),
+            Duration::from_millis(config.read_timeout_ms),
+            &config.tls,
+        )?;
 
         Ok(Self {
             client,

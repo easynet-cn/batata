@@ -178,7 +178,7 @@ async fn list_history(
             let page_result = Page::<ConfigHistoryBasicInfo>::new(
                 result.total_count,
                 result.page_number,
-                result.pages_available,
+                params.page_size,
                 result
                     .page_items
                     .into_iter()

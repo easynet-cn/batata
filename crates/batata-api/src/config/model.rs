@@ -71,6 +71,10 @@ impl_request_trait!(base ConfigRequest, request);
 #[serde(rename_all = "camelCase")]
 pub struct ConfigCloneInfo {
     /// The `config_id` field.
+    ///
+    /// Upstream binds this as a Java `Long`, which Jackson also accepts as a
+    /// numeric string (the value normally comes from `ConfigBasicInfo.id`).
+    #[serde(with = "crate::serde_ext::flex_i64")]
     pub config_id: i64,
     /// The `target_group_name` field.
     pub target_group_name: String,

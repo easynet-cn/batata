@@ -69,6 +69,8 @@ fn config_storage_to_basic_info(config: batata_persistence::ConfigStorageData) -
         app_name: config.app_name,
         create_time: config.created_time,
         modify_time: config.modified_time,
+        desc: config.desc,
+        config_tags: config.config_tags,
     }
 }
 

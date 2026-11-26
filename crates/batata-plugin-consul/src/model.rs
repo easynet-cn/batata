@@ -245,72 +245,47 @@ impl ConsulPluginConfig {
     /// Also reads `batata.version`, `nacos.server.main.port`, and
     /// `batata.persistence.embedded.data_dir` for `ConsulDatacenterConfig`.
     pub fn from_config(config: &config::Config) -> Self {
-        let enabled = config
-            .get_bool("batata.plugin.consul.enabled")
-            .unwrap_or(false);
-        let acl_enabled = config
-            .get_bool("batata.plugin.consul.acl.enabled")
-            .unwrap_or(false);
-        let initial_management_token = config
-            .get_string("batata.plugin.consul.acl.tokens.initial_management")
-            .ok();
-        let register_self = config
-            .get_bool("batata.plugin.consul.register_self")
-            .unwrap_or(true);
-        let check_reap_interval_secs = config
-            .get_int("batata.plugin.consul.check_reap_interval")
-            .unwrap_or(30) as u64;
-        let client_connect_timeout_secs = config
-            .get_int("batata.plugin.consul.client.connect_timeout_secs")
-            .unwrap_or(5) as u64;
-        let client_read_timeout_secs = config
-            .get_int("batata.plugin.consul.client.read_timeout_secs")
-            .unwrap_or(30) as u64;
-
-        let http_workers = {
-            let v = config
-                .get_int("batata.plugin.consul.http.workers")
-                .unwrap_or(0) as usize;
-            if v == 0 {
-                let cpus = std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(4);
-                std::cmp::min(4, cpus / 2).max(2)
-            } else {
-                v
-            }
+        use batata_plugin::config::{
+            plugin_bool, plugin_http_workers, plugin_int, plugin_string, plugin_string_opt,
         };
 
-        let datacenter = config
-            .get_string("batata.plugin.consul.datacenter")
-            .unwrap_or_else(|_| "dc1".to_string());
-        let primary_datacenter = config
-            .get_string("batata.plugin.consul.primary_datacenter")
-            .unwrap_or_else(|_| datacenter.clone());
-        let consul_version = config
-            .get_string("batata.plugin.consul.version")
-            .unwrap_or_default();
-        let consul_port = config.get_int("batata.plugin.consul.port").unwrap_or(8500) as u16;
-        let translate_wan_addrs = config
-            .get_bool("batata.plugin.consul.translate_wan_addrs")
-            .unwrap_or(false);
-        let node_name_override = config
-            .get_string("batata.plugin.consul.node_name")
-            .ok()
-            .filter(|s| !s.is_empty());
+        let enabled = plugin_bool(config, "batata.plugin.consul.enabled", false);
+        let acl_enabled = plugin_bool(config, "batata.plugin.consul.acl.enabled", false);
+        let initial_management_token =
+            plugin_string_opt(config, "batata.plugin.consul.acl.tokens.initial_management");
+        let register_self = plugin_bool(config, "batata.plugin.consul.register_self", true);
+        let check_reap_interval_secs =
+            plugin_int(config, "batata.plugin.consul.check_reap_interval", 30) as u64;
+        let client_connect_timeout_secs = plugin_int(
+            config,
+            "batata.plugin.consul.client.connect_timeout_secs",
+            5,
+        ) as u64;
+        let client_read_timeout_secs =
+            plugin_int(config, "batata.plugin.consul.client.read_timeout_secs", 30) as u64;
+
+        let http_workers = plugin_http_workers(config, "batata.plugin.consul.http.workers");
+
+        let datacenter = plugin_string(config, "batata.plugin.consul.datacenter", "dc1");
+        let primary_datacenter = plugin_string(
+            config,
+            "batata.plugin.consul.primary_datacenter",
+            datacenter.clone(),
+        );
+        let consul_version = plugin_string(config, "batata.plugin.consul.version", "");
+        let consul_port = plugin_int(config, "batata.plugin.consul.port", 8500) as u16;
+        let translate_wan_addrs =
+            plugin_bool(config, "batata.plugin.consul.translate_wan_addrs", false);
+        let node_name_override =
+            plugin_string_opt(config, "batata.plugin.consul.node_name").filter(|s| !s.is_empty());
 
         // Non-consul config needed for dc_config
-        let batata_version = config
-            .get_string("batata.version")
-            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
-        let main_port = config.get_int("nacos.server.main.port").unwrap_or(8848) as u16;
-        let data_dir = config
-            .get_string("batata.persistence.embedded.data_dir")
-            .unwrap_or_else(|_| "data".to_string());
+        let batata_version = plugin_string(config, "batata.version", env!("CARGO_PKG_VERSION"));
+        let main_port = plugin_int(config, "nacos.server.main.port", 8848) as u16;
+        let data_dir = plugin_string(config, "batata.persistence.embedded.data_dir", "data");
 
-        let grpc_port = config
-            .get_int("batata.consul.grpc.port")
-            .unwrap_or_else(|_| consul_port as i64 + 2) as u16;
+        let grpc_port =
+            plugin_int(config, "batata.consul.grpc.port", consul_port as i64 + 2) as u16;
 
         let mut dc_config = ConsulDatacenterConfig::new(datacenter)
             .with_primary(primary_datacenter)

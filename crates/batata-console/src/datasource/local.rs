@@ -170,7 +170,7 @@ impl ConsoleDataSource for LocalDataSource {
         Ok(Page::new(
             result.total_count,
             result.page_number,
-            result.pages_available,
+            page_size,
             result
                 .page_items
                 .into_iter()
@@ -256,13 +256,13 @@ impl ConsoleDataSource for LocalDataSource {
                     app_name: gray.app_name,
                     create_time: gray.created_time,
                     modify_time: gray.modified_time,
+                    desc: String::new(),
+                    config_tags: String::new(),
                 },
                 content: gray.content,
-                desc: String::new(),
                 encrypted_data_key: gray.encrypted_data_key,
                 create_user: gray.src_user,
                 create_ip: gray.src_ip,
-                config_tags: String::new(),
             },
             gray_name: gray.gray_name,
             gray_rule: gray.gray_rule,
@@ -517,7 +517,7 @@ impl ConsoleDataSource for LocalDataSource {
         Ok(Page::<ConfigHistoryBasicInfo>::new(
             result.total_count,
             result.page_number,
-            result.pages_available,
+            page_size,
             result
                 .page_items
                 .into_iter()
@@ -583,7 +583,7 @@ impl ConsoleDataSource for LocalDataSource {
         Ok(Page::<ConfigHistoryBasicInfo>::new(
             result.total_count,
             result.page_number,
-            result.pages_available,
+            page_size,
             result
                 .page_items
                 .into_iter()

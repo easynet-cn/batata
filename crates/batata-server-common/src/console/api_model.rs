@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 /// Configuration for `ConfigBasicInfo`.
 pub struct ConfigBasicInfo {
-    /// The config ID.
+    /// The config ID, encoded as a JSON string like upstream Nacos.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The namespace the config belongs to.
     pub namespace_id: String,
@@ -30,6 +31,12 @@ pub struct ConfigBasicInfo {
     pub create_time: i64,
     /// The last modification time in milliseconds.
     pub modify_time: i64,
+    /// The config description.
+    #[serde(default)]
+    pub desc: String,
+    /// Comma-separated config tags.
+    #[serde(default)]
+    pub config_tags: String,
 }
 
 impl From<batata_persistence::ConfigStorageData> for ConfigBasicInfo {
@@ -44,8 +51,23 @@ impl From<batata_persistence::ConfigStorageData> for ConfigBasicInfo {
             app_name: value.app_name,
             create_time: value.created_time,
             modify_time: value.modified_time,
+            desc: value.desc,
+            config_tags: value.config_tags,
         }
     }
+}
+
+/// `desc` and `configTags` are written into history `ext_info` by the storage
+/// layer; upstream exposes them as inherited `ConfigBasicInfo` fields.
+fn history_extra(ext_info: &str) -> (String, String) {
+    let ext: serde_json::Value = serde_json::from_str(ext_info).unwrap_or_default();
+    let field = |key: &str| {
+        ext.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    (field("desc"), field("config_tags"))
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -57,16 +79,12 @@ pub struct ConfigDetailInfo {
     pub config_basic_info: ConfigBasicInfo,
     /// The config content.
     pub content: String,
-    /// The description of the config.
-    pub desc: String,
     /// The encrypted data key.
     pub encrypted_data_key: String,
     /// The user who created the config.
     pub create_user: String,
     /// The IP the config was created from.
     pub create_ip: String,
-    /// Comma-separated config tags.
-    pub config_tags: String,
 }
 
 impl From<batata_persistence::ConfigStorageData> for ConfigDetailInfo {
@@ -82,13 +100,13 @@ impl From<batata_persistence::ConfigStorageData> for ConfigDetailInfo {
                 app_name: value.app_name,
                 create_time: value.created_time,
                 modify_time: value.modified_time,
+                desc: value.desc,
+                config_tags: value.config_tags,
             },
             content: value.content,
-            desc: value.desc,
             encrypted_data_key: value.encrypted_data_key,
             create_user: value.src_user,
             create_ip: value.src_ip,
-            config_tags: value.config_tags,
         }
     }
 }
@@ -125,6 +143,7 @@ pub struct ConfigHistoryBasicInfo {
 
 impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryBasicInfo {
     fn from(value: batata_persistence::ConfigHistoryStorageData) -> Self {
+        let (desc, config_tags) = history_extra(&value.ext_info);
         Self {
             config_basic_info: ConfigBasicInfo {
                 id: value.id,
@@ -136,6 +155,8 @@ impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryBasicIn
                 app_name: value.app_name,
                 create_time: value.created_time,
                 modify_time: value.modified_time,
+                desc,
+                config_tags,
             },
             src_ip: value.src_ip,
             src_user: value.src_user,
@@ -164,6 +185,7 @@ pub struct ConfigHistoryDetailInfo {
 
 impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryDetailInfo {
     fn from(value: batata_persistence::ConfigHistoryStorageData) -> Self {
+        let (desc, config_tags) = history_extra(&value.ext_info);
         Self {
             config_history_basic_info: ConfigHistoryBasicInfo {
                 config_basic_info: ConfigBasicInfo {
@@ -176,6 +198,8 @@ impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryDetailI
                     app_name: value.app_name,
                     create_time: value.created_time,
                     modify_time: value.modified_time,
+                    desc,
+                    config_tags,
                 },
                 src_ip: value.src_ip,
                 src_user: value.src_user,
@@ -226,7 +250,10 @@ pub struct ImportFailItem {
 #[serde(rename_all = "camelCase")]
 pub struct CloneConfigInfo {
     /// The integer id (0 when the backend does not expose one).
-    #[serde(default)]
+    ///
+    /// Upstream `SameNamespaceCloneConfigBean.cfgId` is a Java `Long`, so a
+    /// numeric string from a Nacos client is coerced just like a JSON number.
+    #[serde(default, with = "batata_api::serde_ext::flex_i64")]
     pub cfg_id: i64,
     /// The config data id.
     #[serde(default)]
@@ -271,5 +298,118 @@ impl FromStr for SameConfigPolicy {
                 s
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic_info_emits_upstream_string_id_and_inherited_fields() {
+        let info = ConfigBasicInfo {
+            id: 862_926_428_394_491_904,
+            desc: "hello".to_string(),
+            config_tags: "a,b".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(
+            json.contains(r#""id":"862926428394491904""#),
+            "large ids must stay exact on the wire"
+        );
+        assert!(json.contains(r#""desc":"hello""#));
+        assert!(json.contains(r#""configTags":"a,b""#));
+
+        let decoded: ConfigBasicInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, info.id);
+        assert_eq!(decoded.desc, info.desc);
+        assert_eq!(decoded.config_tags, info.config_tags);
+    }
+
+    #[test]
+    fn detail_info_flattens_inherited_fields_only_once() {
+        let detail = ConfigDetailInfo {
+            config_basic_info: ConfigBasicInfo {
+                id: 7,
+                data_id: "d.yml".to_string(),
+                desc: "desc".to_string(),
+                config_tags: "tag1".to_string(),
+                ..Default::default()
+            },
+            content: "k: v".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&detail).unwrap();
+        assert_eq!(json.matches(r#""desc":"#).count(), 1);
+        assert_eq!(json.matches(r#""configTags":"#).count(), 1);
+
+        let decoded: ConfigDetailInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.config_basic_info.desc, "desc");
+        assert_eq!(decoded.config_basic_info.config_tags, "tag1");
+    }
+
+    #[test]
+    fn history_extra_reads_desc_and_tags_from_ext_info() {
+        let ext = r#"{"desc":"old desc","config_tags":"t1,t2","use":"u"}"#;
+        assert_eq!(
+            history_extra(ext),
+            ("old desc".to_string(), "t1,t2".to_string())
+        );
+    }
+
+    #[test]
+    fn history_extra_falls_back_on_invalid_ext_info() {
+        assert_eq!(history_extra("not json"), (String::new(), String::new()));
+        assert_eq!(
+            history_extra(r#"{"desc":123}"#),
+            (String::new(), String::new())
+        );
+    }
+
+    #[test]
+    fn clone_config_info_accepts_numeric_string_cfg_id() {
+        let from_string: CloneConfigInfo =
+            serde_json::from_str(r#"{"cfgId":"42","dataId":"d","group":"g"}"#).unwrap();
+        let from_number: CloneConfigInfo =
+            serde_json::from_str(r#"{"cfgId":42,"dataId":"d","group":"g"}"#).unwrap();
+        assert_eq!(from_string.cfg_id, 42);
+        assert_eq!(from_number.cfg_id, 42);
+        assert_eq!(
+            serde_json::to_value(&from_string).unwrap()["cfgId"],
+            serde_json::json!(42)
+        );
+    }
+
+    #[test]
+    fn storage_conversions_preserve_inherited_metadata() {
+        use batata_persistence::{ConfigHistoryStorageData, ConfigStorageData};
+
+        let storage = ConfigStorageData {
+            id: 5,
+            desc: "storage desc".to_string(),
+            config_tags: "s1,s2".to_string(),
+            ..Default::default()
+        };
+        let basic: ConfigBasicInfo = storage.clone().into();
+        assert_eq!(basic.desc, "storage desc");
+        assert_eq!(basic.config_tags, "s1,s2");
+        let detail: ConfigDetailInfo = storage.into();
+        assert_eq!(detail.config_basic_info.desc, "storage desc");
+        assert_eq!(detail.config_basic_info.config_tags, "s1,s2");
+
+        let history = ConfigHistoryStorageData {
+            ext_info: r#"{"desc":"old desc","config_tags":"h1"}"#.to_string(),
+            ..Default::default()
+        };
+        let basic: ConfigBasicInfo =
+            ConfigHistoryBasicInfo::from(history.clone()).config_basic_info;
+        assert_eq!(basic.desc, "old desc");
+        assert_eq!(basic.config_tags, "h1");
+        let detail: ConfigHistoryDetailInfo = history.into();
+        assert_eq!(
+            detail.config_history_basic_info.config_basic_info.desc,
+            "old desc"
+        );
     }
 }

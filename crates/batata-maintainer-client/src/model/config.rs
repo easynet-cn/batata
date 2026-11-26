@@ -3,11 +3,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Basic configuration information
+/// Basic configuration information.
+///
+/// Kept as an independent type even though it currently matches the
+/// data-plane SDK field-for-field: maintainer and client model separate API
+/// contracts that evolve independently, and both crates are published at
+/// 1.0.0. `batata-console::convert_config_basic_info` performs the explicit
+/// conversion instead of sharing a type identity.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBasicInfo {
-    /// The `id` field.
+    /// Storage id; upstream sends it as a JSON string to avoid JS precision loss.
+    #[serde(with = "batata_api::serde_ext::string_i64")]
     pub id: i64,
     /// The `namespace_id` field.
     pub namespace_id: String,
@@ -25,6 +32,12 @@ pub struct ConfigBasicInfo {
     pub create_time: i64,
     /// The `modify_time` field.
     pub modify_time: i64,
+    /// The `desc` field.
+    #[serde(default)]
+    pub desc: String,
+    /// The `configTags` field.
+    #[serde(default)]
+    pub config_tags: String,
 }
 
 /// Detailed configuration information
@@ -36,16 +49,12 @@ pub struct ConfigDetailInfo {
     pub config_basic_info: ConfigBasicInfo,
     /// The `content` field.
     pub content: String,
-    /// The `desc` field.
-    pub desc: String,
     /// The `encrypted_data_key` field.
     pub encrypted_data_key: String,
     /// The `create_user` field.
     pub create_user: String,
     /// The `create_ip` field.
     pub create_ip: String,
-    /// The `config_tags` field.
-    pub config_tags: String,
 }
 
 /// Gray/beta configuration information
@@ -116,6 +125,10 @@ impl ConfigListenerInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigCloneInfo {
     /// The `config_id` field.
+    ///
+    /// Upstream `ConfigCloneInfo.configId` is a Java `Long` fed from the
+    /// string-shaped `ConfigBasicInfo.id`; Jackson accepts both wire shapes.
+    #[serde(with = "batata_api::serde_ext::flex_i64")]
     pub config_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `target_group_name` field.
@@ -141,16 +154,35 @@ mod tests {
             app_name: "test-app".to_string(),
             create_time: 1704067200000,
             modify_time: 1704067200000,
+            desc: "test desc".to_string(),
+            config_tags: "tag1,tag2".to_string(),
         };
 
         let json = serde_json::to_string(&info).unwrap();
+        assert!(
+            json.contains("\"id\":\"1\""),
+            "upstream sends id as a string"
+        );
         assert!(json.contains("\"namespaceId\":\"public\""));
         assert!(json.contains("\"groupName\":\"DEFAULT_GROUP\""));
         assert!(json.contains("\"dataId\":\"app.yaml\""));
+        assert!(json.contains("\"desc\":\"test desc\""));
+        assert!(json.contains("\"configTags\":\"tag1,tag2\""));
 
         let deserialized: ConfigBasicInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, 1);
         assert_eq!(deserialized.data_id, "app.yaml");
+        assert_eq!(deserialized.desc, "test desc");
+        assert_eq!(deserialized.config_tags, "tag1,tag2");
+    }
+
+    #[test]
+    fn test_config_basic_info_accepts_numeric_id() {
+        let json = r#"{"id":42,"namespaceId":"public","groupName":"DEFAULT_GROUP","dataId":"app.yaml","md5":"x","type":"yaml","appName":"app","createTime":1,"modifyTime":2}"#;
+        let info: ConfigBasicInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.id, 42);
+        assert!(info.desc.is_empty());
+        assert!(info.config_tags.is_empty());
     }
 
     #[test]
@@ -159,20 +191,26 @@ mod tests {
             config_basic_info: ConfigBasicInfo {
                 id: 1,
                 data_id: "test.yaml".to_string(),
+                desc: "test config".to_string(),
+                config_tags: "tag1".to_string(),
                 ..Default::default()
             },
             content: "key: value".to_string(),
-            desc: "test config".to_string(),
             ..Default::default()
         };
 
         let json = serde_json::to_string(&detail).unwrap();
-        // Flattened fields should appear at top level
+        // Flattened fields should appear exactly once: upstream detail inherits
+        // desc/configTags from ConfigBasicInfo rather than redeclaring them.
+        assert_eq!(json.matches("\"desc\":").count(), 1);
+        assert_eq!(json.matches("\"configTags\":").count(), 1);
         assert!(json.contains("\"dataId\":\"test.yaml\""));
         assert!(json.contains("\"content\":\"key: value\""));
 
         let deserialized: ConfigDetailInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.config_basic_info.data_id, "test.yaml");
+        assert_eq!(deserialized.config_basic_info.desc, "test config");
+        assert_eq!(deserialized.config_basic_info.config_tags, "tag1");
         assert_eq!(deserialized.content, "key: value");
     }
 
@@ -207,5 +245,20 @@ mod tests {
         let deserialized: ConfigListenerInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.query_type, "config");
         assert_eq!(deserialized.listeners_status.len(), 1);
+    }
+
+    #[test]
+    fn config_clone_id_accepts_both_wire_shapes() {
+        let from_string: ConfigCloneInfo =
+            serde_json::from_str(r#"{"configId":"42","targetDataId":"b","targetGroupName":"g"}"#)
+                .unwrap();
+        let from_number: ConfigCloneInfo =
+            serde_json::from_str(r#"{"configId":42,"targetDataId":"b","targetGroupName":"g"}"#)
+                .unwrap();
+        assert_eq!(from_string.config_id, 42);
+        assert_eq!(from_number.config_id, 42);
+
+        let json = serde_json::to_value(&from_string).unwrap();
+        assert_eq!(json["configId"], serde_json::json!(42));
     }
 }

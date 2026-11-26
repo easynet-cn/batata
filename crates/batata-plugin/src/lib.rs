@@ -18,6 +18,7 @@
 
 pub mod audit;
 pub mod cmdb;
+pub mod config;
 pub mod control;
 pub mod encryption;
 pub mod spi;
