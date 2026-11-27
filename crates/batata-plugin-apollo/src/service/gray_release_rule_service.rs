@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use crate::api::dto::GrayReleaseRuleDTO;
+use crate::api::dto::{GrayReleaseRuleDTO, parse_gray_rule_items};
 use crate::persistence::shared::StoredGrayReleaseRule;
 use crate::persistence::traits::{ApolloPersistenceService, GrayReleasePersistence};
 use batata_common::datetime::{DateTimeExt, Utc};
@@ -48,7 +48,11 @@ impl GrayReleaseRuleService {
             cluster_name: dto.cluster_name.clone(),
             namespace_name: dto.namespace_name.clone(),
             branch_name: dto.branch_name.clone(),
-            rules: dto.rules.clone().unwrap_or_else(|| "[]".to_string()),
+            rules: dto
+                .rule_items
+                .as_deref()
+                .map(|items| serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string()))
+                .unwrap_or_else(|| "[]".to_string()),
             release_id: dto.release_id,
             branch_status: Some(dto.branch_status.unwrap_or(1)),
             is_deleted: false,
@@ -122,7 +126,11 @@ impl GrayReleaseRuleService {
 
         let _now = Utc::now().timestamp_millis();
 
-        let rules = dto.rules.unwrap_or(existing.rules);
+        let rules = match dto.rule_items {
+            Some(items) => serde_json::to_string(&items)
+                .map_err(|e| anyhow::anyhow!("failed to serialize ruleItems: {e}"))?,
+            None => existing.rules,
+        };
         self.persistence
             .update_rules(existing.id, rules, dto.release_id)
             .await?;
@@ -425,7 +433,7 @@ impl From<StoredGrayReleaseRule> for GrayReleaseRuleDTO {
             cluster_name: stored.cluster_name,
             namespace_name: stored.namespace_name,
             branch_name: stored.branch_name,
-            rules: Some(stored.rules),
+            rule_items: parse_gray_rule_items(&stored.rules),
             release_id: stored.release_id,
             branch_status: stored.branch_status,
             priority: None,

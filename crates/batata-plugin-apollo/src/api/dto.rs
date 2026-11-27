@@ -1,4 +1,36 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Parse the persisted JSON-string rule column into upstream `ruleItems`.
+/// Older fixtures stored `rules` as an escaped JSON array; both shapes decode
+/// to the same typed array.
+pub fn parse_gray_rule_items(raw: &str) -> Option<Vec<serde_json::Value>> {
+    if raw.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(serde_json::Value::Array(items)) => Some(items),
+        Ok(serde_json::Value::Null) => None,
+        _ => None,
+    }
+}
+
+fn default_delete_branch() -> bool {
+    true
+}
+
+fn deserialize_gray_rule_items<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<serde_json::Value>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Array(items) => Ok(Some(items)),
+        serde_json::Value::String(raw) => Ok(parse_gray_rule_items(&raw)),
+        _ => Err(serde::de::Error::custom("ruleItems must be a JSON array")),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,7 +57,13 @@ pub struct AppDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_time` field.
     pub data_change_created_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Upstream BaseDTO field is `dataChangeLastModifiedTime`; Gson emits the
+    // Java field name verbatim. Keep the legacy key readable on input only.
+    #[serde(
+        rename = "dataChangeLastModifiedTime",
+        alias = "dataChangeLastTime",
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The `data_change_last_time` field.
     pub data_change_last_time: Option<String>,
 }
@@ -58,7 +96,13 @@ pub struct NamespaceDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_time` field.
     pub data_change_created_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Upstream BaseDTO field is `dataChangeLastModifiedTime`; Gson emits the
+    // Java field name verbatim. Keep the legacy key readable on input only.
+    #[serde(
+        rename = "dataChangeLastModifiedTime",
+        alias = "dataChangeLastTime",
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The `data_change_last_time` field.
     pub data_change_last_time: Option<String>,
 }
@@ -92,7 +136,13 @@ pub struct ItemDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_time` field.
     pub data_change_created_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Upstream BaseDTO field is `dataChangeLastModifiedTime`; Gson emits the
+    // Java field name verbatim. Keep the legacy key readable on input only.
+    #[serde(
+        rename = "dataChangeLastModifiedTime",
+        alias = "dataChangeLastTime",
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The `data_change_last_time` field.
     pub data_change_last_time: Option<String>,
 }
@@ -148,6 +198,25 @@ pub struct ApolloConfig {
     pub release_key: String,
     /// The `configurations` field.
     pub configurations: std::collections::HashMap<String, String>,
+    /// Upstream `configSyncType`: `FullSync` / `IncrementalSync` / `Unknown`.
+    /// Omitted for full sync, matching upstream when incremental sync is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_sync_type: Option<String>,
+    /// Upstream `configurationChanges`, only sent for incremental sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_changes: Option<Vec<ConfigurationChange>>,
+}
+
+/// Upstream `ConfigurationChange` DTO (all three fields are Strings on the wire).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurationChange {
+    /// Changed key.
+    pub key: String,
+    /// New value after the change.
+    pub new_value: String,
+    /// `ADDED` / `MODIFIED` / `DELETED`.
+    pub configuration_change_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,8 +235,9 @@ pub struct NotificationDTO {
 #[serde(rename_all = "camelCase")]
 /// Represents the `NotificationMessageDTO` entity.
 pub struct NotificationMessageDTO {
-    /// The `details` field.
-    pub details: std::collections::HashMap<String, String>,
+    /// ApolloNotificationMessages.details is `Map<String, Long>` upstream;
+    /// values are notification ids, not decimal strings.
+    pub details: std::collections::HashMap<String, i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,7 +282,13 @@ pub struct ClusterDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_time` field.
     pub data_change_created_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Upstream BaseDTO field is `dataChangeLastModifiedTime`; Gson emits the
+    // Java field name verbatim. Keep the legacy key readable on input only.
+    #[serde(
+        rename = "dataChangeLastModifiedTime",
+        alias = "dataChangeLastTime",
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The `data_change_last_time` field.
     pub data_change_last_time: Option<String>,
 }
@@ -258,9 +334,16 @@ pub struct GrayReleaseRuleDTO {
     pub namespace_name: String,
     /// The `branch_name` field.
     pub branch_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    /// The `rules` field.
-    pub rules: Option<String>,
+    /// Upstream `GrayReleaseRuleDTO.ruleItems` is a `Set<GrayReleaseRuleItemDTO>`.
+    /// The legacy escaped-JSON-string `rules` key is accepted on input, but
+    /// never emitted: clients must see the upstream array shape.
+    #[serde(
+        default,
+        alias = "rules",
+        deserialize_with = "deserialize_gray_rule_items",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rule_items: Option<Vec<serde_json::Value>>,
     /// The `release_id` field.
     pub release_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -298,7 +381,13 @@ pub struct InstanceDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_time` field.
     pub data_change_created_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Upstream BaseDTO field is `dataChangeLastModifiedTime`; Gson emits the
+    // Java field name verbatim. Keep the legacy key readable on input only.
+    #[serde(
+        rename = "dataChangeLastModifiedTime",
+        alias = "dataChangeLastTime",
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The `data_change_last_time` field.
     pub data_change_last_time: Option<String>,
 }
@@ -335,7 +424,8 @@ pub struct AccessKeyDTO {
     pub secret: String,
     /// The `mode` field.
     pub mode: i32,
-    /// The `is_enabled` field.
+    /// Upstream field is `enabled` (boxed Boolean), not Gson `isEnabled`.
+    #[serde(rename = "enabled", alias = "isEnabled")]
     pub is_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_by` field.
@@ -366,8 +456,9 @@ pub struct ReleaseHistoryDTO {
     pub previous_release_id: i64,
     /// The `operation` field.
     pub operation: i32,
-    /// The `operation_context` field.
-    pub operation_context: String,
+    /// Upstream `ReleaseHistoryDTO.operationContext` is `Map<String, Object>`;
+    /// only the persistence entity stores it as a JSON string.
+    pub operation_context: serde_json::Map<String, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_by` field.
     pub data_change_created_by: Option<String>,
@@ -482,7 +573,13 @@ pub struct InstanceConfigDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_time` field.
     pub data_change_created_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Upstream BaseDTO field is `dataChangeLastModifiedTime`; Gson emits the
+    // Java field name verbatim. Keep the legacy key readable on input only.
+    #[serde(
+        rename = "dataChangeLastModifiedTime",
+        alias = "dataChangeLastTime",
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The `data_change_last_time` field.
     pub data_change_last_time: Option<String>,
 }
@@ -763,8 +860,10 @@ pub struct NamespaceGrayReleaseDTO {
     /// Change set containing the configuration changes to apply to the main branch.
     #[serde(default)]
     pub change_sets: ItemChangeSets,
-    /// Whether to delete the branch after merging (the upstream portal defaults to `true`).
-    #[serde(default)]
+    /// Whether to delete the branch after merging. Upstream
+    /// `NamespaceBranchController.merge` uses `deleteBranch == null || deleteBranch`,
+    /// so an absent/null key must mean `true`.
+    #[serde(default = "default_delete_branch")]
     pub delete_branch: bool,
 }
 
@@ -1026,7 +1125,8 @@ pub struct AuditLogDTO {
     pub deleted_at: i64,
     /// Creation timestamp.
     pub data_change_created_time: Option<String>,
-    /// Last update timestamp.
+    /// Last update timestamp (upstream BaseDTO: `dataChangeLastModifiedTime`).
+    #[serde(rename = "dataChangeLastModifiedTime", alias = "dataChangeLastTime")]
     pub data_change_last_time: Option<String>,
     /// Influenced entities and fields.
     pub data_influences: Vec<AuditLogDataInfluenceDTO>,

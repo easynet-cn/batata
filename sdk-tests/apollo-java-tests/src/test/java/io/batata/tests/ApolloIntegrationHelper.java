@@ -123,7 +123,7 @@ public final class ApolloIntegrationHelper {
         }
     }
 
-    /** Build a gray-rule request body; upstream stores rules as an escaped JSON string column. */
+    /** Build a gray-rule request body; upstream wire field is a ruleItems array. */
     private static String grayRuleBody(String appId, String ns, String branch, String rulesJson, int releaseId) {
         try {
             com.fasterxml.jackson.databind.node.ObjectNode n = MAPPER.createObjectNode();
@@ -131,7 +131,7 @@ public final class ApolloIntegrationHelper {
             n.put("clusterName", "default");
             n.put("namespaceName", ns);
             n.put("branchName", branch);
-            n.put("rules", rulesJson); // String field -> escaped JSON
+            n.set("ruleItems", MAPPER.readTree(rulesJson)); // upstream Set<GrayReleaseRuleItemDTO>
             n.put("releaseId", releaseId);
             n.put("branchStatus", 1);
             n.put("dataChangeCreatedBy", "test");

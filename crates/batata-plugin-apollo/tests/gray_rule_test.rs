@@ -14,7 +14,7 @@ async fn create_rule(svc: &GrayReleaseRuleService, ns: &str, rules: &str, releas
         cluster_name: "default".into(),
         namespace_name: ns.into(),
         branch_name: "gray".into(),
-        rules: Some(rules.into()),
+        rule_items: Some(serde_json::from_str(rules).expect("fixture must be a JSON array")),
         release_id,
         branch_status: Some(1),
         priority: None,
@@ -113,8 +113,11 @@ async fn upstream_format_app_ip_label_matching() {
         cluster_name: "default".into(),
         namespace_name: "up2".into(),
         branch_name: "gray".into(),
-        rules: Some(
-            r#"[{"clientAppId":"CONSUMER-A","clientIpList":["192.168.1.100"],"clientLabelList":["gray"]}]"#.into(),
+        rule_items: Some(
+            serde_json::from_str(
+                r#"[{"clientAppId":"CONSUMER-A","clientIpList":["192.168.1.100"],"clientLabelList":["gray"]}]"#,
+            )
+            .unwrap(),
         ),
         release_id: 300,
         branch_status: Some(1),

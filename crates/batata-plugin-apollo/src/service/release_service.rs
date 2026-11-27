@@ -743,7 +743,8 @@ impl ReleaseService {
                 release_id: m.release_id,
                 previous_release_id: m.previous_release_id,
                 operation: m.operation,
-                operation_context: m.operation_context,
+                // Persistence stores a JSON string; upstream exposes a map.
+                operation_context: serde_json::from_str(&m.operation_context).unwrap_or_default(),
                 data_change_created_by: Some(m.data_change_created_by),
                 data_change_created_time: Some(m.data_change_created_time.format_apollo()),
             })

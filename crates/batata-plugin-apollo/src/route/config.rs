@@ -265,6 +265,10 @@ async fn query_config(
                     namespace_name: namespace.to_string(),
                     release_key: resolved.release_key,
                     configurations: resolved.configurations,
+                    // Upstream omits both fields when incremental sync is off;
+                    // the Java client treats that as FULL_SYNC.
+                    config_sync_type: None,
+                    configuration_changes: None,
                 })
             }
         }
@@ -547,10 +551,10 @@ async fn compute_changed(
     let mut result = Vec::new();
     for ((ns, keys), (_, client_id)) in ns_keys.iter().zip(entries.iter()) {
         let mut latest_id: i64 = -1;
-        let mut details: HashMap<String, String> = HashMap::new();
+        let mut details: HashMap<String, i64> = HashMap::new();
         for key in keys {
             if let Some(msg) = latest_map.get(key) {
-                details.insert(key.clone(), msg.id.to_string());
+                details.insert(key.clone(), msg.id);
                 latest_id = latest_id.max(msg.id);
             }
         }

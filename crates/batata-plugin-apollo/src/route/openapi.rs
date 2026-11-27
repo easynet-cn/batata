@@ -1333,7 +1333,7 @@ async fn list_branches(
                 cluster_name: cluster_name.clone(),
                 namespace_name: namespace_name.clone(),
                 branch_name: branch_cluster.name,
-                rules: None,
+                rule_items: None,
                 release_id: 0,
                 branch_status: None,
                 priority: None,
@@ -1390,10 +1390,17 @@ async fn update_branch_rule(
     let (_env, app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
 
-    let rules = body
-        .get("rules")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    // Upstream OpenAPI sends a `ruleItems` array. The legacy escaped-JSON
+    // `rules` string remains readable for older SDK fixtures.
+    let rule_items = body
+        .get("ruleItems")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .or_else(|| {
+            body.get("rules")
+                .and_then(|v| v.as_str())
+                .and_then(crate::api::dto::parse_gray_rule_items)
+        });
     let release_id = body.get("releaseId").and_then(|v| v.as_i64()).unwrap_or(0);
     let branch_status = body
         .get("branchStatus")
@@ -1410,7 +1417,7 @@ async fn update_branch_rule(
         cluster_name: cluster_name.clone(),
         namespace_name: namespace_name.clone(),
         branch_name: branch_name.clone(),
-        rules,
+        rule_items,
         release_id,
         branch_status,
         priority: None,

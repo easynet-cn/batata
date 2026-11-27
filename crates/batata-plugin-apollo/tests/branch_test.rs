@@ -144,8 +144,11 @@ async fn branch_lifecycle_create_master_merge_and_rollback() {
             cluster_name: "default".into(),
             namespace_name: "ns1".into(),
             branch_name: branch_ns.cluster_name.clone(),
-            rules: Some(
-                r#"[{"clientAppId":"app1","clientIpList":["*"],"clientLabelList":["*"]}]"#.into(),
+            rule_items: Some(
+                serde_json::from_str(
+                    r#"[{"clientAppId":"app1","clientIpList":["*"],"clientLabelList":["*"]}]"#,
+                )
+                .unwrap(),
             ),
             release_id: 0,
             branch_status: Some(1),
