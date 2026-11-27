@@ -170,6 +170,7 @@ pub struct DiscoveryTarget {
     pub subset: Option<serde_json::Value>,
     /// The connect timeout as a duration string.
     pub connect_timeout: Option<String>,
+    #[serde(rename = "SNI", alias = "Sni")]
     /// The SNI name used for TLS.
     pub sni: Option<String>,
     /// The display name of the target.

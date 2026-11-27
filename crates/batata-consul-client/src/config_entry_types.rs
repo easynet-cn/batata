@@ -115,13 +115,18 @@ pub struct MeshConfigEntry {
     #[serde(default)]
     /// The transparent proxy mesh configuration.
     pub transparent_proxy: TransparentProxyMeshConfig,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "AllowEnablingPermissiveMutualTLS",
+        alias = "AllowEnablingPermissiveMutualTls",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     /// Whether permissive mutual TLS can be enabled.
     pub allow_enabling_permissive_mutual_tls: Option<bool>,
-    #[serde(default)]
+    #[serde(rename = "TLS", alias = "Tls", default)]
     /// The mesh TLS configuration.
     pub tls: MeshTLSConfig,
-    #[serde(default)]
+    #[serde(rename = "HTTP", alias = "Http", default)]
     /// The mesh HTTP configuration.
     pub http: MeshHTTPConfig,
     #[serde(default)]
@@ -164,10 +169,20 @@ pub struct MeshTLSConfig {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `MeshDirectionalTLSConfig`.
 pub struct MeshDirectionalTLSConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "TLSMinVersion",
+        alias = "TlsMinVersion",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     /// The minimum TLS version.
     pub tls_min_version: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "TLSMaxVersion",
+        alias = "TlsMaxVersion",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     /// The maximum TLS version.
     pub tls_max_version: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -276,6 +291,7 @@ pub struct IngressGatewayConfigEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Arbitrary metadata attached to the entry.
     pub meta: Option<HashMap<String, String>>,
+    #[serde(rename = "TLS", alias = "Tls")]
     /// The TLS configuration of the gateway.
     pub tls: GatewayTLSConfig,
     /// The listeners exposed by the gateway.
@@ -301,13 +317,28 @@ pub struct GatewayTLSConfig {
     #[serde(default)]
     /// Whether TLS is enabled.
     pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "SDS",
+        alias = "Sds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The SDS (secret discovery service) configuration.
     pub sds: Option<GatewayTLSSDSConfig>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "TLSMinVersion",
+        alias = "TlsMinVersion",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     /// The minimum TLS version.
     pub tls_min_version: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "TLSMaxVersion",
+        alias = "TlsMaxVersion",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     /// The maximum TLS version.
     pub tls_max_version: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -335,7 +366,7 @@ pub struct IngressListener {
     pub protocol: String,
     /// The services served on this listener.
     pub services: Vec<IngressService>,
-    #[serde(default)]
+    #[serde(rename = "TLS", alias = "Tls", default)]
     /// The TLS configuration for this listener.
     pub tls: Option<GatewayTLSConfig>,
 }
@@ -358,16 +389,41 @@ pub struct IngressService {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Headers added to responses.
     pub response_headers: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "TLS",
+        alias = "Tls",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The per-service TLS configuration.
     pub tls: Option<GatewayServiceTLSConfig>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The admin partition of the backend service (Enterprise).
+    pub partition: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Maximum connections for the backend service.
+    pub max_connections: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Maximum pending requests for the backend service.
+    pub max_pending_requests: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Maximum concurrent requests for the backend service.
+    pub max_concurrent_requests: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Passive health check configuration; kept opaque.
+    pub passive_health_check: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 /// Represents a `GatewayServiceTLSConfig`.
 pub struct GatewayServiceTLSConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "SDS",
+        alias = "Sds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The SDS configuration for the service.
     pub sds: Option<GatewayTLSSDSConfig>,
 }
@@ -439,7 +495,12 @@ pub struct LinkedService {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     /// The client key file for TLS.
     pub key_file: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "SNI",
+        alias = "Sni",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     /// The SNI name used for TLS.
     pub sni: String,
 }
@@ -516,7 +577,12 @@ pub struct JWTProviderConfigEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The expected audiences.
     pub audiences: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "JSONWebKeySet",
+        alias = "JsonWebKeySet",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The JSON web key set used for verification.
     pub json_web_key_set: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -567,7 +633,12 @@ pub struct ServiceIntentionsConfigEntry {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// The source services allowed to connect.
     pub sources: Vec<IntentionSource>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "JWT",
+        alias = "Jwt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The JWT configuration for this intention.
     pub jwt: Option<serde_json::Value>,
     #[serde(default)]
@@ -656,7 +727,12 @@ pub struct ServiceDefaultsConfigEntry {
     #[serde(default)]
     /// The expose configuration.
     pub expose: ExposeConfig,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ExternalSNI",
+        alias = "ExternalSni",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     /// The external SNI name for TLS.
     pub external_sni: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

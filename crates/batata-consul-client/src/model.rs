@@ -146,6 +146,39 @@ pub struct AgentService {
     #[serde(default)]
     /// The admin partition of the service (Enterprise).
     pub partition: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The service kind (`ServiceKind` in the Go SDK).
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The unix domain socket path for the service.
+    pub socket_path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The peer name when the service is imported over peering.
+    pub peer_name: String,
+    #[serde(default)]
+    /// Named ports (`ServicePorts` in the Go SDK).
+    pub ports: Option<serde_json::Value>,
+    #[serde(default)]
+    /// Tagged service addresses (`ServiceAddress` values in Go).
+    pub tagged_addresses: Option<serde_json::Value>,
+    #[serde(default)]
+    /// The Connect proxy configuration; kept opaque like other SDK extension payloads.
+    pub proxy: Option<serde_json::Value>,
+    #[serde(default)]
+    /// The Connect configuration; kept opaque like other SDK extension payloads.
+    pub connect: Option<serde_json::Value>,
+    #[serde(rename = "AI", alias = "Ai", default)]
+    /// AI-specific service metadata; not mapped to typed DTOs.
+    pub ai: Option<serde_json::Value>,
+    #[serde(default)]
+    /// Locality information; not mapped to a typed DTO.
+    pub locality: Option<serde_json::Value>,
+    #[serde(default)]
+    /// The index at which the service was created.
+    pub create_index: u64,
+    #[serde(default)]
+    /// The index at which the service was last modified.
+    pub modify_index: u64,
 }
 
 /// Represents a `None`.
@@ -197,6 +230,30 @@ pub struct AgentServiceRegistration {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The admin partition of the service (Enterprise).
     pub partition: Option<String>,
+    #[serde(rename = "Kind", skip_serializing_if = "Option::is_none")]
+    /// The service kind (`ServiceKind` in the Go SDK).
+    pub kind: Option<String>,
+    #[serde(rename = "SocketPath", skip_serializing_if = "Option::is_none")]
+    /// The unix domain socket path for the service.
+    pub socket_path: Option<String>,
+    #[serde(rename = "Ports", skip_serializing_if = "Option::is_none")]
+    /// Named ports (`ServicePorts` in the Go SDK).
+    pub ports: Option<serde_json::Value>,
+    #[serde(rename = "TaggedAddresses", skip_serializing_if = "Option::is_none")]
+    /// Tagged service addresses (`ServiceAddress` values in Go).
+    pub tagged_addresses: Option<serde_json::Value>,
+    #[serde(rename = "Proxy", skip_serializing_if = "Option::is_none")]
+    /// The Connect proxy configuration; kept opaque.
+    pub proxy: Option<serde_json::Value>,
+    #[serde(rename = "Connect", skip_serializing_if = "Option::is_none")]
+    /// The Connect configuration; kept opaque.
+    pub connect: Option<serde_json::Value>,
+    #[serde(rename = "AI", skip_serializing_if = "Option::is_none")]
+    /// AI-specific service metadata; not mapped to typed DTOs.
+    pub ai: Option<serde_json::Value>,
+    #[serde(rename = "Locality", skip_serializing_if = "Option::is_none")]
+    /// Locality information; not mapped to a typed DTO.
+    pub locality: Option<serde_json::Value>,
 }
 
 /// Health check definition for service registration
@@ -244,6 +301,83 @@ pub struct AgentServiceCheck {
     #[serde(rename = "GRPCUseTLS", skip_serializing_if = "Option::is_none")]
     /// Whether the gRPC check uses TLS.
     pub grpc_use_tls: Option<bool>,
+    #[serde(rename = "ScriptArgs", skip_serializing_if = "Option::is_none")]
+    /// Script arguments (Go field `Args`, wire key `ScriptArgs`).
+    pub script_args: Option<Vec<String>>,
+    #[serde(
+        rename = "DockerContainerID",
+        alias = "DockerContainerId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// The Docker container ID for a Docker-based check.
+    pub docker_container_id: Option<String>,
+    #[serde(rename = "Shell", skip_serializing_if = "Option::is_none")]
+    /// The shell used for Docker checks.
+    pub shell: Option<String>,
+    #[serde(rename = "Header", skip_serializing_if = "Option::is_none")]
+    /// HTTP headers added to the probe request.
+    pub header: Option<HashMap<String, Vec<String>>>,
+    #[serde(rename = "Method", skip_serializing_if = "Option::is_none")]
+    /// The HTTP method used for the probe.
+    pub method: Option<String>,
+    #[serde(rename = "Body", skip_serializing_if = "Option::is_none")]
+    /// The HTTP request body for the probe.
+    pub body: Option<String>,
+    #[serde(
+        rename = "TCPUseTLS",
+        alias = "TcpUseTLS",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// Whether the TCP check uses TLS.
+    pub tcp_use_tls: Option<bool>,
+    #[serde(rename = "UDP", skip_serializing_if = "Option::is_none")]
+    /// The UDP address to probe.
+    pub udp: Option<String>,
+    #[serde(
+        rename = "TLSServerName",
+        alias = "TlsServerName",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// The TLS server name override for HTTPS checks.
+    pub tls_server_name: Option<String>,
+    #[serde(
+        rename = "H2PING",
+        alias = "H2Ping",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// The H2PING target for HTTP/2 health checks.
+    pub h2ping: Option<String>,
+    #[serde(
+        rename = "H2PingUseTLS",
+        alias = "H2pingUseTLS",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// Whether the H2PING check uses TLS.
+    pub h2ping_use_tls: Option<bool>,
+    #[serde(rename = "AliasNode", skip_serializing_if = "Option::is_none")]
+    /// The node to alias for this check.
+    pub alias_node: Option<String>,
+    #[serde(rename = "AliasService", skip_serializing_if = "Option::is_none")]
+    /// The service to alias for this check.
+    pub alias_service: Option<String>,
+    #[serde(
+        rename = "SuccessBeforePassing",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// Consecutive successes required before the check passes.
+    pub success_before_passing: Option<i32>,
+    #[serde(
+        rename = "FailuresBeforeWarning",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// Consecutive failures before the check warns.
+    pub failures_before_warning: Option<i32>,
+    #[serde(
+        rename = "FailuresBeforeCritical",
+        skip_serializing_if = "Option::is_none"
+    )]
+    /// Consecutive failures before the check becomes critical.
+    pub failures_before_critical: Option<i32>,
 }
 
 /// A check registered with the agent
@@ -281,6 +415,12 @@ pub struct AgentCheck {
     pub create_index: u64,
     /// The index at which the check was last modified.
     pub modify_index: u64,
+    #[serde(default)]
+    /// The exposed port reported for this check.
+    pub exposed_port: i32,
+    #[serde(default)]
+    /// The full check definition; kept opaque like the Go SDK's nested struct.
+    pub definition: Option<serde_json::Value>,
 }
 
 /// A member of the Consul cluster (serf)
@@ -360,6 +500,12 @@ pub struct AgentCheckRegistration {
     #[serde(rename = "GRPCUseTLS", skip_serializing_if = "Option::is_none")]
     /// Whether the gRPC check uses TLS.
     pub grpc_use_tls: Option<bool>,
+    #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
+    /// The namespace of the check (Enterprise).
+    pub namespace: Option<String>,
+    #[serde(rename = "Partition", skip_serializing_if = "Option::is_none")]
+    /// The admin partition of the check (Enterprise).
+    pub partition: Option<String>,
 }
 
 /// TTL check update payload
@@ -413,6 +559,15 @@ pub struct HealthCheck {
     pub create_index: u64,
     /// The index at which the check was last modified.
     pub modify_index: u64,
+    #[serde(default)]
+    /// The exposed port reported for this check.
+    pub exposed_port: i32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The peer name when the check is imported over peering.
+    pub peer_name: String,
+    #[serde(default)]
+    /// The full check definition; kept opaque like the Go SDK's nested struct.
+    pub definition: Option<serde_json::Value>,
 }
 
 /// A service entry with node and health checks (from /v1/health/service)
@@ -455,6 +610,15 @@ pub struct Node {
     #[serde(default)]
     /// The index at which the node was last modified.
     pub modify_index: u64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The admin partition of the node (Enterprise).
+    pub partition: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The peer name when the node is imported over peering.
+    pub peer_name: String,
+    #[serde(default)]
+    /// Locality information; not mapped to a typed DTO.
+    pub locality: Option<serde_json::Value>,
 }
 
 /// A service from the catalog
@@ -507,6 +671,18 @@ pub struct CatalogService {
     pub create_index: u64,
     /// The index at which the entry was last modified.
     pub modify_index: u64,
+    #[serde(default)]
+    /// Tagged service addresses (`ServiceAddress` values in Go).
+    pub service_tagged_addresses: Option<serde_json::Value>,
+    #[serde(default)]
+    /// The Connect proxy configuration; kept opaque.
+    pub service_proxy: Option<serde_json::Value>,
+    #[serde(default)]
+    /// Locality information; not mapped to a typed DTO.
+    pub service_locality: Option<serde_json::Value>,
+    #[serde(default)]
+    /// Health checks returned with the catalog service, keyed by check ID.
+    pub checks: Option<HashMap<String, HealthCheck>>,
 }
 
 /// Catalog node with its services
@@ -549,6 +725,15 @@ pub struct CatalogRegistration {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Multiple health checks to register.
     pub checks: Option<Vec<HealthCheck>>,
+    #[serde(default)]
+    /// Skip updating the node record during registration.
+    pub skip_node_update: bool,
+    #[serde(rename = "Partition", skip_serializing_if = "Option::is_none")]
+    /// The admin partition for the registration (Enterprise).
+    pub partition: Option<String>,
+    #[serde(rename = "Locality", skip_serializing_if = "Option::is_none")]
+    /// Locality information; not mapped to a typed DTO.
+    pub locality: Option<serde_json::Value>,
 }
 
 /// Catalog deregistration payload
@@ -1515,7 +1700,7 @@ pub struct ServerHealth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct KeyringResponse {
-    #[serde(default)]
+    #[serde(rename = "WAN", alias = "Wan", default)]
     /// Whether the keyring is for the WAN pool.
     pub wan: bool,
     /// The datacenter the keyring belongs to.
@@ -1607,10 +1792,10 @@ pub struct Intention {
     #[serde(default)]
     /// The destination service name.
     pub destination_name: String,
-    #[serde(default)]
+    #[serde(rename = "SourceNS", alias = "SourceNamespace", default)]
     /// The namespace of the source service (Enterprise).
     pub source_namespace: String,
-    #[serde(default)]
+    #[serde(rename = "DestinationNS", alias = "DestinationNamespace", default)]
     /// The namespace of the destination service (Enterprise).
     pub destination_namespace: String,
     #[serde(default)]

@@ -321,3 +321,46 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 > 11/11 compile-safe mutants killed; Agent module 96%→100%, protocol 99%→100%.
 >
 > HTTP paths verified against `api/*.go`; blocking-query + header contract is the hard interop dependency for Consul SDKs. gRPC/8502 is an implemented Connect xDS extension (CDS/EDS/LDS/RDS/ADS + intentions→RBAC + SDS/mTLS + Delta, §37.15/§37.19/§37.20); only gossip remains out of scope. Update statuses per actual implementation and sync this table.
+
+---
+
+# SDK wire-model audit (2026-11-27)
+
+> Baseline: live upstream `api/` package at `98fd79d318` (local Consul clone,
+> `~/work/github/easynet-cn/consul`). The earlier audit at `9225feae6d` only
+> differed in `api/api.go` TLS env handling; no DTO definitions changed.
+> Verified by re-reading the working tree, not a cached parse.
+
+## Fixed
+
+- **Acronym wire keys**: Go `encoding/json` emits Go field names verbatim when
+  no explicit `json:"..."` name is present (e.g. `SDS`, `TLSMinVersion`, `WAN`).
+  Serde's `rename_all = "PascalCase"` produces `Sds`, `TlsMinVersion`, `Wan`.
+  All affected fields in `config_entry_types.rs`, `model.rs` and
+  `discovery_chain.rs` now carry an explicit `rename` to the upstream key plus
+  an `alias` accepting the former local spelling. `Intention.SourceNS` /
+  `DestinationNS` are also mapped (`SourceNamespace` / `DestinationNamespace`
+  kept as aliases). `ExternalSNI`, `H2PING`, `H2PingUseTLS`, `DockerContainerID`,
+  `TCPUseTLS`, `TLSServerName`, `AI` were covered by the same rule.
+- **Missing fields on high-frequency endpoints**: `AgentService`,
+  `AgentServiceRegistration`, `AgentServiceCheck`, `AgentCheck`,
+  `AgentCheckRegistration`, `HealthCheck`, `Node`, `CatalogService`,
+  `CatalogRegistration` and `IngressService` now carry the upstream fields.
+- **Wire tests**: `crates/batata-consul-client/tests/wire_contract_test.rs`
+  asserts both upstream spellings on serialization and legacy spellings on
+  deserialization, with real value assertions (mutant-checked).
+
+## Deliberate non-goals (SDK model scope)
+
+- Enterprise/AI/Connect extension payloads (`Proxy`, `Connect`, `AI`, `Locality`,
+  `Definition`, `ServiceProxy`, `PassiveHealthCheck`, JWT internals) are exposed
+  as `serde_json::Value` rather than typed DTOs; they round-trip byte-for-byte.
+- `QueryOptions` / `WriteOptions` / `QueryMeta` / `WriteMeta` are local request
+  and header helpers, not JSON wire models: upstream fields such as `WaitHash`,
+  `NodeMeta`, `RelayFactor`, `UseCache` are URL query options and are not part
+  of the SDK's current public API.
+- Upstream-only structs for endpoints the SDK does not expose (AI services,
+  new gateway config entries, operator extensions) remain out of scope; they
+  are server-side features tracked by the endpoint inventory above.
+- Integer narrowing (`int` → `u16`/`i32`) is kept for source compatibility with
+  1.0.0 and is safe for Consul's documented port/count ranges.
