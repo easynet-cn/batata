@@ -654,17 +654,21 @@ mod tests {
             namespace_id: "public".to_string(),
             group_name: "DEFAULT_GROUP".to_string(),
             data_id: "test.yaml".to_string(),
+            desc: "test desc".to_string(),
+            config_tags: "tag1,tag2".to_string(),
             ..Default::default()
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains(r#""id":"1""#));
         assert!(json.contains("namespaceId"));
         assert!(json.contains("groupName"));
+        assert!(json.contains(r#""desc":"test desc""#));
+        assert!(json.contains(r#""configTags":"tag1,tag2""#));
 
         let decoded: ConfigBasicInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.id, 1);
-        assert!(decoded.desc.is_empty());
-        assert!(decoded.config_tags.is_empty());
+        assert_eq!(decoded.desc, "test desc");
+        assert_eq!(decoded.config_tags, "tag1,tag2");
     }
 
     #[test]

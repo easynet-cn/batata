@@ -759,6 +759,41 @@ mod tests {
     }
 
     #[test]
+    fn config_info_wrapper_reads_description_from_entity() {
+        let stored = entity::config_info::Model {
+            id: 11,
+            data_id: "d.yaml".to_string(),
+            group_id: Some("DEFAULT_GROUP".to_string()),
+            content: Some("k: v".to_string()),
+            md5: Some("md5".to_string()),
+            gmt_create: None,
+            gmt_modified: None,
+            src_user: Some("tester".to_string()),
+            src_ip: Some("127.0.0.1".to_string()),
+            app_name: None,
+            tenant_id: None,
+            c_desc: Some("entity desc".to_string()),
+            c_use: None,
+            effect: None,
+            r#type: Some("yaml".to_string()),
+            c_schema: None,
+            encrypted_data_key: None,
+        };
+
+        let wrapper = ConfigInfoWrapper::from(stored);
+        assert_eq!(wrapper.id, Some(11));
+        assert_eq!(wrapper.desc, "entity desc");
+        assert!(
+            wrapper.config_tags.is_empty(),
+            "tag names live in a relation table, not the config_info row"
+        );
+
+        let basic: ConfigBasicInfo = wrapper.into();
+        assert_eq!(basic.desc, "entity desc");
+        assert!(basic.config_tags.is_empty());
+    }
+
+    #[test]
     fn test_config_form_default() {
         let form = ConfigForm::default();
         assert!(form.data_id.is_empty());

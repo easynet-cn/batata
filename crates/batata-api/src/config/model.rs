@@ -965,4 +965,23 @@ mod tests {
         assert!(req.listen);
         assert!(req.config_listen_contexts.is_empty());
     }
+
+    #[test]
+    fn config_clone_info_accepts_numeric_string_config_id() {
+        let from_string: ConfigCloneInfo =
+            serde_json::from_str(r#"{"configId":"42","targetDataId":"b","targetGroupName":"g"}"#)
+                .unwrap();
+        let from_number: ConfigCloneInfo =
+            serde_json::from_str(r#"{"configId":42,"targetDataId":"b","targetGroupName":"g"}"#)
+                .unwrap();
+
+        assert_eq!(from_string.config_id, 42);
+        assert_eq!(from_number.config_id, 42);
+        assert_eq!(from_string.target_data_id, "b");
+        assert_eq!(from_string.target_group_name, "g");
+
+        // Upstream clone ids are Java Long: output must stay numeric.
+        let json = serde_json::to_value(&from_string).unwrap();
+        assert_eq!(json["configId"], serde_json::json!(42));
+    }
 }

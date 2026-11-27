@@ -3621,3 +3621,30 @@ numeric backward compatibility, flex clone ids, and the list/history DTO
 shapes. `cargo fmt`, `cargo check`, targeted unit tests, clippy
 (`-D warnings`) and `compat_check.py` are required gates; no F-ID/T-ID,
 version, tag, or `batata-ui` change.
+
+### 37.50 `pagesAvailable` semantics confirmed and test gaps closed (2026-11-27)
+
+Upstream `Page.java:36-51` defines exactly four wire fields: `totalCount`,
+`pageNumber`, `pagesAvailable`, `pageItems`. `PageUtil.subPage`
+(`core/.../PageUtil.java:40-51`) computes
+`pagesAvailable = (totalCount + pageSize - 1) / pageSize`; the upstream config
+list OpenAPI IT asserts `pagesAvailable == 2` for 3 items at `pageSize=2`
+(`ConfigListAdminApiOpenApiITCase.java:55-61`). Batata mirrors this with two
+identical DTOs — `batata_common::model::Page` (persistence) and
+`batata_api::model::Page` (wire) — both serializing `pagesAvailable` via
+camelCase and both computing it inside `Page::new(total, page, page_size, items)`.
+
+The 2026-11-26 fix was therefore correct: four call sites had passed the
+persistence page's already-computed `pagesAvailable` as `page_size`, so
+`100/20` became `ceil(100/5) = 20`. The call sites now go through
+`history_list_page` and `console_page_from_storage`, which always pass the
+requested `page_size`.
+
+**Test gaps closed.** Added five real-assertion tests: admin history page
+calculation, console page calculation, console gray-detail inherited metadata,
+`batata-api::ConfigCloneInfo` numeric/string id, and entity-to-wrapper
+description mapping; the client `ConfigBasicInfo` test now asserts non-empty
+`desc`/`configTags` too. Reverting each production behavior makes its test
+fail (`20` vs `5`, `String("42")` vs `Number(42)`), so the mutants are killed.
+Unit counts: `batata-api` 57→58, `batata-config` 127→129, `batata-console`
+60→62; `batata-client` stayed 420 with the existing test extended.

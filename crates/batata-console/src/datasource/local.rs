@@ -36,6 +36,52 @@ use batata_server_common::model::{
     PLUGIN_DATASOURCE_LOG_STATE, SERVER_PORT_STATE, STARTUP_MODE_STATE,
 };
 
+/// Build the wire `Page` used by console data-source methods.
+///
+/// The persistence page already carries upstream's computed `pagesAvailable`.
+/// `Page::new` must receive the requested page size, not that page count.
+fn console_page_from_storage<T, U>(result: batata_common::model::Page<T>, page_size: u64) -> Page<U>
+where
+    T: Into<U>,
+{
+    Page::new(
+        result.total_count,
+        result.page_number,
+        page_size,
+        result.page_items.into_iter().map(Into::into).collect(),
+    )
+}
+
+/// Convert a stored gray config into the console DTO.
+///
+/// Upstream detail DTOs inherit `desc`/`configTags` from `ConfigBasicInfo`;
+/// embedded gray records do not store either value yet, so both stay empty.
+fn gray_detail_from_storage(gray: batata_persistence::ConfigGrayStorageData) -> ConfigGrayInfo {
+    ConfigGrayInfo {
+        config_detail_info: ConfigDetailInfo {
+            config_basic_info: ConfigBasicInfo {
+                id: 0,
+                namespace_id: gray.tenant,
+                group_name: gray.group,
+                data_id: gray.data_id,
+                md5: gray.md5,
+                r#type: String::new(),
+                app_name: gray.app_name,
+                create_time: gray.created_time,
+                modify_time: gray.modified_time,
+                desc: String::new(),
+                config_tags: String::new(),
+            },
+            content: gray.content,
+            encrypted_data_key: gray.encrypted_data_key,
+            create_user: gray.src_user,
+            create_ip: gray.src_ip,
+        },
+        gray_name: gray.gray_name,
+        gray_rule: gray.gray_rule,
+    }
+}
+
 /// Local data source — direct PersistenceService access
 ///
 /// Used in all non-remote modes (external DB, standalone embedded, distributed embedded).
@@ -167,16 +213,7 @@ impl ConsoleDataSource for LocalDataSource {
             )
             .await?;
 
-        Ok(Page::new(
-            result.total_count,
-            result.page_number,
-            page_size,
-            result
-                .page_items
-                .into_iter()
-                .map(ConfigBasicInfo::from)
-                .collect(),
-        ))
+        Ok(console_page_from_storage(result, page_size))
     }
 
     async fn config_create_or_update(
@@ -244,29 +281,7 @@ impl ConsoleDataSource for LocalDataSource {
             .persistence
             .config_find_gray_one(data_id, group_name, namespace_id)
             .await?;
-        Ok(result.map(|gray| ConfigGrayInfo {
-            config_detail_info: ConfigDetailInfo {
-                config_basic_info: ConfigBasicInfo {
-                    id: 0,
-                    namespace_id: gray.tenant,
-                    group_name: gray.group,
-                    data_id: gray.data_id,
-                    md5: gray.md5,
-                    r#type: String::new(),
-                    app_name: gray.app_name,
-                    create_time: gray.created_time,
-                    modify_time: gray.modified_time,
-                    desc: String::new(),
-                    config_tags: String::new(),
-                },
-                content: gray.content,
-                encrypted_data_key: gray.encrypted_data_key,
-                create_user: gray.src_user,
-                create_ip: gray.src_ip,
-            },
-            gray_name: gray.gray_name,
-            gray_rule: gray.gray_rule,
-        }))
+        Ok(result.map(gray_detail_from_storage))
     }
 
     async fn config_create_or_update_gray(
@@ -514,16 +529,7 @@ impl ConsoleDataSource for LocalDataSource {
             .config_history_search_page(data_id, group_name, namespace_id, page_no, page_size)
             .await?;
 
-        Ok(Page::<ConfigHistoryBasicInfo>::new(
-            result.total_count,
-            result.page_number,
-            page_size,
-            result
-                .page_items
-                .into_iter()
-                .map(ConfigHistoryBasicInfo::from)
-                .collect(),
-        ))
+        Ok(console_page_from_storage(result, page_size))
     }
 
     async fn history_find_configs_by_namespace_id(
@@ -580,16 +586,7 @@ impl ConsoleDataSource for LocalDataSource {
             )
             .await?;
 
-        Ok(Page::<ConfigHistoryBasicInfo>::new(
-            result.total_count,
-            result.page_number,
-            page_size,
-            result
-                .page_items
-                .into_iter()
-                .map(ConfigHistoryBasicInfo::from)
-                .collect(),
-        ))
+        Ok(console_page_from_storage(result, page_size))
     }
 
     // ============== Service Operations ==============
@@ -1332,5 +1329,45 @@ impl LocalDataSource {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn console_page_uses_requested_page_size() {
+        // Shared by all three console list methods: persistence already has
+        // the upstream-computed page count, which must not be divided again.
+        let storage = batata_common::model::Page {
+            total_count: 100,
+            page_number: 1,
+            pages_available: 5,
+            page_items: vec![ConfigBasicInfo::default()],
+        };
+
+        let wire: Page<ConfigBasicInfo> = console_page_from_storage(storage, 20);
+        assert_eq!(wire.total_count, 100);
+        assert_eq!(wire.pages_available, 5, "100 items / 20 per page = 5 pages");
+
+        let json = serde_json::to_value(&wire).unwrap();
+        assert_eq!(json["pagesAvailable"], serde_json::json!(5));
+    }
+
+    #[test]
+    fn gray_detail_carries_inherited_metadata_once() {
+        let info = gray_detail_from_storage(batata_persistence::ConfigGrayStorageData {
+            data_id: "gray.yaml".to_string(),
+            ..Default::default()
+        });
+        let basic = &info.config_detail_info.config_basic_info;
+        assert_eq!(basic.data_id, "gray.yaml");
+        assert!(basic.desc.is_empty());
+        assert!(basic.config_tags.is_empty());
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert_eq!(json.matches("\"desc\"").count(), 1);
+        assert_eq!(json.matches("\"configTags\"").count(), 1);
     }
 }

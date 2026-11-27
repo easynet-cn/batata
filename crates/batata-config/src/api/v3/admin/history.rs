@@ -92,6 +92,27 @@ impl NamespaceConfigsParam {
     }
 }
 
+/// Build the wire `Page` returned by the history list endpoint.
+///
+/// Upstream `PageUtil.subPage` computes `pagesAvailable = ceil(totalCount /
+/// pageSize)` and stores it on the persistence page. `Page::new` takes the
+/// request page size, so passing the already-computed page count here would
+/// divide by the number of pages a second time.
+fn history_list_page<T>(
+    result: batata_common::model::Page<T>,
+    page_size: u64,
+) -> Page<ConfigHistoryBasicInfo>
+where
+    T: Into<ConfigHistoryBasicInfo>,
+{
+    Page::new(
+        result.total_count,
+        result.page_number,
+        page_size,
+        result.page_items.into_iter().map(Into::into).collect(),
+    )
+}
+
 /// GET /v3/admin/cs/history/list
 #[get("list")]
 async fn list_history(
@@ -175,16 +196,7 @@ async fn list_history(
 
     match result {
         Ok(result) => {
-            let page_result = Page::<ConfigHistoryBasicInfo>::new(
-                result.total_count,
-                result.page_number,
-                params.page_size,
-                result
-                    .page_items
-                    .into_iter()
-                    .map(ConfigHistoryBasicInfo::from)
-                    .collect(),
-            );
+            let page_result = history_list_page(result, params.page_size);
             model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
         }
         Err(e) => {
@@ -357,4 +369,29 @@ pub fn routes() -> actix_web::Scope {
         .service(get_detail)
         .service(get_previous)
         .service(get_configs_by_namespace)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_list_page_uses_requested_page_size() {
+        // Persistence already holds the upstream-computed page count. Passing
+        // that count as `page_size` used to produce ceil(100 / 5) == 20.
+        let storage = batata_common::model::Page {
+            total_count: 100,
+            page_number: 1,
+            pages_available: 5,
+            page_items: vec![ConfigHistoryBasicInfo::default()],
+        };
+
+        let wire: Page<ConfigHistoryBasicInfo> = history_list_page(storage, 20);
+        assert_eq!(wire.total_count, 100);
+        assert_eq!(wire.page_number, 1);
+        assert_eq!(wire.pages_available, 5, "100 items / 20 per page = 5 pages");
+
+        let json = serde_json::to_value(&wire).unwrap();
+        assert_eq!(json["pagesAvailable"], serde_json::json!(5));
+    }
 }
