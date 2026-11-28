@@ -13,8 +13,12 @@ import com.alibaba.nacos.shaded.io.grpc.ManagedChannelBuilder;
 import com.alibaba.nacos.shaded.io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.*;
 
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,18 +30,32 @@ import static org.junit.jupiter.api.Assertions.*;
 public class GrpcPayloadDiagnosticTest {
 
     private static ManagedChannel channel;
+    private static com.alibaba.nacos.api.config.ConfigService connectionHolder;
     private static final int GRPC_PORT = 9848;
 
     @BeforeAll
-    static void setup() {
-        String host = System.getProperty("nacos.server", "127.0.0.1:8848").split(":")[0];
-        channel = ManagedChannelBuilder.forAddress(host, GRPC_PORT)
+    static void setup() throws Exception {
+        String hostPort = System.getProperty("nacos.server", "127.0.0.1:8848");
+        channel = ManagedChannelBuilder.forAddress(hostPort.split(":")[0], GRPC_PORT)
                 .usePlaintext()
                 .build();
+        // Force the SDK's gRPC payload registry to initialize. In the SDK
+        // suite an earlier test class did this incidentally; this protocol
+        // suite must do it explicitly or GrpcUtils.parse cannot resolve
+        // ServerCheckResponse.
+        Properties props = new Properties();
+        props.setProperty("serverAddr", hostPort);
+        props.setProperty("username", System.getProperty("nacos.username", "nacos"));
+        props.setProperty("password", System.getProperty("nacos.password", "nacos"));
+        connectionHolder = com.alibaba.nacos.api.NacosFactory.createConfigService(props);
+        connectionHolder.getConfig("grpc-diag-warmup", "DEFAULT_GROUP", 1000);
     }
 
     @AfterAll
-    static void teardown() {
+    static void teardown() throws Exception {
+        if (connectionHolder != null) {
+            connectionHolder.shutDown();
+        }
         if (channel != null) {
             channel.shutdown();
         }
@@ -71,51 +89,14 @@ public class GrpcPayloadDiagnosticTest {
     }
 
     /**
-     * DIAG-002: Test FuzzyWatch via full SDK path
-     * Creates ConfigService via NacosFactory (full init) and checks FuzzyWatch ability
+     * DIAG-003: Verify SetupAckRequest from server is parseable by SDK.
+     *
+     * Uses a raw gRPC bidirectional stub and GrpcUtils to build/parse the
+     * Payload: there is no SDK public API to inject a ConnectionSetupRequest
+     * and observe the server's SetupAckRequest, so this stays a wire test.
      */
     @Test
     @Order(2)
-    void testFuzzyWatchAbilityViaSDK() throws Exception {
-        String host = System.getProperty("nacos.server", "127.0.0.1:8848");
-        Properties props = new Properties();
-        props.setProperty("serverAddr", host);
-        props.setProperty("username", System.getProperty("nacos.username", "nacos"));
-        props.setProperty("password", System.getProperty("nacos.password", "nacos"));
-
-        com.alibaba.nacos.api.config.ConfigService configService = null;
-        try {
-            configService = com.alibaba.nacos.api.NacosFactory.createConfigService(props);
-            Thread.sleep(3000); // Wait for connection + ability negotiation
-
-            // Try fuzzyWatch - if server ability is set, this should not throw
-            String testPattern = "diag-test-" + System.currentTimeMillis() + "*";
-            System.out.println("=== Testing fuzzyWatch with pattern: " + testPattern);
-            try {
-                configService.fuzzyWatch(testPattern, "DEFAULT_GROUP",
-                    new com.alibaba.nacos.api.config.listener.FuzzyWatchEventWatcher() {
-                        @Override
-                        public void onEvent(com.alibaba.nacos.api.config.listener.ConfigFuzzyWatchChangeEvent event) {
-                            System.out.println("FuzzyWatch event: " + event);
-                        }
-                        @Override
-                        public java.util.concurrent.Executor getExecutor() { return null; }
-                    });
-                System.out.println("=== fuzzyWatch() succeeded - server supports FuzzyWatch");
-            } catch (Exception e) {
-                System.out.println("=== fuzzyWatch() FAILED: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-                fail("FuzzyWatch should be supported but got: " + e.getMessage());
-            }
-        } finally {
-            if (configService != null) configService.shutDown();
-        }
-    }
-
-    /**
-     * DIAG-003: Verify SetupAckRequest from server is parseable by SDK
-     */
-    @Test
-    @Order(3)
     void testSetupAckResponse() throws Exception {
         BiRequestStreamGrpc.BiRequestStreamStub biStub = BiRequestStreamGrpc.newStub(channel);
 

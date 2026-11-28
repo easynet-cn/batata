@@ -33,6 +33,7 @@ it:
 | Where | Version | Meaning |
 |-------|---------|---------|
 | `sdk-tests/nacos-java-tests/pom.xml:19` | `3.3.0` | Java SDK pinned in batata's E2E matrix |
+| `sdk-tests/nacos-go-tests/go.mod` | `v2.3.5` | Official Go SDK pinned in batata's E2E matrix (matches local `nacos-sdk-go` worktree `3c9153512afa`) |
 | `conf/application.yml` + `deploy/k8s/configmap.yaml` | `3.3.0` | Version batata reports as its Nacos compatibility target |
 | Local `~/work/github/easynet-cn/nacos` develop `pom.xml:91` | `3.3.0` (@ `d1b97bc3e`, 2026-11-09) | **Post-GA develop snapshot**; the GA release commit `b64bc9118` is now in local history, but there are still no local tags |
 
@@ -51,7 +52,12 @@ baseline. The older `3.3.0-SNAPSHOT` heading was a stale 2025-08-08 label.
 Consequence: capabilities introduced in 3.3.0 (config 304 conditional GET, MCP
 version lifecycle, AI maintainer delegates, RAD routing) are listed here
 because they exist upstream, but the Rust SDKs do not expose all of them yet.
-The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
+The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. It
+also runs the official Go SDK (`nacos-sdk-go/v2` v2.3.5) as an independent
+wire-contract probe: a Java-only matrix can inherit a shared misunderstanding
+of an interface contract, whereas the Go SDK is written against upstream's
+own wire model. The first run already found and fixed a null-`metadata`
+deserialization regression in gRPC naming deregister/batch requests. See
 `docs/compat/review-report.md` for commit hashes and the client-SDK gap list.
 
 ---

@@ -5,10 +5,6 @@ import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.exception.NacosException;
 import org.junit.jupiter.api.*;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -33,7 +29,6 @@ public class NacosConfigEncryptionTest {
     private static ConfigService configService;
     private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
     private static String serverAddr;
-    private static String accessToken;
 
     @BeforeAll
     static void setup() throws Exception {
@@ -49,69 +44,12 @@ public class NacosConfigEncryptionTest {
         configService = NacosFactory.createConfigService(properties);
         assertNotNull(configService, "ConfigService should be created successfully");
 
-        // Get access token for direct HTTP API calls
-        accessToken = obtainAccessToken(serverAddr, username, password);
     }
 
     @AfterAll
     static void teardown() throws NacosException {
         if (configService != null) {
             configService.shutDown();
-        }
-    }
-
-    /**
-     * Obtain an access token via the auth login endpoint.
-     */
-    private static String obtainAccessToken(String serverAddr, String username, String password) {
-        try {
-            HttpClient httpClient = HttpClient.newHttpClient();
-            String loginUrl = "http://" + serverAddr + "/nacos/v3/auth/user/login";
-            String body = "username=" + username + "&password=" + password;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(loginUrl))
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            String responseBody = response.body();
-
-            // Extract token from JSON response (simple parsing)
-            if (responseBody.contains("accessToken")) {
-                int start = responseBody.indexOf("accessToken") + "accessToken".length();
-                // Find the value after the key
-                start = responseBody.indexOf("\"", start + 1) + 1;
-                int end = responseBody.indexOf("\"", start);
-                return responseBody.substring(start, end);
-            }
-            return null;
-        } catch (Exception e) {
-            System.err.println("Failed to obtain access token: " + e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Read raw config content from server via HTTP API, bypassing SDK decryption.
-     */
-    private String getRawConfigFromServer(String dataId, String group) {
-        try {
-            HttpClient httpClient = HttpClient.newHttpClient();
-            String url = "http://" + serverAddr + "/nacos/v2/cs/config?dataId=" + dataId
-                    + "&group=" + group + "&accessToken=" + accessToken;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.body();
-        } catch (Exception e) {
-            System.err.println("Failed to get raw config: " + e.getMessage());
-            return null;
         }
     }
 
@@ -169,53 +107,6 @@ public class NacosConfigEncryptionTest {
 
         // Cleanup
         configService.removeConfig(normalDataId, DEFAULT_GROUP);
-    }
-
-    /**
-     * ENC-003: Verify cipher- config stored on server is different from plain text
-     *
-     * Use the HTTP API directly (bypassing SDK encryption filter) to read the raw
-     * stored content. For cipher- configs, the raw stored content should differ
-     * from the original plain text (because it should be encrypted on the server).
-     */
-    @Test
-    @Order(3)
-    @Disabled("Batata uses server-side encryption: content is encrypted on store and decrypted on read (both gRPC and HTTP API). This test expects Nacos client-side encryption model where HTTP API returns raw encrypted content.")
-    void testCipherConfigStoredEncrypted() throws NacosException, InterruptedException {
-        // Skip if no access token available
-        Assumptions.assumeTrue(accessToken != null && !accessToken.isEmpty(),
-                "Access token required for raw HTTP API access");
-
-        String uniqueId = UUID.randomUUID().toString().substring(0, 8);
-        String dataId = "cipher-enc003-secret-" + uniqueId;
-        String plainContent = "encryption.secret=my_very_secret_value";
-
-        // Publish via SDK
-        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, plainContent);
-        assertTrue(published, "Cipher config publish should succeed");
-        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
-
-        // Read raw from server (bypassing decryption)
-        String rawResponse = getRawConfigFromServer(dataId, DEFAULT_GROUP);
-        assertNotNull(rawResponse, "Raw server response should not be null");
-
-        // The raw stored content should NOT equal plain text
-        // (it should be encrypted or wrapped in some way)
-        // Note: The HTTP API response includes JSON wrapping, so we check the response body
-        System.out.println("Raw server response for cipher config: " + rawResponse);
-
-        // Raw response must not contain the plain text content directly
-        // If encryption is working, the raw stored content should be different from plain text
-        assertFalse(rawResponse.contains(plainContent),
-                "Raw server response should NOT contain plain text for cipher- config; " +
-                "server should have stored encrypted content");
-
-        // Via SDK, it should still be readable as plain text
-        String sdkContent = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
-        assertEquals(plainContent, sdkContent, "SDK should still return decrypted plain content");
-
-        // Cleanup
-        configService.removeConfig(dataId, DEFAULT_GROUP);
     }
 
     /**

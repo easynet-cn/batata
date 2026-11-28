@@ -52,7 +52,14 @@ sdk-tests/
 │       ├── ApolloNamespaceTest.java          # Namespace management (6 tests)
 │       ├── ApolloConfigItemTest.java         # Config item CRUD (6 tests)
 │       └── ApolloConfigReleaseTest.java      # Config release & client (5 tests)
-├── consul-go-tests/           # Consul Go SDK tests (395 tests)
+├── nacos-go-tests/            # Official Nacos Go SDK tests (33 tests)
+│   ├── go.mod                 # nacos-sdk-go/v2 v2.3.5 pinned
+│   ├── config_wire_test.go    # Config publish/get/CAS/tag/beta/namespace
+│   ├── config_subscribe_test.go # Listener + gray-label connection setup
+│   ├── naming_wire_test.go    # Register/batch/subscribe/select/isolation
+│   ├── auth_sdk_test.go       # SDK-only auth: valid/invalid credentials
+│   └── boundary_test.go       # Default group, large payloads, validation
+├── consul-go-tests/           # Consul Go SDK tests (538 tests)
 │   ├── go.mod
 │   ├── agent_test.go                        # Basic agent API
 │   ├── agent_advanced_test.go               # Advanced agent features
@@ -84,16 +91,18 @@ sdk-tests/
 │   ├── discovery_test.go                    # Service discovery patterns (15 tests)
 │   ├── peering_test.go                      # Peering lifecycle & metadata (5 tests) NEW
 │   └── maintenance_test.go                  # Maintenance mode & lifecycle (14 tests)
+├── java-protocol-tests/       # Raw Nacos + Apollo wire assertions (41, non-SDK)
+├── consul-protocol-tests/     # Raw Consul wire assertions (14, non-SDK)
 ├── podman-compose.yml         # Test environment
 └── README.md                  # This file
 
-Total: 890+ SDK compatibility tests
+Total: 8946 matrix cases (1487 standalone / 1495 cluster per combination)
 ```
 
 ## Prerequisites
 
 - Java 21+ (for Nacos tests)
-- Go 1.21+ (for Consul tests)
+- Go 1.21+ (for Nacos Go and Consul Go tests)
 - Podman and podman-compose
 - Maven 3.8+
 
@@ -113,7 +122,13 @@ cd sdk-tests/nacos-java-tests
 mvn test
 ```
 
-3. Run Consul Go tests:
+3. Run Nacos Go tests:
+```bash
+cd sdk-tests/nacos-go-tests
+go test -v ./...
+```
+
+4. Run Consul Go tests:
 ```bash
 cd sdk-tests/consul-go-tests
 go test -v ./...
@@ -131,6 +146,7 @@ podman-compose --profile tests up
 
 # Run specific test suite
 podman-compose --profile tests up nacos-tests
+podman-compose --profile tests up nacos-go-tests
 podman-compose --profile tests up consul-tests
 
 # Cleanup
@@ -139,17 +155,17 @@ podman-compose down -v
 
 ## Environment Variables
 
-### Nacos Tests
+### Nacos Java / Nacos Go Tests
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NACOS_SERVER` | `127.0.0.1:8848` | Batata server address |
+| `NACOS_SERVER` | `127.0.0.1:8848` | Batata server address (Go SDK derives gRPC port +1000) |
 | `NACOS_USERNAME` | `nacos` | Auth username |
 | `NACOS_PASSWORD` | `nacos` | Auth password |
 
 ### Consul Tests
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONSUL_HTTP_ADDR` | `127.0.0.1:8848` | Batata server address |
+| `CONSUL_HTTP_ADDR` | `127.0.0.1:8500` | Batata server address |
 
 ### Apollo Tests
 | Variable | Default | Description |
@@ -170,7 +186,7 @@ Advanced features that are less commonly used.
 
 ## Test Coverage
 
-### Nacos SDK (475 tests)
+### Nacos Java SDK (531 standalone / 539 cluster tests)
 - **Config Service**: Publish, Get, Delete, Listen, Namespace, Group, History
 - **Config Listeners**: Add/remove, Multiple listeners, Custom executors, Rapid changes
 - **Config Change Events**: ADDED/MODIFIED/DELETED event types, AbstractConfigChangeListener, Multi-property changes
@@ -199,7 +215,35 @@ Advanced features that are less commonly used.
 - **Namespace**: Isolation, CRUD operations, Migration, Cross-namespace access
 - **Parameter Validation**: Null/empty params, Special chars, Unicode, Null group handling
 
-### Consul SDK (395 tests)
+### Nacos Go SDK (33 tests)
+- **Config wire**: Publish/Get/Delete, unicode + multiline + large payloads, CAS accept/reject, `type`/`appName`/`configTags`/`tag`/`betaIps` addition-map fields, accurate search paging
+- **Config subscribe**: OnChange delivery, CancelListenConfig, namespace-scoped listeners, `nacos_config_gray_label` connection labels
+- **Naming wire**: Register/GetService, metadata + cluster, healthy select, deregister (null metadata), batch register (null metadata), weight update, subscribe push, service list, namespace isolation
+- **Auth (SDK only)**: valid credentials drive real publish/get, wrong password is rejected through the SDK client; no raw login or manual accessToken headers
+- **Known non-goal**: SPAS/AK-SK signing is not implemented by batata (the Java suite disables the equivalent case); the Go suite asserts the token-auth path only.
+
+### Protocol/wire suites (non-SDK, 56 cases per combo)
+
+An SDK suite must exercise the official client's public API so credential
+injection, serialization and protocol handling are covered. JSON/wire DTO
+contracts are asserted in Rust (`wire_contract_test.rs`); these two suites keep
+only the server-side wire checks that **no SDK public API can express**, and
+stay in the matrix so protocol drift is still detected.
+
+| Suite | Cases | Scope |
+|-------|-------|-------|
+| `java-protocol-tests` | 41 (1 skipped) | Nacos raw RBAC user/role/permission CRUD, percentage/CIDR gray, protobuf gRPC payloads, raw cipher-store check; Apollo `ApolloAccessKeyAuthTest` HMAC/access-key wire check |
+| `consul-protocol-tests` | 14 | OSS-only endpoints, raw header/error-body checks, `TestOperatorUtilizationEnterpriseOnly` |
+
+The SDK-only fuzzyWatch ability test (`DIAG-002`) was migrated back into
+`NacosConfigFuzzyWatchTest` (as `CFW-000`); raw gRPC payload diagnostics
+(`DIAG-001`/`DIAG-003`) remain here because no SDK public API can inject a
+raw `ConnectionSetupRequest` or `ServerCheckRequest`.
+
+Run them with `scripts/test.sh sdk --quick protocol`, or individually with
+`java-protocol` / `consul-protocol`.
+
+### Consul SDK (538 tests)
 - **Agent API**: Service Register/Deregister, Health Checks, Maintenance
 - **Agent Connect**: Sidecar proxies, Multi-port, Gateways
 - **Agent Metrics**: Gauges, Counters, Samples, Self info, Members, Reload
@@ -247,6 +291,9 @@ Advanced features that are less commonly used.
 | Nacos Config Events | Full | :white_check_mark: | 7 |
 | Nacos Connection | Full | :white_check_mark: | 15 |
 | Nacos Validation | Full | :white_check_mark: | 35 |
+| Nacos Go Config | Full | :white_check_mark: | 19 |
+| Nacos Go Naming | Full | :white_check_mark: | 12 |
+| Nacos Go Auth/Wire | Full | :white_check_mark: | 5 |
 | Consul Agent | Full | :white_check_mark: | 80 |
 | Consul KV | Full | :white_check_mark: | 46 |
 | Consul Health/Catalog | Full | :white_check_mark: | 71 |

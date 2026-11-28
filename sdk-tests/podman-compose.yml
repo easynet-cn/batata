@@ -74,6 +74,24 @@ services:
     profiles:
       - tests
 
+  # Nacos Go SDK Tests (official nacos-sdk-go v2)
+  nacos-go-tests:
+    build:
+      context: ./nacos-go-tests
+      dockerfile: Containerfile
+    container_name: nacos-go-sdk-tests
+    environment:
+      - NACOS_SERVER=batata:8848
+      - NACOS_USERNAME=nacos
+      - NACOS_PASSWORD=nacos
+    depends_on:
+      batata:
+        condition: service_healthy
+    networks:
+      - batata-test
+    profiles:
+      - tests
+
   # Consul Go SDK Tests
   consul-tests:
     build:
@@ -101,6 +119,43 @@ services:
       - APOLLO_META=http://batata:18080
       - APOLLO_OPENAPI_URL=http://batata:18080
       - APOLLO_OPENAPI_TOKEN=admin
+    depends_on:
+      batata:
+        condition: service_healthy
+    networks:
+      - batata-test
+    profiles:
+      - tests
+
+  # Raw protocol/wire assertions that SDK public APIs cannot express (non-SDK)
+  java-protocol-tests:
+    build:
+      context: ./java-protocol-tests
+      dockerfile: Containerfile
+    container_name: java-protocol-tests
+    environment:
+      - NACOS_SERVER=batata:8848
+      - NACOS_USERNAME=nacos
+      - NACOS_PASSWORD=nacos
+      - APOLLO_META=http://batata:18080
+      - APOLLO_OPENAPI_URL=http://batata:18080
+      - APOLLO_OPENAPI_TOKEN=admin
+    depends_on:
+      batata:
+        condition: service_healthy
+    networks:
+      - batata-test
+    profiles:
+      - tests
+
+  consul-protocol-tests:
+    build:
+      context: ./consul-protocol-tests
+      dockerfile: Containerfile
+    container_name: consul-protocol-tests
+    environment:
+      - CONSUL_HTTP_ADDR=batata:8500
+      - CONSUL_HTTP_TOKEN=root
     depends_on:
       batata:
         condition: service_healthy

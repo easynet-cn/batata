@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -446,23 +445,6 @@ func TestOperatorLeaderTransferToNode(t *testing.T) {
 	assert.NotEmpty(t, waitForLeader(t, client, 5*time.Second),
 		"leader transfer must not leave the Raft group without a leader")
 	t.Logf("Leader transfer to %s initiated", targetID)
-}
-
-// ==================== Utilization Test (Enterprise-only) ====================
-
-// TestOperatorUtilizationEnterpriseOnly verifies the utilization endpoint
-// returns the Consul OSS-style Enterprise-only error (HTTP 501 with a body
-// mentioning "Enterprise"). The hashicorp/consul Go SDK does not expose a
-// public Utilization() method on *api.Operator, so we call the endpoint via
-// raw HTTP — the same shape consul-enterprise clients would hit.
-func TestOperatorUtilizationEnterpriseOnly(t *testing.T) {
-	resp, body := rawRequest(t, "PUT", "/v1/operator/utilization", nil)
-	require.Equal(t, 501, resp.StatusCode,
-		"utilization must return 501 on OSS/Batata")
-	assert.True(t,
-		strings.Contains(body, "Enterprise"),
-		"body should mention Enterprise, got: %s", body,
-	)
 }
 
 // ==================== Segment Tests (Enterprise) ====================

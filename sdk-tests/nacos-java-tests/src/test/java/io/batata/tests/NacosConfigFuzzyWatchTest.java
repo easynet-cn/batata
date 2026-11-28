@@ -55,6 +55,44 @@ public class NacosConfigFuzzyWatchTest {
     // ==================== P0: Critical Tests ====================
 
     /**
+     * CFW-000: FuzzyWatch ability is negotiated for a freshly created ConfigService.
+     *
+     * Migrated from the protocol suite: this uses only the SDK public API
+     * (NacosFactory.createConfigService + ConfigService.fuzzyWatch). Batata must
+     * advertise the fuzzyWatch server ability so the SDK registers the watch
+     * without throwing.
+     */
+    @Test
+    @Order(0)
+    void testFuzzyWatchAbilityNegotiation() throws Exception {
+        String serverAddr = System.getProperty("nacos.server", "127.0.0.1:8848");
+        Properties properties = new Properties();
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", System.getProperty("nacos.username", "nacos"));
+        properties.setProperty("password", System.getProperty("nacos.password", "nacos"));
+
+        ConfigService freshService = NacosFactory.createConfigService(properties);
+        try {
+            String pattern = "cfw-ability-" + UUID.randomUUID().toString().substring(0, 8) + "*";
+            FuzzyWatchEventWatcher watcher = new FuzzyWatchEventWatcher() {
+                @Override
+                public void onEvent(ConfigFuzzyWatchChangeEvent event) {
+                }
+
+                @Override
+                public Executor getExecutor() {
+                    return null;
+                }
+            };
+            assertDoesNotThrow(() -> freshService.fuzzyWatch(pattern, DEFAULT_GROUP, watcher),
+                    "fuzzyWatch should be registered after server ability negotiation");
+            freshService.cancelFuzzyWatch(pattern, DEFAULT_GROUP, watcher);
+        } finally {
+            freshService.shutDown();
+        }
+    }
+
+    /**
      * CFW-001: FuzzyWatch with dataId pattern - publish config matching pattern, verify callback fires
      *
      * Uses fuzzyWatch(dataIdPattern, groupNamePattern, watcher) to watch for configs

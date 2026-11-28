@@ -1,5 +1,7 @@
 package io.batata.tests;
 
+import com.ctrip.framework.apollo.openapi.client.ApolloOpenApiClient;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -17,6 +19,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * invalid signature with 401.
  */
 public class ApolloAccessKeyAuthTest extends ApolloTestBase {
+
+    @BeforeAll
+    static void setup() {
+        String openApiUrl = System.getProperty("apollo.openapi.url", "http://127.0.0.1:8080");
+        String token = System.getProperty("apollo.openapi.token", "admin");
+        openApiClient = ApolloOpenApiClient.newBuilder()
+                .withPortalUrl(openApiUrl)
+                .withToken(token)
+                .build();
+        assertNotNull(openApiClient, "ApolloOpenApiClient should be created successfully");
+    }
 
     @Test
     void testSignedConfigFetch() throws Exception {

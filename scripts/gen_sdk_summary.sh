@@ -31,8 +31,11 @@ mkdir -p "$DIR"
 # <suite>|<display title>|<sdk-tests dir>
 SUITES=(
     "nacos-java|Nacos Java SDK|nacos-java-tests"
+    "nacos-go|Nacos Go SDK|nacos-go-tests"
     "apollo-java|Apollo Java SDK|apollo-java-tests"
     "consul-go|Consul Go SDK|consul-go-tests"
+    "java-protocol|Java protocol/wire (non-SDK)|java-protocol-tests"
+    "consul-protocol|Consul protocol/wire (non-SDK)|consul-protocol-tests"
     "batata-client|batata-client SDK|batata-client-tests"
     "batata-consul-client|batata-consul-client SDK|batata-consul-client-tests"
     "batata-maintainer|batata-maintainer SDK|batata-maintainer-tests"

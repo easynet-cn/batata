@@ -14,9 +14,11 @@
 #                                          (--live: against container :8080;
 #                                           default: embedded plugin :18080)
 #   sdk [--quick|--matrix]            SDK compatibility tests: Consul Go,
-#                                     Nacos Java, Apollo Java and the three
-#                                     batata Rust suites (batata-client,
+#                                     Nacos Java, Nacos Go, Apollo Java, the
+#                                     three batata Rust suites (batata-client,
 #                                     batata-consul-client, batata-maintainer)
+#                                     plus two non-SDK protocol/wire suites
+#                                     (java: Nacos+Apollo; consul protocol)
 #                                          default --quick
 #   console [mode]                        Console datasource E2E (delegates to
 #                                          test_standalone_embedded.sh etc.)
@@ -378,9 +380,27 @@ cmd_sdk_quick() {
         sdk_run_nacos "$FILTER" 2>&1 | tee /tmp/test-${MODE}-nacos.txt | grep "Tests run:" | grep -v " -- in " | tail -1
     }
 
+    run_nacos_go() {
+        echo -e "\n${BOLD}=== Nacos Go SDK Tests ===${NC}"
+        sdk_run_nacos_go "$FILTER" 2>&1 | grep -v "^{" | tee /tmp/test-${MODE}-nacos-go.txt | grep -E "^---|PASS|FAIL"
+        local pass=$(grep -c '^--- PASS' /tmp/test-${MODE}-nacos-go.txt 2>/dev/null || echo 0)
+        local fail=$(grep -c '^--- FAIL' /tmp/test-${MODE}-nacos-go.txt 2>/dev/null || echo 0)
+        echo -e "\n${BOLD}Nacos Go: ${GREEN}${pass} PASS${NC} ${RED}${fail} FAIL${NC}"
+    }
+
     run_apollo() {
         echo -e "\n${BOLD}=== Apollo Java SDK Tests ===${NC}"
         APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo "$FILTER" 2>&1 | tee /tmp/test-${MODE}-apollo.txt | grep "Tests run:" | grep -v " -- in " | tail -1
+    }
+
+    run_java_protocol() {
+        echo -e "\n${BOLD}=== Java protocol/wire Tests (non-SDK) ===${NC}"
+        APOLLO_META="http://127.0.0.1:18080" sdk_run_java_protocol "$FILTER" 2>&1 | tee /tmp/test-${MODE}-java-protocol.txt | grep "Tests run:" | grep -v " -- in " | tail -1
+    }
+
+    run_consul_protocol() {
+        echo -e "\n${BOLD}=== Consul protocol/wire Tests (non-SDK) ===${NC}"
+        sdk_run_consul_protocol "$FILTER" 2>&1 | tee /tmp/test-${MODE}-consul-protocol.txt | grep -E "^---|PASS|FAIL" | tail -20
     }
 
     run_batata_sdk() {
@@ -406,14 +426,18 @@ cmd_sdk_quick() {
     case "$SUITE" in
         consul)  run_consul ;;
         nacos)   run_batata ;;
+        nacos-go) run_nacos_go ;;
         apollo)  run_apollo ;;
+        java-protocol)   run_java_protocol ;;
+        consul-protocol) run_consul_protocol ;;
+        protocol) run_java_protocol; run_consul_protocol ;;
         batata)       run_batata_sdk ;;
         consul-rs)    run_batata_consul_sdk ;;
         maintainer)   run_batata_maintainer_sdk ;;
         rust)         run_batata_sdk; run_batata_consul_sdk; run_batata_maintainer_sdk ;;
-        all)     run_consul; run_batata; run_apollo \
+        all)     run_consul; run_batata; run_nacos_go; run_apollo; run_java_protocol; run_consul_protocol \
                  ; if [ "${SDK_RUN_RUST:-1}" = "1" ]; then run_batata_sdk; run_batata_consul_sdk; run_batata_maintainer_sdk; fi ;;
-        *)       echo "Usage: $0 sdk --quick {all|consul|nacos|apollo|batata|consul-rs|maintainer|rust} [filter]"; suite_rc=1 ;;
+        *)       echo "Usage: $0 sdk --quick {all|consul|nacos|nacos-go|apollo|protocol|java-protocol|consul-protocol|batata|consul-rs|maintainer|rust} [filter]"; suite_rc=1 ;;
     esac
     suite_rc=$?
     set -e
@@ -792,12 +816,33 @@ cmd_sdk_matrix() {
         print_suite_tail "Tests run:|^\[ERROR\]" "${suite_dir}/nacos-java.log"
         emit_suite_report nacos-java "${suite_dir}/nacos-java.log" "$combo" "$SUITE_SECS"
 
+        log ">>> 运行 Java protocol/wire (non-SDK, Nacos+Apollo)"
+        run_suite_logged java-protocol "${suite_dir}/java-protocol.log" sdk_run_java_protocol
+        local java_protocol_rc=$SUITE_RC
+        [ "$java_protocol_rc" -eq 0 ] && ok "Java protocol 通过 (${SUITE_SECS}s)" || fail "Java protocol 退出码 $java_protocol_rc"
+        print_suite_tail "Tests run:|^\[ERROR\]" "${suite_dir}/java-protocol.log"
+        emit_suite_report java-protocol "${suite_dir}/java-protocol.log" "$combo" "$SUITE_SECS"
+
+        log ">>> 运行 Nacos Go SDK (server=127.0.0.1:8848)"
+        run_suite_logged nacos-go "${suite_dir}/nacos-go.log" sdk_run_nacos_go
+        local nacos_go_rc=$SUITE_RC
+        [ "$nacos_go_rc" -eq 0 ] && ok "Nacos Go SDK 通过 (${SUITE_SECS}s)" || fail "Nacos Go SDK 退出码 $nacos_go_rc"
+        print_suite_tail "^--- FAIL|^FAIL|^ok " "${suite_dir}/nacos-go.log"
+        emit_suite_report nacos-go "${suite_dir}/nacos-go.log" "$combo" "$SUITE_SECS"
+
         log ">>> 运行 Consul Go SDK (addr=127.0.0.1:8500)"
         run_suite_logged consul-go "${suite_dir}/consul-go.log" sdk_run_consul
         local consul_rc=$SUITE_RC
         [ "$consul_rc" -eq 0 ] && ok "Consul SDK 通过 (${SUITE_SECS}s)" || fail "Consul SDK 退出码 $consul_rc"
         print_suite_tail "^--- FAIL|^FAIL|^ok " "${suite_dir}/consul-go.log"
         emit_suite_report consul-go "${suite_dir}/consul-go.log" "$combo" "$SUITE_SECS"
+
+        log ">>> 运行 Consul protocol/wire (non-SDK)"
+        run_suite_logged consul-protocol "${suite_dir}/consul-protocol.log" sdk_run_consul_protocol
+        local consul_protocol_rc=$SUITE_RC
+        [ "$consul_protocol_rc" -eq 0 ] && ok "Consul protocol 通过 (${SUITE_SECS}s)" || fail "Consul protocol 退出码 $consul_protocol_rc"
+        print_suite_tail "^--- FAIL|^FAIL|^ok " "${suite_dir}/consul-protocol.log"
+        emit_suite_report consul-protocol "${suite_dir}/consul-protocol.log" "$combo" "$SUITE_SECS"
 
         log ">>> 运行 Apollo Java SDK (meta=127.0.0.1:18080)"
         run_suite_logged apollo-java "${suite_dir}/apollo-java.log" sdk_run_apollo
@@ -847,8 +892,9 @@ cmd_sdk_matrix() {
 
         stop_servers
 
-        echo -e "${CYAN}──── ${combo}: Nacos=$([ $nacos_rc -eq 0 ] && echo PASS || echo FAIL) Consul=$([ $consul_rc -eq 0 ] && echo PASS || echo FAIL) Apollo=$([ $apollo_rc -eq 0 ] && echo PASS || echo FAIL) batata-client=$([ $batata_rc -eq 0 ] && echo PASS || echo FAIL) consul-client=$([ $consul_client_rc -eq 0 ] && echo PASS || echo FAIL) maintainer=$([ $maintainer_rc -eq 0 ] && echo PASS || echo FAIL) ────${NC}"
-        [ "$nacos_rc" -eq 0 ] && [ "$consul_rc" -eq 0 ] && [ "$apollo_rc" -eq 0 ] \
+        echo -e "${CYAN}──── ${combo}: Nacos=$([ $nacos_rc -eq 0 ] && echo PASS || echo FAIL) NacosGo=$([ $nacos_go_rc -eq 0 ] && echo PASS || echo FAIL) Consul=$([ $consul_rc -eq 0 ] && echo PASS || echo FAIL) Apollo=$([ $apollo_rc -eq 0 ] && echo PASS || echo FAIL) Protocol=$([ $java_protocol_rc -eq 0 ] && [ $consul_protocol_rc -eq 0 ] && echo PASS || echo FAIL) batata-client=$([ $batata_rc -eq 0 ] && echo PASS || echo FAIL) consul-client=$([ $consul_client_rc -eq 0 ] && echo PASS || echo FAIL) maintainer=$([ $maintainer_rc -eq 0 ] && echo PASS || echo FAIL) ────${NC}"
+        [ "$nacos_rc" -eq 0 ] && [ "$nacos_go_rc" -eq 0 ] && [ "$consul_rc" -eq 0 ] && [ "$apollo_rc" -eq 0 ] \
+            && [ "$java_protocol_rc" -eq 0 ] && [ "$consul_protocol_rc" -eq 0 ] \
             && [ "$batata_rc" -eq 0 ] && [ "$consul_client_rc" -eq 0 ] && [ "$maintainer_rc" -eq 0 ] \
             && return 0 || return 1
     }

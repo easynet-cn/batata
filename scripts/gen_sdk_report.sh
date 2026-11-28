@@ -18,8 +18,9 @@
 # Usage:
 #   gen_sdk_report.sh <suite> <logfile> <out.md> [combo] [duration]
 #
-# <suite> is one of: nacos-java | apollo-java | consul-go | batata-client |
-#                    batata-consul-client | batata-maintainer
+# <suite> is one of: nacos-java | nacos-go | apollo-java | consul-go |
+#                    java-protocol | consul-protocol |
+#                    batata-client | batata-consul-client | batata-maintainer
 #
 # It prints one machine-readable line on stdout so callers can aggregate
 # without re-parsing:  <combo>|<suite>|<total>|<passed>|<failed>|<errors>|<skipped>
@@ -35,8 +36,11 @@ DURATION="${5:-}"
 
 case "$SUITE" in
     nacos-java)            KIND=maven; TITLE="Nacos Java SDK";           CLIENT="Nacos Java SDK (Maven Surefire)" ;;
+    nacos-go)              KIND=go;    TITLE="Nacos Go SDK";             CLIENT="Nacos Go SDK (go test)" ;;
     apollo-java)           KIND=maven; TITLE="Apollo Java SDK";          CLIENT="Apollo Java SDK (Maven Surefire)" ;;
     consul-go)             KIND=go;    TITLE="Consul Go SDK";            CLIENT="Consul Go SDK (go test)" ;;
+    java-protocol)         KIND=maven; TITLE="Java protocol/wire";       CLIENT="Nacos + Apollo protocol assertions (Maven Surefire)" ;;
+    consul-protocol)       KIND=go;    TITLE="Consul protocol/wire";     CLIENT="Consul protocol assertions (go test)" ;;
     batata-client)         KIND=cargo; TITLE="batata-client SDK";        CLIENT="batata-client (cargo test)" ;;
     batata-consul-client)  KIND=cargo; TITLE="batata-consul-client SDK"; CLIENT="batata-consul-client (cargo test)" ;;
     batata-maintainer)     KIND=cargo; TITLE="batata-maintainer SDK";    CLIENT="batata-maintainer (cargo test)" ;;

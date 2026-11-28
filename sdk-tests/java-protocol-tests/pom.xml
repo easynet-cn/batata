@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.batata</groupId>
+    <artifactId>java-protocol-tests</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>Batata Java Protocol Compatibility Tests</name>
+    <description>Raw wire/protocol assertions that cannot be expressed via the Nacos/Apollo Java SDK public APIs</description>
+
+    <properties>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <nacos.version>3.3.0</nacos.version>
+        <apollo.version>2.5.0</apollo.version>
+        <junit.version>5.10.2</junit.version>
+        <apollo.meta>http://127.0.0.1:18080</apollo.meta>
+        <apollo.openapi.url>http://127.0.0.1:18080</apollo.openapi.url>
+        <apollo.openapi.token>admin</apollo.openapi.token>
+    </properties>
+
+    <dependencies>
+        <!-- Nacos Client SDK -->
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-client</artifactId>
+            <version>${nacos.version}</version>
+        </dependency>
+
+        <!-- Nacos Maintainer Client (admin operations) -->
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-maintainer-client</artifactId>
+            <version>${nacos.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- JUnit 5 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Jackson for JSON parsing -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.17.0</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- gRPC for diagnostic tests -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
+            <version>1.68.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-stub</artifactId>
+            <version>1.68.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-protobuf</artifactId>
+            <version>1.68.3</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Apollo Open API Client (AccessKey signature wire check) -->
+        <dependency>
+            <groupId>com.ctrip.framework.apollo</groupId>
+            <artifactId>apollo-openapi</artifactId>
+            <version>${apollo.version}</version>
+        </dependency>
+
+        <!-- Apollo Configuration Client -->
+        <dependency>
+            <groupId>com.ctrip.framework.apollo</groupId>
+            <artifactId>apollo-client</artifactId>
+            <version>${apollo.version}</version>
+        </dependency>
+
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.12</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Lombok (used by Apollo SDK) -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.32</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <repositories>
+        <repository>
+            <id>central</id>
+            <url>https://repo1.maven.org/maven2</url>
+        </repository>
+        <repository>
+            <id>aliyun</id>
+            <url>https://maven.aliyun.com/repository/public</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <useManifestOnlyJar>false</useManifestOnlyJar>
+                    <timeout>120</timeout>
+                    <argLine>--add-opens java.base/java.lang=ALL-UNNAMED --add-opens
+                        java.base/sun.misc=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                    <systemPropertyVariables>
+                        <nacos.server>127.0.0.1:8848</nacos.server>
+                        <nacos.username>nacos</nacos.username>
+                        <nacos.password>nacos</nacos.password>
+                        <apollo.meta>${apollo.meta}</apollo.meta>
+                        <apollo.openapi.url>${apollo.openapi.url}</apollo.openapi.url>
+                        <apollo.openapi.token>${apollo.openapi.token}</apollo.openapi.token>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <reporting>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-report-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+        </plugins>
+    </reporting>
+</project>

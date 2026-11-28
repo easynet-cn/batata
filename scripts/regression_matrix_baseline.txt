@@ -14,48 +14,73 @@
 #   cases (cluster-only tests skip in standalone, and vice versa).
 #
 # Why the counts differ between topologies:
-#   nacos-java    531 standalone / 539 cluster — the cluster-only tests skip
+#   nacos-java    491 standalone / 499 cluster — the cluster-only tests skip
 #                  when node2/node3 are not advertised by sdk_run_nacos.
-#   consul-go     552 everywhere, but 28 skip in standalone vs 20 in cluster:
+#   consul-go     538 everywhere, but 28 skip in standalone vs 20 in cluster:
 #                  cluster_test.go skips itself unless all three nodes are up.
+#   nacos-go      33 everywhere (raw HTTP endpoint assertions removed; no cluster-only cases).
+#   protocol suites: raw HTTP/gRPC assertions that SDK public APIs cannot
+#                    express, kept out of SDK suites. java-protocol 41
+#                    (1 skipped: 40 Nacos + 1 Apollo AccessKey),
+#                    consul-protocol 14. The SDK-only fuzzyWatch ability test
+#                    was moved back to nacos-java (nacos-java +1).
 #
 # Refreshing: after a green run, take `reports/sdk/latest/results.tsv` and
 # replace this file in the same commit as the change that moved the numbers.
 # An anchor may only go up (more coverage), never down without a stated reason.
 
-standalone-rock|apollo-java|40
-standalone-rock|batata-client|125
-standalone-rock|batata-consul-client|129
-standalone-rock|batata-maintainer|77
-standalone-rock|consul-go|552
-standalone-rock|nacos-java|531
-standalone-mysql|apollo-java|40
-standalone-mysql|batata-client|125
-standalone-mysql|batata-consul-client|129
-standalone-mysql|batata-maintainer|77
-standalone-mysql|consul-go|552
-standalone-mysql|nacos-java|531
-standalone-postgres|apollo-java|40
-standalone-postgres|batata-client|125
-standalone-postgres|batata-consul-client|129
-standalone-postgres|batata-maintainer|77
-standalone-postgres|consul-go|552
-standalone-postgres|nacos-java|531
-cluster-rock|apollo-java|40
-cluster-rock|batata-client|125
-cluster-rock|batata-consul-client|129
-cluster-rock|batata-maintainer|77
-cluster-rock|consul-go|552
-cluster-rock|nacos-java|539
-cluster-mysql|apollo-java|40
+
+cluster-mysql|apollo-java|39
 cluster-mysql|batata-client|125
 cluster-mysql|batata-consul-client|129
 cluster-mysql|batata-maintainer|77
-cluster-mysql|consul-go|552
-cluster-mysql|nacos-java|539
-cluster-postgres|apollo-java|40
+cluster-mysql|consul-go|538
+cluster-mysql|consul-protocol|14
+cluster-mysql|nacos-go|33
+cluster-mysql|nacos-java|499
+cluster-mysql|java-protocol|41
+cluster-postgres|apollo-java|39
 cluster-postgres|batata-client|125
 cluster-postgres|batata-consul-client|129
 cluster-postgres|batata-maintainer|77
-cluster-postgres|consul-go|552
-cluster-postgres|nacos-java|539
+cluster-postgres|consul-go|538
+cluster-postgres|consul-protocol|14
+cluster-postgres|nacos-go|33
+cluster-postgres|nacos-java|499
+cluster-postgres|java-protocol|41
+cluster-rock|apollo-java|39
+cluster-rock|batata-client|125
+cluster-rock|batata-consul-client|129
+cluster-rock|batata-maintainer|77
+cluster-rock|consul-go|538
+cluster-rock|consul-protocol|14
+cluster-rock|nacos-go|33
+cluster-rock|nacos-java|499
+cluster-rock|java-protocol|41
+standalone-mysql|apollo-java|39
+standalone-mysql|batata-client|125
+standalone-mysql|batata-consul-client|129
+standalone-mysql|batata-maintainer|77
+standalone-mysql|consul-go|538
+standalone-mysql|consul-protocol|14
+standalone-mysql|nacos-go|33
+standalone-mysql|nacos-java|491
+standalone-mysql|java-protocol|41
+standalone-postgres|apollo-java|39
+standalone-postgres|batata-client|125
+standalone-postgres|batata-consul-client|129
+standalone-postgres|batata-maintainer|77
+standalone-postgres|consul-go|538
+standalone-postgres|consul-protocol|14
+standalone-postgres|nacos-go|33
+standalone-postgres|nacos-java|491
+standalone-postgres|java-protocol|41
+standalone-rock|apollo-java|39
+standalone-rock|batata-client|125
+standalone-rock|batata-consul-client|129
+standalone-rock|batata-maintainer|77
+standalone-rock|consul-go|538
+standalone-rock|consul-protocol|14
+standalone-rock|nacos-go|33
+standalone-rock|nacos-java|491
+standalone-rock|java-protocol|41

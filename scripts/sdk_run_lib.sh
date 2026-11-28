@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Shared SDK compatibility test runners (Consul Go + Nacos Java + Apollo Java
-# + the three batata Rust suites).
+# Shared SDK compatibility test runners (Consul Go + Nacos Java + Nacos Go +
+# Apollo Java + three batata Rust suites + two protocol/wire suites).
 #
-# Source this file to get sdk_run_consul / sdk_run_nacos / sdk_run_apollo /
+# Source this file to get sdk_run_consul / sdk_run_nacos / sdk_run_nacos_go /
+# sdk_run_apollo / sdk_run_consul_protocol / sdk_run_java_protocol /
 # sdk_run_batata_client / sdk_run_batata_consul_client /
 # sdk_run_batata_maintainer, used by both test.sh (sdk --quick manual entry
 # and sdk --matrix full matrix). Centralizing the go/mvn/cargo invocations
@@ -14,13 +15,19 @@
 #
 #   sdk_run_consul  [test_name_filter]  # optional -run filter for `go test`
 #   sdk_run_nacos   [class_filter]      # optional -Dtest=Nacos<filter>* filter
+#   sdk_run_nacos_go [test_name_filter] # optional -run filter for `go test`
 #   sdk_run_apollo  [class_filter]      # optional -Dtest=Apollo<filter>* filter
+#   sdk_run_consul_protocol [run_filter] # raw Consul wire assertions
+#   sdk_run_java_protocol   [class_filter] # raw Nacos + Apollo Java wire assertions
 #   sdk_run_batata_client        [filter]  # optional cargo test-name filter
 #   sdk_run_batata_consul_client [filter]  # optional cargo test-name filter
 #   sdk_run_batata_maintainer    [filter]  # optional cargo test-name filter
 #
 # Environment (all optional):
 #   CONSUL_HTTP_TOKEN   forwarded to the Consul Go SDK (e.g. "root")
+#   NACOS_SERVER        Nacos Go SDK server address (default 127.0.0.1:8848)
+#   NACOS_USERNAME      Nacos Go SDK username (default "nacos")
+#   NACOS_PASSWORD      Nacos Go SDK password (default "nacos")
 #   MVN_QUIET           set to "1" to pass -q to mvn. Default off: -q hides
 #                       Surefire's "Tests run:" summary, the only source the
 #                       report parser has for a suite's case count.
@@ -117,6 +124,53 @@ sdk_run_nacos() {
             -Dnacos.cluster.node1=127.0.0.1:8848 \
             -DJM.SNAPSHOT.PATH="${NACOS_SDK_CACHE_DIR}" \
             ${cluster_peers} \
+            $test_flag )
+}
+
+# Run the official Nacos Go SDK compatibility suite.
+# Usage: sdk_run_nacos_go [run_filter]
+sdk_run_nacos_go() {
+    local filter="${1:-}"
+    local run_flag=""
+    [ -n "$filter" ] && run_flag="-run $filter"
+    ( cd "${SDK_PROJECT_ROOT}/sdk-tests/nacos-go-tests" && \
+        export NACOS_SERVER="${NACOS_SERVER:-127.0.0.1:8848}" && \
+        export NACOS_USERNAME="${NACOS_USERNAME:-nacos}" && \
+        export NACOS_PASSWORD="${NACOS_PASSWORD:-nacos}" && \
+        go test ./... -v -count=1 -timeout 600s $run_flag )
+}
+
+# Raw HTTP/gRPC protocol assertions that were moved out of the SDK suites.
+# These are intentionally NOT part of any SDK suite: they do not use the
+# official client's public API and therefore only validate server wire shape.
+sdk_run_consul_protocol() {
+    local filter="${1:-}"
+    local run_flag=""
+    [ -n "$filter" ] && run_flag="-run $filter"
+    ( cd "${SDK_PROJECT_ROOT}/sdk-tests/consul-protocol-tests" && \
+        export CONSUL_HTTP_ADDR=127.0.0.1:8500 && \
+        { [ -z "${CONSUL_HTTP_TOKEN:-}" ] || export CONSUL_HTTP_TOKEN; } && \
+        go test ./... -v -count=1 -timeout 600s $run_flag )
+}
+
+sdk_run_java_protocol() {
+    local filter="${1:-}"
+    local test_flag=""
+    [ -n "$filter" ] && test_flag="-Dtest=${filter}*"
+    local meta="${APOLLO_META:-http://127.0.0.1:18080}"
+    local openapi_url="${APOLLO_OPENAPI_URL:-$meta}"
+    local token="${APOLLO_OPENAPI_TOKEN:-admin}"
+    local mvn_q=""
+    [ "${MVN_QUIET:-0}" = "1" ] && mvn_q="-q"
+    mkdir -p "${NACOS_SDK_CACHE_DIR}"
+    ( cd "${SDK_PROJECT_ROOT}/sdk-tests/java-protocol-tests" && \
+        mvn ${mvn_q} test \
+            -Dnacos.server=127.0.0.1:8848 \
+            -Dnacos.username=nacos -Dnacos.password=nacos \
+            -DJM.SNAPSHOT.PATH="${NACOS_SDK_CACHE_DIR}" \
+            -Dapollo.meta="$meta" \
+            -Dapollo.openapi.url="$openapi_url" \
+            -Dapollo.openapi.token="$token" \
             $test_flag )
 }
 

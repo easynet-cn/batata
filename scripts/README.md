@@ -251,8 +251,18 @@ containers so they do not require a local JVM/Go toolchain to be installed on th
 | Suite | Language | Batata plugin | Default endpoint |
 |-------|----------|---------------|------------------|
 | `nacos-java-tests`  | Java (Maven)  | Nacos (`BATATA_PLUGIN_CONSUL_ENABLED` not needed) | `nacos.server=batata:8848` |
+| `nacos-go-tests`    | Go (`go test`)| Nacos (`BATATA_PLUGIN_CONSUL_ENABLED` not needed) | `NACOS_SERVER=batata:8848` |
 | `consul-go-tests`   | Go (`go test`)| Consul (`BATATA_PLUGIN_CONSUL_ENABLED=true`)       | `CONSUL_HTTP_ADDR=batata:8500` |
 | `apollo-java-tests` | Java (Maven)  | Apollo (`BATATA_PLUGIN_APOLLO_ENABLED=true`)       | `apollo.meta=batata:18080` |
+| `java-protocol-tests` | Java (Maven) | Nacos + Apollo | `nacos.server=batata:8848`, `apollo.meta=batata:18080` |
+| `consul-protocol-tests` | Go (`go test`) | Consul | `CONSUL_HTTP_ADDR=batata:8500` |
+
+> The two `*-protocol-tests` suites are **not** SDK suites. They keep only the
+> raw HTTP/gRPC payload assertions that the official SDK public APIs cannot
+> express (e.g. protobuf payloads, signed AccessKey headers, OSS-only endpoints).
+> JSON/wire DTO contracts belong in the Rust `wire_contract_test.rs` suites;
+> behaviour an SDK can exercise belongs in the SDK suite. Protocol suites still
+> run in the full matrix so wire drift remains detectable.
 
 > The Apollo plugin does not verify the OpenAPI token by default (`openapi_auth_enabled=false`),
 > so the test token `admin` works out of the box. In the `all sdk` stack the batata service

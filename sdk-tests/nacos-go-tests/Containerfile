@@ -1,0 +1,16 @@
+# Nacos Go SDK Compatibility Tests
+#
+# Runs the official nacos-sdk-go v2.3.5 against a Batata server with the Nacos
+# protocol enabled. Addresses and credentials come from NACOS_SERVER /
+# NACOS_USERNAME / NACOS_PASSWORD (see sdk-tests/podman-compose.yml).
+#
+# Build/run (standalone):
+#   podman build -f Containerfile -t nacos-go-tests .
+#   podman run --rm -e NACOS_SERVER=batata:8848 nacos-go-tests
+
+FROM golang:1.23-bookworm
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ENTRYPOINT ["sh", "-c", "go test ./... -v -count=1 -timeout 600s"]

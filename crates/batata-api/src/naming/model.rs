@@ -56,6 +56,18 @@ pub const BATCH_REGISTER_INSTANCE: &str = "batchRegisterInstance";
 /// Request type: batch deregister instances.
 pub const BATCH_DE_REGISTER_INSTANCE: &str = "batchDeregisterInstance";
 
+/// Go SDK sends `metadata: null` for deregister/batch requests where no
+/// metadata was supplied. Upstream Java's `Map` field tolerates null; serde's
+/// `HashMap` does not, so normalise null to an empty map on the wire.
+fn deserialize_nullable_string_map<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<HashMap<String, String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 // Service instance information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -80,6 +92,7 @@ pub struct Instance {
     /// The `service_name` field.
     pub service_name: String,
     /// The `metadata` field.
+    #[serde(default, deserialize_with = "deserialize_nullable_string_map")]
     pub metadata: HashMap<String, String>,
 }
 
@@ -1492,6 +1505,22 @@ mod tests {
         assert_eq!(service.name, "my-service");
         assert_eq!(service.group_name, "DEFAULT_GROUP");
         assert_eq!(service.cache_millis, 1000);
+    }
+
+    #[test]
+    fn test_instance_accepts_null_metadata_from_go_sdk() {
+        // nacos-sdk-go v2 serialises deregister/batch instances with an
+        // explicit JSON null when no metadata was supplied. Upstream Java
+        // accepts that; batata must too (regression guarded by
+        // sdk-tests/nacos-go-tests).
+        let null_wire = r#"{"ip":"127.0.0.1","port":8848,"metadata":null}"#;
+        let instance: Instance =
+            serde_json::from_str(null_wire).expect("null metadata must decode");
+        assert!(instance.metadata.is_empty());
+
+        let map_wire = r#"{"ip":"127.0.0.1","port":8848,"metadata":{"k":"v"}}"#;
+        let instance: Instance = serde_json::from_str(map_wire).expect("map metadata must decode");
+        assert_eq!(instance.metadata.get("k").map(String::as_str), Some("v"));
     }
 
     #[test]

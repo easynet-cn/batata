@@ -1,0 +1,26 @@
+# Java Protocol/Wire Compatibility Tests
+#
+# Raw wire/protocol assertions that cannot be expressed through the official
+# Nacos / Apollo Java SDK public APIs (e.g. protobuf payloads, signed AccessKey
+# headers). SDK suites stay pure; this suite keeps the protocol checks in the
+# matrix so contract drift is still detected.
+#
+# Connection points come from NACOS_SERVER / APOLLO_META / APOLLO_OPENAPI_URL /
+# APOLLO_OPENAPI_TOKEN (see sdk-tests/podman-compose.yml), falling back to
+# localhost.
+#
+# Build/run (standalone):
+#   podman build -f Containerfile -t java-protocol-tests .
+#   podman run --rm -e NACOS_SERVER=batata:8848 -e APOLLO_META=http://batata:18080 java-protocol-tests
+
+FROM maven:3.9-eclipse-temurin-21 AS deps
+WORKDIR /app
+COPY pom.xml .
+RUN mvn -q -B -DskipTests -Dmaven.repo.local=/app/.m2 dependency:go-offline || true
+
+FROM maven:3.9-eclipse-temurin-21
+WORKDIR /app
+COPY --from=deps /app/.m2 /root/.m2
+COPY pom.xml .
+COPY src ./src
+ENTRYPOINT ["sh", "-c", "mvn test -Dnacos.server=${NACOS_SERVER:-batata:8848} -Dnacos.username=${NACOS_USERNAME:-nacos} -Dnacos.password=${NACOS_PASSWORD:-nacos} -Dapollo.meta=${APOLLO_META:-http://127.0.0.1:18080} -Dapollo.openapi.url=${APOLLO_OPENAPI_URL:-http://127.0.0.1:18080} -Dapollo.openapi.token=${APOLLO_OPENAPI_TOKEN:-admin}"]

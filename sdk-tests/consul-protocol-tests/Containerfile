@@ -1,0 +1,16 @@
+# Consul Go SDK Tests
+#
+# Runs the official Consul Go SDK against a Batata server with the Consul
+# compatibility plugin enabled. Addresses are read from CONSUL_HTTP_ADDR
+# (see sdk-tests/podman-compose.yml), defaulting to 127.0.0.1:8500.
+#
+# Build/run (standalone):
+#   podman build -f Containerfile -t consul-tests .
+#   podman run --rm -e CONSUL_HTTP_ADDR=http://host:8500 consul-tests
+
+FROM golang:1.23-bookworm
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ENTRYPOINT ["sh", "-c", "go test ./... -v -count=1 -timeout 120s"]

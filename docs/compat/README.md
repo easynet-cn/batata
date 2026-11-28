@@ -67,7 +67,16 @@ and `reports/sdk/20261110-073645/results.tsv` (8748 total / 8556 passed /
 0 failed / 0 errors / 192 skipped). All six `nacos-java` runtime logs resolve
 `nacos-client-3.3.0.jar`, so these are 3.3.0 GA results. The earlier
 `reports/sdk/20261109-163544` matrix was pinned to 3.2.4 and is historical
-only. Older `3.3.0-SNAPSHOT` / `3.2.4` labels
+only. The SDK matrix gained `sdk-tests/nacos-go-tests` (official
+`nacos-sdk-go/v2` v2.3.5, 33 cases per combination) on 2026-11-28 as an
+independent wire-contract probe; raw endpoint assertions were then moved from
+the SDK suites into `java-protocol-tests` / `consul-protocol-tests`
+(55 cases per combination total: 41 Java + 14 Consul) so SDK suites only
+exercise public client APIs. JSON/wire DTO contracts are asserted in Rust
+(`wire_contract_test.rs`); the protocol suites keep only wire checks that no
+SDK public API can express. The SDK-only fuzzyWatch ability test was migrated
+back to `NacosConfigFuzzyWatchTest`. The next green full-gate run will replace
+the counts above. Older `3.3.0-SNAPSHOT` / `3.2.4` labels
 were stale. Dated files such as
 `sdk-tests/nacos-java-tests/TEST_REPORT.2026-03-19.md` are historical snapshots
 and keep their original version numbers on purpose. `scripts/compat_check.py`
