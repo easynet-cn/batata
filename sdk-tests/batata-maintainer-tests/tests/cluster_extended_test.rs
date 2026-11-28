@@ -183,17 +183,12 @@ async fn test_client_published_services() {
         .register_instance("public", "DEFAULT_GROUP", &service, inst)
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-    // Query via HTTP
+    // Query via HTTP for our own live connection, not an arbitrary id from a
+    // shared list that may belong to a parallel test and disappear.
     let api = common::create_api_client().await.unwrap();
-    let clients = api.client_list().await.unwrap();
-
-    if !clients.client_ids.is_empty() {
-        let client_id = &clients.client_ids[0];
-        let published = api.client_published_services(client_id).await;
-        assert!(published.is_ok(), "Published services query should succeed");
-    }
+    let client_id = common::wait_for_visible_client(&api, &grpc).await;
+    let published = api.client_published_services(&client_id).await;
+    assert!(published.is_ok(), "Published services query should succeed");
 
     naming.shutdown().await;
     drop(grpc);
@@ -235,19 +230,13 @@ async fn test_client_subscribed_services() {
         )
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
     let api = common::create_api_client().await.unwrap();
-    let clients = api.client_list().await.unwrap();
-
-    if !clients.client_ids.is_empty() {
-        let client_id = &clients.client_ids[0];
-        let subscribed = api.client_subscribed_services(client_id).await;
-        assert!(
-            subscribed.is_ok(),
-            "Subscribed services query should succeed"
-        );
-    }
+    let client_id = common::wait_for_visible_client(&api, &grpc).await;
+    let subscribed = api.client_subscribed_services(&client_id).await;
+    assert!(
+        subscribed.is_ok(),
+        "Subscribed services query should succeed"
+    );
 
     naming.shutdown().await;
     drop(grpc);

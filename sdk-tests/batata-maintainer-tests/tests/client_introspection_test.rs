@@ -61,22 +61,13 @@ async fn test_client_detail_with_grpc_connection() {
     let grpc = std::sync::Arc::new(batata_client::grpc::GrpcClient::new(grpc_config).unwrap());
     grpc.connect().await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    // Now use HTTP API to introspect
+    // Now use HTTP API to introspect our own connection (other tests run in
+    // parallel, so the first id in the shared list may already be stale).
     let api = common::create_api_client().await.unwrap();
+    let client_id = common::wait_for_visible_client(&api, &grpc).await;
 
-    let result = api.client_list().await.unwrap();
-    assert!(
-        !result.client_ids.is_empty(),
-        "Should see our gRPC connection in client list"
-    );
-
-    // Get first client detail
-    if let Some(client_id) = result.client_ids.first() {
-        let detail = api.client_detail(client_id).await.unwrap();
-        assert!(detail.is_object(), "Client detail should be an object");
-    }
+    let detail = api.client_detail(&client_id).await.unwrap();
+    assert!(detail.is_object(), "Client detail should be an object");
 
     // Cleanup gRPC connection
     drop(grpc);
